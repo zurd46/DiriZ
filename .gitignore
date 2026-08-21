@@ -1,0 +1,28 @@
+# Abhängigkeiten
+node_modules/
+
+# Builds
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Tests / Coverage
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+.vscode/
+
+# Secrets & lokale Konfiguration — NIEMALS committen
+.env
+.env.*
+
+# Laufzeit-Daten (DB, Workspace-Artefakte)
+.data/

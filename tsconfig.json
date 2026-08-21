@@ -1,0 +1,15 @@
+{
+	"$schema": "https://json.schemastore.org/tsconfig",
+	"extends": "./tsconfig.base.json",
+	"compilerOptions": {
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"types": ["node"]
+	},
+	"include": [
+		"packages/shared/src/**/*.ts",
+		"packages/shared/test/**/*.ts",
+		"packages/core/src/**/*.ts",
+		"packages/core/test/**/*.ts"
+	]
+}

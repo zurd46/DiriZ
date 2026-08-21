@@ -43,6 +43,7 @@ export interface DiscoveredModel {
  * unzuverlässige Angaben macht (Plan-Risiko §16).
  */
 export interface InstanceModel {
+	id: string
 	providerId: string
 	modelId: string
 	displayName: string

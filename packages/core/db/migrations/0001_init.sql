@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS routing_decisions (
 	task_profile_json TEXT NOT NULL,
 	scores_json TEXT NOT NULL,
 	excluded_json TEXT NOT NULL,
+	weights_json TEXT NOT NULL DEFAULT '{}',
 	chosen_instance_id TEXT,
 	created_at TEXT NOT NULL
 );
@@ -95,6 +96,7 @@ CREATE TABLE IF NOT EXISTS files (
 	task_id TEXT NOT NULL,
 	rel_path TEXT NOT NULL,
 	size INTEGER NOT NULL,
+	content TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_files_task ON files (task_id, rel_path);

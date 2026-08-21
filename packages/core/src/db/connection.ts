@@ -2,9 +2,9 @@
  * SQLite-Verbindung (better-sqlite3, synchron & null-config — Plan §4).
  */
 
-import Database from "better-sqlite3"
 import fs from "node:fs"
 import path from "node:path"
+import Database from "better-sqlite3"
 
 export type Db = Database.Database
 

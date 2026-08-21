@@ -2,16 +2,10 @@
  * Task- & Execution-Typen (`01-plan.md` §7, §11).
  */
 
-import type { Capability, PrivacyMode, ProviderStatus, RoutingMode } from "./types.js"
+import type { TaskProfile } from "./routing.js"
+import type { PrivacyMode, ProviderStatus, RoutingMode } from "./types.js"
 
-export type TaskStatus =
-	| "draft"
-	| "routing"
-	| "queued"
-	| "running"
-	| "done"
-	| "failed"
-	| "cancelled"
+export type TaskStatus = "draft" | "routing" | "queued" | "running" | "done" | "failed" | "cancelled"
 
 export type ExecutionStatus = "pending" | "running" | "done" | "failed" | "cancelled"
 

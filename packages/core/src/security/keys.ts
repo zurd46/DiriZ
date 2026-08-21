@@ -39,7 +39,12 @@ export function decryptString(payload: string, secret: Buffer): string {
 	const iv = raw.subarray(0, 12)
 	const tag = raw.subarray(12, 28)
 	const data = raw.subarray(28)
-	const decipher = crypto.createDecipheriv("aes-256-gcm", deriveKey(secret), iv)
-(decipher as crypto.DecipherGCM).setAuthTag(tag)
+	const base = crypto.createDecipheriv("aes-256-gcm", deriveKey(secret), iv)
+	const decipher = base as unknown as {
+		setAuthTag(t: Buffer): void
+		update(d: Buffer): Buffer
+		final(): Buffer
+	}
+	decipher.setAuthTag(tag)
 	return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8")
 }

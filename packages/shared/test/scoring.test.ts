@@ -32,8 +32,7 @@ describe("scoring", () => {
 	it("costAware verdreifacht das cost-Gewicht und renormiert auf 1", () => {
 		const w = costAwareWeights()
 		expect(w.costScore).toBeCloseTo(0.21)
-		const sum =
-			w.contextFit + w.capabilityMatch + w.qualityPrior + w.loadScore + w.costScore + w.latencyScore
+		const sum = w.contextFit + w.capabilityMatch + w.qualityPrior + w.loadScore + w.costScore + w.latencyScore
 		expect(sum).toBeCloseTo(1)
 	})
 

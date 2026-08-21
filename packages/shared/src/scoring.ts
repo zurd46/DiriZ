@@ -6,9 +6,9 @@
  * Core berechnet hat — keine Drift möglich.
  */
 
-import type { Capability } from "./types.js"
+import { SAFETY_CONTEXT_FACTOR } from "./constants.js"
 import type { ScoringWeights } from "./routing.js"
-import { GATE_CONTEXT_FACTOR, SAFETY_CONTEXT_FACTOR } from "./constants.js"
+import type { Capability } from "./types.js"
 
 /**
  * Default-Gewichte aus dem Plan (§6.2):
@@ -112,7 +112,7 @@ export function costScore(pricePerMTok: { in: number; out: number } | undefined,
 	}
 	const perMtok = (pricePerMTok.in + pricePerMTok.out) / 2
 	// 1 $/MTok gilt als günstig, 20 $/MTok als teuer → 0.3.
-	const priceFit = Math.max(0.3, 1 - (perMtok - 1) / 19 * 0.7)
+	const priceFit = Math.max(0.3, 1 - ((perMtok - 1) / 19) * 0.7)
 	if (budgetUsd !== undefined && budgetUsd <= 0) {
 		return 0.3
 	}

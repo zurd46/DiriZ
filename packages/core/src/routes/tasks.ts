@@ -212,6 +212,14 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 		return { cancelled: true }
 	})
 
+	app.post<{ Params: { id: string } }>("/api/tasks/:id/preview", (req, reply) => {
+		const preview = ctx.engine.preview(req.params.id)
+		if (!preview) {
+			return reply.code(404).send({ error: "Task nicht gefunden" })
+		}
+		return preview
+	})
+
 	app.get<{ Params: { id: string } }>("/api/tasks/:id/replay", (req, reply) => {
 		const executions = listExecutionsByTask(ctx.db, req.params.id)
 		if (executions.length === 0) {

@@ -102,3 +102,27 @@ export interface InstanceRef {
 	displayName: string
 	status: ProviderStatus
 }
+
+/** Wiederverwendbare System-Prompt-Vorlage (M2/Q4, z. B. „Senior-Dev“). */
+export interface PromptTemplate {
+	id: string
+	name: string
+	prompt: string
+	createdAt: string
+}
+
+/**
+ * Routing-Preview / Dry-Run (M3): Zeigt vor der Ausführung, welche Instanz
+ * gewählt würde — exakt dieselbe Pipeline wie `runTask` (Profil → Policies →
+ * Scoring), aber ohne Execution, Persistenz oder Failover.
+ */
+export interface RoutePreview {
+	taskId: string
+	assignmentMode: AssignmentMode
+	agentId?: string
+	agentName?: string
+	/** Begründung der Agenten-Zuordnung (bzw. Fehler bei ungültiger Konfiguration). */
+	agentReason?: string
+	decision: RoutingDecision
+	createdAt: string
+}

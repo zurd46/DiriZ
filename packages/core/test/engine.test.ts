@@ -227,3 +227,30 @@ describe("engine: Cancel", () => {
 		expect(getTask(db, task.id)?.status).toBe("cancelled")
 	})
 })
+
+describe("engine: Routing-Preview (Dry-Run)", () => {
+	it("liefert die Entscheidung ohne Execution & ohne Seiteneffekte", () => {
+		const task = createTask(db, { prompt: "Implementiere eine Funktion in TypeScript" })
+		expect(getTask(db, task.id)?.status).toBe("draft")
+
+		const decidedBefore = events.filter((e) => e.event === "routing.decided").length
+		const preview = engine.preview(task.id)
+		const decidedAfter = events.filter((e) => e.event === "routing.decided").length
+
+		expect(preview).toBeTruthy()
+		expect(preview?.taskId).toBe(task.id)
+		expect(preview?.decision.chosenInstanceId).toBeTruthy()
+		expect(preview!.decision.candidates.length).toBeGreaterThan(0)
+		expect(preview!.decision.executionId).toBe("")
+		expect(preview!.decision.profile.estTokens).toBeGreaterThan(0)
+
+		// Keine Seiteneffekte: keine Execution, Status unverändert, kein neues Event.
+		expect(listExecutionsByTask(db, task.id)).toHaveLength(0)
+		expect(getTask(db, task.id)?.status).toBe("draft")
+		expect(decidedAfter).toBe(decidedBefore)
+	})
+
+	it("gibt undefined für unbekannte Task zurück", () => {
+		expect(engine.preview("keine-id")).toBeUndefined()
+	})
+})

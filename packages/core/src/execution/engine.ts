@@ -22,6 +22,7 @@ import {
 	MAX_FAILOVER_HOPS,
 	MIN_AGENT_SCORE,
 	type ModelSettings,
+	type RoutePreview,
 	type RoutingDecision,
 	scoreAgents,
 	type Task,
@@ -87,6 +88,15 @@ interface ActiveRun {
 	abort: AbortController
 	taskId: string
 	cancelled: boolean
+}
+
+/** Ergebnis der Agenten-Auswahl — rein, ohne Seiteneffekte (runTask & Preview). */
+interface AgentSelection {
+	agent?: Agent
+	candidates: AgentScore[]
+	reason: string
+	/** false = ungültige Konfiguration → `runTask` schlägt die Task fehl. */
+	ok: boolean
 }
 
 /** Konservative Basis-Qualität ohne Feedback-Historie. */
@@ -193,98 +203,147 @@ export class ExecutionEngine {
 	/* ---------------------------- Agent-Zuordnung (M1) --------------------------- */
 
 	/**
-	 * Wählt den Spezialisten für die Task je nach Zuweisungsmodus:
+	 * Wählt den Spezialisten für die Task je nach Zuweisungsmodus (rein, ohne
+	 * Seiteneffekte — wird von `runTask` und der Routing-Preview genutzt):
 	 * - `agent`: der feste Agent (task.agentId)
 	 * - `swarm`: best bewertetes Mitglied des Swarms
 	 * - `auto`: best bewerteter Agent, wenn er MIN_AGENT_SCORE erreicht — sonst keins
-	 *
-	 * Die Entscheidung wird persistiert und als `task.agent_selected` emittiert
-	 * (Explainability: Kandidaten + Gründe).
 	 */
-	private resolveAgent(task: Task): Agent | undefined {
-		const { db, emit, log } = this.deps
+	private selectAgent(task: Task): AgentSelection {
 		const mode = task.assignmentMode ?? "auto"
-		const fail = (msg: string): never => {
-			setTaskStatus(db, task.id, "failed", new Date().toISOString())
-			throw new Error(msg)
-		}
 		const profile = extractProfile(task)
 		const agentProfile: AgentProfile = {
 			privacy: profile.privacy,
 			requiredCapabilities: profile.requiredCapabilities,
 			preferredCapabilities: profile.preferredCapabilities,
 		}
-		const pool = listAgents(db).filter((a) => a.enabled)
-
-		let agent: Agent | undefined
-		let candidates: AgentScore[] = []
-		let reason = ""
+		const pool = listAgents(this.deps.db).filter((a) => a.enabled)
 
 		if (mode === "agent") {
 			if (!task.agentId) {
-				return fail('Zuweisungsmodus "agent", aber kein Agent gewählt')
+				return { candidates: [], reason: 'Zuweisungsmodus "agent", aber kein Agent gewählt', ok: false }
 			}
-			agent = getAgent(db, task.agentId)
+			const agent = getAgent(this.deps.db, task.agentId)
 			if (!agent?.enabled) {
-				return fail(`Agent ${task.agentId} existiert nicht oder ist deaktiviert`)
+				return { candidates: [], reason: `Agent ${task.agentId} existiert nicht oder ist deaktiviert`, ok: false }
 			}
-			reason = "Manuell zugewiesener Spezialist"
-			candidates = [{ agentId: agent.id, name: agent.name, score: 0, reasons: [reason] }]
-		} else if (mode === "swarm") {
+			const reason = "Manuell zugewiesener Spezialist"
+			return { agent, candidates: [{ agentId: agent.id, name: agent.name, score: 0, reasons: [reason] }], reason, ok: true }
+		}
+
+		if (mode === "swarm") {
 			if (!task.swarmId) {
-				return fail('Zuweisungsmodus "swarm", aber kein Swarm gewählt')
+				return { candidates: [], reason: 'Zuweisungsmodus "swarm", aber kein Swarm gewählt', ok: false }
 			}
-			const swarm = getSwarm(db, task.swarmId)
+			const swarm = getSwarm(this.deps.db, task.swarmId)
 			if (!swarm?.enabled) {
-				return fail(`Swarm ${task.swarmId} existiert nicht oder ist deaktiviert`)
+				return { candidates: [], reason: `Swarm ${task.swarmId} existiert nicht oder ist deaktiviert`, ok: false }
 			}
 			const members = pool.filter((a) => swarm.agentIds.includes(a.id))
 			if (members.length === 0) {
-				return fail(`Swarm „${swarm.name}“ enthält keine aktiven Agenten`)
+				return { candidates: [], reason: `Swarm „${swarm.name}“ enthält keine aktiven Agenten`, ok: false }
 			}
-			candidates = scoreAgents(task.prompt, agentProfile, members.map(toAgentCandidate))
-			agent = members.find((a) => a.id === candidates[0]?.agentId)
-			reason =
-				members.length === 1
-					? `Einziger Agent im Swarm „${swarm.name}“`
-					: `Bester Agent im Swarm „${swarm.name}“`
-		} else {
-			candidates = scoreAgents(task.prompt, agentProfile, pool.map(toAgentCandidate))
-			const best = candidates[0]
-			if (best && best.score >= MIN_AGENT_SCORE) {
-				agent = pool.find((a) => a.id === best.agentId)
-				reason =
-					best.reasons.length > 0
-						? `Automatische Zuordnung: ${best.reasons.join("; ")}`
-						: "Automatische Zuordnung"
-			} else {
-				reason = "Kein Spezialist relevant genug — freies Routing"
+			const candidates = scoreAgents(task.prompt, agentProfile, members.map(toAgentCandidate))
+			const agent = members.find((a) => a.id === candidates[0]?.agentId)
+			return {
+				agent,
+				candidates,
+				reason:
+					members.length === 1 ? `Einziger Agent im Swarm „${swarm.name}“` : `Bester Agent im Swarm „${swarm.name}“`,
+				ok: true,
 			}
+		}
+
+		const candidates = scoreAgents(task.prompt, agentProfile, pool.map(toAgentCandidate))
+		const best = candidates[0]
+		if (best && best.score >= MIN_AGENT_SCORE) {
+			return {
+				agent: pool.find((a) => a.id === best.agentId),
+				candidates,
+				reason:
+					best.reasons.length > 0 ? `Automatische Zuordnung: ${best.reasons.join("; ")}` : "Automatische Zuordnung",
+				ok: true,
+			}
+		}
+		return { candidates, reason: "Kein Spezialist relevant genug — freies Routing", ok: true }
+	}
+
+	/**
+	 * Agenten-Auswahl mit Seiteneffekten: persistiert die Entscheidung und
+	 * emittiert `task.agent_selected` (Explainability). Ungültige Konfiguration
+	 * schlägt die Task fehl.
+	 */
+	private resolveAgent(task: Task): Agent | undefined {
+		const { db, emit, log } = this.deps
+		const mode = task.assignmentMode ?? "auto"
+		const sel = this.selectAgent(task)
+		if (!sel.ok) {
+			setTaskStatus(db, task.id, "failed", new Date().toISOString())
+			throw new Error(sel.reason)
 		}
 
 		saveAgentSelection(db, {
 			taskId: task.id,
 			mode,
-			agentId: agent?.id ?? null,
-			agentName: agent?.name,
-			reason,
-			candidates,
+			agentId: sel.agent?.id ?? null,
+			agentName: sel.agent?.name,
+			reason: sel.reason,
+			candidates: sel.candidates,
 			createdAt: new Date().toISOString(),
 		})
-		setTaskAgentSelection(db, task.id, agent?.id ?? null)
+		setTaskAgentSelection(db, task.id, sel.agent?.id ?? null)
 		emit({
 			event: "task.agent_selected",
 			data: {
 				taskId: task.id,
-				agentId: agent?.id ?? null,
-				agentName: agent?.name,
+				agentId: sel.agent?.id ?? null,
+				agentName: sel.agent?.name,
 				mode,
-				reason,
-				candidates,
+				reason: sel.reason,
+				candidates: sel.candidates,
 			},
 		})
-		log("info", "agents", `Task ${task.id}: ${agent ? `Spezialist „${agent.name}“` : "kein Agent"} (${mode})`)
-		return agent
+		log("info", "agents", `Task ${task.id}: ${sel.agent ? `Spezialist „${sel.agent.name}“` : "kein Agent"} (${mode})`)
+		return sel.agent
+	}
+
+	/**
+	 * Routing-Preview / Dry-Run (M3): Führt exakt dieselbe Pipeline wie
+	 * `runTask` durch (Profil → Policies → Scoring), aber ohne Execution,
+	 * Persistenz oder Failover. Liefert die Entscheidung inkl. Scores und
+	 * Ausschlüssen — oder `undefined`, wenn die Task nicht existiert.
+	 */
+	preview(taskId: string): RoutePreview | undefined {
+		const task = getTask(this.deps.db, taskId)
+		if (!task) {
+			return undefined
+		}
+		const sel = this.selectAgent(task)
+		const agent = sel.ok ? sel.agent : undefined
+		const profile = this.applyAgentConstraints(extractProfile(task), agent)
+		const candidates = this.buildCandidates()
+		const { weights, excluded, allowed } = applyPolicies(candidates, profile, DEFAULT_WEIGHTS)
+		const scored = allowed
+			.map((c) => scoreCandidate(c, profile, weights, this.deps.feedback))
+			.sort((a, b) => b.score - a.score)
+		const ordered = this.orderByMode(scored, allowed, profile.mode, false)
+		return {
+			taskId: task.id,
+			assignmentMode: task.assignmentMode ?? "auto",
+			agentId: agent?.id,
+			agentName: agent?.name,
+			agentReason: sel.reason,
+			decision: {
+				executionId: "", // Dry-Run — noch keine Execution
+				chosenInstanceId: ordered[0]?.instance.id,
+				candidates: scored,
+				excluded,
+				profile,
+				weights: weights as unknown as Record<string, number>,
+				createdAt: new Date().toISOString(),
+			},
+			createdAt: new Date().toISOString(),
+		}
 	}
 
 	/** Agent-Einschränkungen → Routing-Profil (Privacy, Fähigkeiten, Pins). */
@@ -439,7 +498,12 @@ export class ExecutionEngine {
 	}
 
 	/** Modus-basierte Reihenfolge: `round-robin` rotiert, sonst Score-Top. */
-	private orderByMode(scored: CandidateScore[], allowed: PolicyCandidate[], mode: string): PolicyCandidate[] {
+	private orderByMode(
+		scored: CandidateScore[],
+		allowed: PolicyCandidate[],
+		mode: string,
+		advanceCursor = true,
+	): PolicyCandidate[] {
 		const byId = new Map(allowed.map((c) => [c.instance.id, c]))
 		const ordered = scored
 			.map((s) => byId.get(s.instanceId))
@@ -449,7 +513,9 @@ export class ExecutionEngine {
 		}
 		const provider = ordered[0].instance.providerId
 		const cursor = this.roundRobinCursor.get(provider) ?? 0
-		this.roundRobinCursor.set(provider, cursor + 1)
+		if (advanceCursor) {
+			this.roundRobinCursor.set(provider, cursor + 1)
+		}
 		const start = cursor % ordered.length
 		return [...ordered.slice(start), ...ordered.slice(0, start)]
 	}

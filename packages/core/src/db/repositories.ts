@@ -18,6 +18,7 @@ import type {
 	Provider,
 	ProviderStatus,
 	ProviderType,
+	PromptTemplate,
 	RoutingDecision,
 	Swarm,
 	Task,
@@ -1134,4 +1135,59 @@ export function latestAgentSelection(db: Db, taskId: string): AgentSelectionReco
 		candidates: JSON.parse(row.candidates_json) as AgentScore[],
 		createdAt: row.created_at,
 	}
+}
+
+/* ------------------------------ Prompt-Templates ----------------------------- */
+
+interface TemplateRow {
+	id: string
+	name: string
+	prompt: string
+	created_at: string
+}
+
+function mapTemplate(row: TemplateRow): PromptTemplate {
+	return { id: row.id, name: row.name, prompt: row.prompt, createdAt: row.created_at }
+}
+
+export function listTemplates(db: Db): PromptTemplate[] {
+	const rows = db.prepare("SELECT * FROM prompt_templates ORDER BY name COLLATE NOCASE").all() as TemplateRow[]
+	return rows.map(mapTemplate)
+}
+
+export function getTemplate(db: Db, id: string): PromptTemplate | undefined {
+	const row = db.prepare("SELECT * FROM prompt_templates WHERE id = ?").get(id) as TemplateRow | undefined
+	return row ? mapTemplate(row) : undefined
+}
+
+export function createTemplate(db: Db, input: { name: string; prompt: string }): PromptTemplate {
+	const now = new Date().toISOString()
+	const tpl: PromptTemplate = { id: randomUUID(), name: input.name, prompt: input.prompt, createdAt: now }
+	db.prepare("INSERT INTO prompt_templates (id, name, prompt, created_at) VALUES (?, ?, ?, ?)").run(
+		tpl.id,
+		tpl.name,
+		tpl.prompt,
+		now,
+	)
+	return tpl
+}
+
+export function updateTemplate(
+	db: Db,
+	id: string,
+	patch: { name?: string; prompt?: string },
+): PromptTemplate | undefined {
+	const existing = getTemplate(db, id)
+	if (!existing) {
+		return undefined
+	}
+	const name = patch.name?.trim() || existing.name
+	const prompt = patch.prompt !== undefined ? patch.prompt : existing.prompt
+	db.prepare("UPDATE prompt_templates SET name = ?, prompt = ? WHERE id = ?").run(name, prompt, id)
+	return getTemplate(db, id)
+}
+
+export function deleteTemplate(db: Db, id: string): boolean {
+	const result = db.prepare("DELETE FROM prompt_templates WHERE id = ?").run(id)
+	return result.changes > 0
 }

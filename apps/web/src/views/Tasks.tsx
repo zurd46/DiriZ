@@ -1,4 +1,4 @@
-import type { PrivacyMode, RoutingDecision, RoutingMode, Task } from "@diriz/shared"
+import type { PrivacyMode, PromptTemplate, RoutePreview, RoutingDecision, RoutingMode, Task } from "@diriz/shared"
 import { useEffect, useState } from "react"
 import { api } from "../lib/api.js"
 import type { TaskDetail } from "../store.js"
@@ -29,12 +29,24 @@ export default function Tasks() {
 	const [ovSystem, setOvSystem] = useState("")
 	const [showOverrides, setShowOverrides] = useState(false)
 	const [busy, setBusy] = useState(false)
+	const [templates, setTemplates] = useState<PromptTemplate[]>([])
+	const [tplName, setTplName] = useState("")
+	const [preview, setPreview] = useState<RoutePreview | undefined>(undefined)
+	const [previewBusy, setPreviewBusy] = useState(false)
 
 	useEffect(() => {
 		if (selected) {
 			void loadDetail(selected)
+		} else {
+			setPreview(undefined)
 		}
 	}, [selected, loadDetail])
+
+	const loadTemplates = () => {
+		void api.get<PromptTemplate[]>("/api/templates").then(setTemplates).catch(() => {})
+	}
+
+	useEffect(loadTemplates, [])
 
 	const createTask = async () => {
 		setBusy(true)
@@ -90,6 +102,36 @@ export default function Tasks() {
 			await refresh()
 		} catch (e) {
 			setLastError(e instanceof Error ? e.message : String(e))
+		}
+	}
+
+	const saveTemplate = async () => {
+		try {
+			await api.post("/api/templates", { name: tplName.trim(), prompt: ovSystem })
+			setTplName("")
+			loadTemplates()
+		} catch (e) {
+			setLastError(e instanceof Error ? e.message : String(e))
+		}
+	}
+
+	const removeTemplate = async (id: string) => {
+		try {
+			await api.del(`/api/templates/${id}`)
+			loadTemplates()
+		} catch (e) {
+			setLastError(e instanceof Error ? e.message : String(e))
+		}
+	}
+
+	const runPreview = async (id: string) => {
+		setPreviewBusy(true)
+		try {
+			setPreview(await api.post<RoutePreview>(`/api/tasks/${id}/preview`))
+		} catch (e) {
+			setLastError(e instanceof Error ? e.message : String(e))
+		} finally {
+			setPreviewBusy(false)
 		}
 	}
 
@@ -211,6 +253,24 @@ export default function Tasks() {
 									placeholder="—"
 								/>
 							</label>
+						<label className="field">
+							Vorlage → System-Prompt
+							<select
+								value=""
+								onChange={(e) => {
+									const t = templates.find((x) => x.id === e.target.value)
+									if (t) setOvSystem(t.prompt)
+								}}
+							>
+								<option value="">— Vorlage wählen —</option>
+								{templates.map((t) => (
+									<option key={t.id} value={t.id}>
+										{t.name}
+									</option>
+								))}
+							</select>
+						</label>
+
 							<label className="field" style={{ flex: 1, minWidth: 240 }}>
 								Override System-Prompt
 								<textarea
@@ -221,6 +281,46 @@ export default function Tasks() {
 							</label>
 						</div>
 					)}
+				{showOverrides && (
+					<div style={{ marginTop: 8 }}>
+						<strong>Vorlagen verwalten</strong>
+						<div className="row" style={{ marginTop: 6, gap: 8, flexWrap: "wrap" }}>
+							{templates.map((t) => (
+								<span key={t.id} className="badge">
+									<button
+										type="button"
+										className="linklike"
+										title="In System-Prompt übernehmen"
+										onClick={() => setOvSystem(t.prompt)}
+									>
+										{t.name}
+									</button>{" "}
+									·{" "}
+									<button type="button" className="linklike" onClick={() => void removeTemplate(t.id)}>
+										✕
+									</button>
+								</span>
+							))}
+							{templates.length === 0 && <span className="muted">Keine Vorlagen vorhanden.</span>}
+						</div>
+						<div className="row" style={{ marginTop: 6, gap: 8 }}>
+							<input
+								value={tplName}
+								onChange={(e) => setTplName(e.target.value)}
+								placeholder="Neue Vorlage — Name (speichert aktuellen System-Prompt)"
+							/>
+							<button
+								type="button"
+								className="btn"
+								onClick={() => void saveTemplate()}
+								disabled={tplName.trim().length === 0 || ovSystem.trim().length === 0}
+							>
+								Vorlage speichern
+							</button>
+						</div>
+					</div>
+				)}
+
 					<div className="row" style={{ marginTop: 10 }}>
 						<button
 							type="button"

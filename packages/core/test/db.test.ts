@@ -11,15 +11,19 @@ import {
 	createExecution,
 	createProvider,
 	createTask,
+	createTemplate,
 	deleteProvider,
+	deleteTemplate,
 	getFileContent,
 	getTask,
+	getTemplate,
 	latestDecision,
 	listFilesByTask,
 	listInstances,
 	listLogRows,
 	listProviders,
 	listTasks,
+	listTemplates,
 	metricsSummary,
 	persistLog,
 	replayOutput,
@@ -31,6 +35,7 @@ import {
 	timeseries,
 	updateExecution,
 	updateProvider,
+	updateTemplate,
 	upsertInstance,
 	workspaceFiles,
 } from "../src/db/repositories.js"
@@ -234,5 +239,36 @@ describe("db: Logs & Metriken", () => {
 		expect(points[0]?.requests).toBe(1)
 
 		db.prepare("DELETE FROM tasks WHERE id = ?").run(task.id)
+	})
+})
+
+describe("db: Prompt-Templates", () => {
+	it("seedet Standard-Vorlagen und erlaubt CRUD", () => {
+		const seeded = listTemplates(db)
+		expect(seeded.some((t) => t.name === "Senior-Dev")).toBe(true)
+		expect(seeded.some((t) => t.name === "Kritischer Reviewer")).toBe(true)
+
+		const tpl = createTemplate(db, { name: "Test-Vorlage", prompt: "Sei präzise." })
+		expect(getTemplate(db, tpl.id)?.name).toBe("Test-Vorlage")
+
+		const renamed = updateTemplate(db, tpl.id, { name: "Umbenannt" })
+		expect(renamed?.name).toBe("Umbenannt")
+		expect(renamed?.prompt).toBe("Sei präzise.")
+
+		const edited = updateTemplate(db, tpl.id, { prompt: "Neuer Text." })
+		expect(edited?.prompt).toBe("Neuer Text.")
+
+		expect(deleteTemplate(db, tpl.id)).toBe(true)
+		expect(listTemplates(db).some((t) => t.id === tpl.id)).toBe(false)
+	})
+
+	it("verweigert doppelte Namen und unbekannte IDs", () => {
+		const dup = createTemplate(db, { name: "Duplikat", prompt: "x" })
+		expect(() => createTemplate(db, { name: "Duplikat", prompt: "y" })).toThrow()
+
+		expect(updateTemplate(db, "keine-id", { name: "Neu" })).toBeUndefined()
+		expect(deleteTemplate(db, "keine-id")).toBe(false)
+
+		deleteTemplate(db, dup.id)
 	})
 })

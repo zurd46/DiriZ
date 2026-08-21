@@ -1,0 +1,57 @@
+# Changelog – Instanz-spezifische Versionsgeschichte
+
+Alle bemerkenswerten Änderungen an dieser Instanz werden in diesem Protokoll dokumentiert.
+
+Format: Keep a Changelog Konvention, Semantic Versioning.
+
+## Unveröffentlichte Änderungen
+
+### Hinzugefügt
+- Neue Fähigkeiten oder Modelle, die hinzugefügt wurden
+
+### Ändernd
+- Anpassungen an bestehenden Konfigurationen
+
+### Deprecated
+- Veraltete Einstellungen oder Parameter
+
+### Entfernnt
+- Entfernte Konfigurationen oder Modelle
+
+### Behoben
+- Behebte Fehler oder Probleme
+
+---
+
+# DiriZ Instanz Changelog
+
+**Instanz-ID:** {{INSTANCE_ID}}  
+**Modell:** {{MODEL_ID}}  
+**Begonnen am:** {{START_DATE}}
+
+## [{{CURRENT_VERSION}}] - {{DATE}}
+
+### Hinzugefügt
+- Erste Konfiguration für Instanz {{INSTANCE_ID}}
+- Anbindung an Provider {{PROVIDER_TYPE}}
+- Basis-System-Prompt Einrichtung
+
+### Ändernd
+- Keine Änderungen seit der Erstellung
+
+### Deprecated
+- Keine Deprecations
+
+### Entfernnt
+- Keine Entfernngen
+
+### Behoben
+- Keine bekannten Fehler
+
+---
+
+*Dieses Changelog wird automatisch aktualisiert bei:*
+- Jeder Task-Ausführung
+- Modell-Wechsel
+- Parameter-Anpassungen
+- Fehlern und Failover-Ereignissen

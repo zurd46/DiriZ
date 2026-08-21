@@ -61,6 +61,29 @@ describe("routing: Policies", () => {
 		expect(excluded).toHaveLength(0)
 	})
 
+	it("schließt teure Cloud-Modelle aus, wenn das Budget nicht reicht (Budget-Gate)", () => {
+		const cheap = candidate(instance({ id: "cheap", pricePerMTok: { in: 0.1, out: 0.3 } }), {
+			providerType: "openrouter",
+		})
+		const expensive = candidate(instance({ id: "expensive", pricePerMTok: { in: 5, out: 15 } }), {
+			providerType: "openrouter",
+		})
+		const prof = { ...profile, privacy: "allow-cloud" as const, budgetUsd: 0.05 }
+		// estTokens=10_000 → cheap Ø 0.2 $/MTok ≈ 0.002 $ (OK); expensive Ø 10 $/MTok = 0.1 $ (> 0.05)
+		const { allowed, excluded } = applyPolicies([cheap, expensive], prof, DEFAULT_WEIGHTS)
+		expect(allowed.map((c) => c.instance.id)).toEqual(["cheap"])
+		expect(excluded).toHaveLength(1)
+		expect(excluded[0]?.reason).toContain("Budget")
+	})
+
+	it("lässt lokale (kostenlose) Modelle auch mit kleinem Budget zu", () => {
+		const local = candidate(instance({ id: "local" }))
+		const prof = { ...profile, budgetUsd: 0.01 }
+		const { allowed, excluded } = applyPolicies([local], prof, DEFAULT_WEIGHTS)
+		expect(allowed).toHaveLength(1)
+		expect(excluded).toHaveLength(0)
+	})
+
 	it("schließt zu kleine Context-Fenster aus (Gate 1.2×)", () => {
 		const small = candidate(instance({ id: "small", contextWindow: 4096 }))
 		const { allowed, excluded } = applyPolicies([small], profile, DEFAULT_WEIGHTS)

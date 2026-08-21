@@ -225,10 +225,19 @@ export class ExecutionEngine {
 			}
 			const agent = getAgent(this.deps.db, task.agentId)
 			if (!agent?.enabled) {
-				return { candidates: [], reason: `Agent ${task.agentId} existiert nicht oder ist deaktiviert`, ok: false }
+				return {
+					candidates: [],
+					reason: `Agent ${task.agentId} existiert nicht oder ist deaktiviert`,
+					ok: false,
+				}
 			}
 			const reason = "Manuell zugewiesener Spezialist"
-			return { agent, candidates: [{ agentId: agent.id, name: agent.name, score: 0, reasons: [reason] }], reason, ok: true }
+			return {
+				agent,
+				candidates: [{ agentId: agent.id, name: agent.name, score: 0, reasons: [reason] }],
+				reason,
+				ok: true,
+			}
 		}
 
 		if (mode === "swarm") {
@@ -237,7 +246,11 @@ export class ExecutionEngine {
 			}
 			const swarm = getSwarm(this.deps.db, task.swarmId)
 			if (!swarm?.enabled) {
-				return { candidates: [], reason: `Swarm ${task.swarmId} existiert nicht oder ist deaktiviert`, ok: false }
+				return {
+					candidates: [],
+					reason: `Swarm ${task.swarmId} existiert nicht oder ist deaktiviert`,
+					ok: false,
+				}
 			}
 			const members = pool.filter((a) => swarm.agentIds.includes(a.id))
 			if (members.length === 0) {
@@ -249,7 +262,9 @@ export class ExecutionEngine {
 				agent,
 				candidates,
 				reason:
-					members.length === 1 ? `Einziger Agent im Swarm „${swarm.name}“` : `Bester Agent im Swarm „${swarm.name}“`,
+					members.length === 1
+						? `Einziger Agent im Swarm „${swarm.name}“`
+						: `Bester Agent im Swarm „${swarm.name}“`,
 				ok: true,
 			}
 		}
@@ -261,7 +276,9 @@ export class ExecutionEngine {
 				agent: pool.find((a) => a.id === best.agentId),
 				candidates,
 				reason:
-					best.reasons.length > 0 ? `Automatische Zuordnung: ${best.reasons.join("; ")}` : "Automatische Zuordnung",
+					best.reasons.length > 0
+						? `Automatische Zuordnung: ${best.reasons.join("; ")}`
+						: "Automatische Zuordnung",
 				ok: true,
 			}
 		}
@@ -303,7 +320,11 @@ export class ExecutionEngine {
 				candidates: sel.candidates,
 			},
 		})
-		log("info", "agents", `Task ${task.id}: ${sel.agent ? `Spezialist „${sel.agent.name}“` : "kein Agent"} (${mode})`)
+		log(
+			"info",
+			"agents",
+			`Task ${task.id}: ${sel.agent ? `Spezialist „${sel.agent.name}“` : "kein Agent"} (${mode})`,
+		)
 		return sel.agent
 	}
 

@@ -15,10 +15,10 @@ import type {
 	InstanceModel,
 	ModelSettings,
 	ModelSource,
+	PromptTemplate,
 	Provider,
 	ProviderStatus,
 	ProviderType,
-	PromptTemplate,
 	RoutingDecision,
 	Swarm,
 	Task,
@@ -194,6 +194,7 @@ interface InstanceRow {
 	status: string
 	model_settings: string | null
 	last_seen_at: string
+	locked_until: string | null
 }
 
 function mapInstance(row: InstanceRow): InstanceModel {
@@ -214,6 +215,7 @@ function mapInstance(row: InstanceRow): InstanceModel {
 		status: row.status as ProviderStatus,
 		modelSettings: parseSettings(row.model_settings),
 		lastSeenAt: row.last_seen_at,
+		lockedUntil: row.locked_until ?? undefined,
 	}
 }
 
@@ -711,16 +713,39 @@ export function getFileContent(db: Db, executionId: string, relPath: string): st
 	return row?.content
 }
 
-/** Workspace-Baum: jede Datei einmal, mit dem neusten Stand. */
-export function workspaceFiles(db: Db): { relPath: string; size: number }[] {
+/** Workspace-Baum: jede Datei einmal, mit dem neusten Stand (inkl. Herkunft). */
+export function workspaceFiles(
+	db: Db,
+): { relPath: string; size: number; executionId: string; taskId: string }[] {
 	const rows = db
 		.prepare(
-			`SELECT f.rel_path, f.size FROM files f
+			`SELECT f.rel_path, f.size, f.execution_id, f.task_id FROM files f
 			 JOIN (SELECT rel_path, MAX(id) AS max_id FROM files GROUP BY rel_path) latest ON f.id = latest.max_id
 			 ORDER BY f.rel_path`,
 		)
-		.all() as { rel_path: string; size: number }[]
-	return rows.map((r) => ({ relPath: r.rel_path, size: r.size }))
+		.all() as { rel_path: string; size: number; execution_id: string; task_id: string }[]
+	return rows.map((r) => ({
+		relPath: r.rel_path,
+		size: r.size,
+		executionId: r.execution_id,
+		taskId: r.task_id,
+	}))
+}
+
+/** Alle Läufe einer Datei (neueste zuerst) — Basis für die Diff-Ansicht. */
+export function listFileHistory(
+	db: Db,
+	relPath: string,
+): { executionId: string; taskId: string; size: number; createdAt: string }[] {
+	const rows = db
+		.prepare("SELECT execution_id, task_id, size, created_at FROM files WHERE rel_path = ? ORDER BY id DESC")
+		.all(relPath) as { execution_id: string; task_id: string; size: number; created_at: string }[]
+	return rows.map((r) => ({
+		executionId: r.execution_id,
+		taskId: r.task_id,
+		size: r.size,
+		createdAt: r.created_at,
+	}))
 }
 
 /* ------------------------------------- Logs ---------------------------------- */
@@ -1151,7 +1176,9 @@ function mapTemplate(row: TemplateRow): PromptTemplate {
 }
 
 export function listTemplates(db: Db): PromptTemplate[] {
-	const rows = db.prepare("SELECT * FROM prompt_templates ORDER BY name COLLATE NOCASE").all() as TemplateRow[]
+	const rows = db
+		.prepare("SELECT * FROM prompt_templates ORDER BY name COLLATE NOCASE")
+		.all() as TemplateRow[]
 	return rows.map(mapTemplate)
 }
 

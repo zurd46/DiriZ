@@ -39,6 +39,7 @@ export interface ProviderEntry {
 	type: ProviderType
 	label: string
 	baseUrl: string
+	encryptedApiKey?: string
 	adapter: LLMProvider
 }
 
@@ -49,6 +50,7 @@ type ApiKeyResolver = (providerId: string) => string | undefined
 export class ProviderRegistry {
 	private adapters = new Map<string, LLMProvider>()
 	private meta = new Map<string, ProviderEntry>()
+	private apiKeyCache = new Map<string, string | undefined>()
 	private circuits = new Map<string, CircuitState>()
 	private latencySamples = new Map<string, LatencySample[]>()
 	private pollers = new Map<string, NodeJS.Timeout>()
@@ -68,13 +70,27 @@ export class ProviderRegistry {
 	/* ------------------------------ Registrierung ----------------------------- */
 
 	register(providerId: string, type: ProviderType, baseUrl: string, label: string): void {
-		const adapter = createProvider(providerId, type, baseUrl, this.resolveApiKey(providerId), label)
+		const apiKey = this.resolveApiKey(providerId)
+		const adapter = createProvider(providerId, type, baseUrl, apiKey, label)
 		this.adapters.set(providerId, adapter)
 		this.meta.set(providerId, { providerId, type, label, baseUrl, adapter })
+		this.apiKeyCache.set(providerId, apiKey)
 		this.circuits.set(providerId, { failures: 0, openUntil: 0 })
 		this.log("info", "registry", `Provider registriert: ${label} (${type})`)
 	}
-
+	/**
+	 * Prüft, ob für einen Provider ein API-Schlüssel hinterlegt ist.
+	 */
+	hasApiKey(providerId: string): boolean {
+		return !!this.apiKeyCache.get(providerId)
+	}
+	/**
+	 * Holt den decodierten API-Schlüssel für einen Provider.
+	 * Gibt undefined zurück, wenn kein Key hinterlegt ist.
+	 */
+	getApiKey(providerId: string): string | undefined {
+		return this.apiKeyCache.get(providerId)
+	}
 	unregister(providerId: string): void {
 		this.stopPolling(providerId)
 		this.adapters.delete(providerId)

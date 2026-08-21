@@ -74,6 +74,19 @@ export function applyPolicies(
 				continue
 			}
 		}
+		// Budget-Gate (§16): geschätzte Kosten = estTokens × Ø-Preis. Lokale
+		// Modelle (ohne Preis) sind kostenlos und passieren immer.
+		if (profile.budgetUsd !== undefined && profile.budgetUsd > 0 && c.instance.pricePerMTok) {
+			const perMtok = (c.instance.pricePerMTok.in + c.instance.pricePerMTok.out) / 2
+			const estCostUsd = (profile.estTokens * perMtok) / 1_000_000
+			if (estCostUsd > profile.budgetUsd) {
+				pushExcluded(
+					c,
+					`Budget-Gate: geschätzte Kosten ${estCostUsd.toFixed(3)} $ übersteigen Budget ${profile.budgetUsd} $`,
+				)
+				continue
+			}
+		}
 		if (c.instance.contextWindow < profile.estTokens * 1.2) {
 			pushExcluded(
 				c,

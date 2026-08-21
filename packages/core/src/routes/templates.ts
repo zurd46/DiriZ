@@ -5,7 +5,13 @@
 
 import type { FastifyInstance } from "fastify"
 import type { AppContext } from "../app.js"
-import { createTemplate, deleteTemplate, getTemplate, listTemplates, updateTemplate } from "../db/repositories.js"
+import {
+	createTemplate,
+	deleteTemplate,
+	getTemplate,
+	listTemplates,
+	updateTemplate,
+} from "../db/repositories.js"
 
 interface TemplateBody {
 	name?: string

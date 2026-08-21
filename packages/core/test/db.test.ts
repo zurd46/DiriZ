@@ -18,6 +18,7 @@ import {
 	getTask,
 	getTemplate,
 	latestDecision,
+	listFileHistory,
 	listFilesByTask,
 	listInstances,
 	listLogRows,
@@ -166,6 +167,25 @@ describe("db: Dateien", () => {
 		expect(a?.size).toBe(4)
 		expect(getFileContent(db, exec.id, "src/a.py")).toBe("v11")
 		expect(workspaceFiles(db).some((f) => f.relPath === "src/b.py")).toBe(true)
+
+		db.prepare("DELETE FROM tasks WHERE id = ?").run(task.id)
+	})
+
+	it("liefert die Datei-Historie (neueste zuerst) und Herkunft im Workspace-Baum", () => {
+		const task = createTask(db, { prompt: "History" })
+		const exec1 = createExecution(db, { taskId: task.id })
+		const exec2 = createExecution(db, { taskId: task.id })
+		saveFile(db, { executionId: exec1.id, taskId: task.id, relPath: "src/h.py", size: 2, content: "alt" })
+		saveFile(db, { executionId: exec2.id, taskId: task.id, relPath: "src/h.py", size: 5, content: "neuer" })
+
+		const history = listFileHistory(db, "src/h.py")
+		expect(history).toHaveLength(2)
+		expect(history[0]?.executionId).toBe(exec2.id)
+		expect(history[1]?.executionId).toBe(exec1.id)
+
+		const latest = workspaceFiles(db).find((f) => f.relPath === "src/h.py")
+		expect(latest?.executionId).toBe(exec2.id)
+		expect(latest?.taskId).toBe(task.id)
 
 		db.prepare("DELETE FROM tasks WHERE id = ?").run(task.id)
 	})

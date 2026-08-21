@@ -1,0 +1,48 @@
+# Plan – Instanz-spezifische Ausführung
+
+**Instanz-ID:** {{INSTANCE_ID}}  
+**Erstellt am:** {{TIMESTAMP}}  
+**Aktualisiert zuletzt:** {{LAST_UPDATED}}
+
+## 1. Aufgabe / Task
+Beschreibung der aktuellen Aufgabe, die von dieser Instanz bearbeitet wird.
+
+## 2. Modell-Konfiguration
+- **Provider-Typ:** {{PROVIDER_TYPE}}
+- **Modell-ID:** {{MODEL_ID}}
+- **Base URL:** {{BASE_URL}}
+- **Privacy-Modus:** {{PRIVACY_MODE}} (local-only / allow-cloud)
+- **System-Prompt:** {{SYSTEM_PROMPT}}
+
+## 3. Ausführungsparameter
+- **Temperature:** {{TEMPERATURE}}
+- **Max Tokens:** {{MAX_TOKENS}}
+- **Top P:** {{TOP_P}}
+- **Top K:** {{TOP_K}}
+- **Kontext-Fenster:** {{CONTEXT_WINDOW}}
+
+## 4. Routing-Entscheidung
+Begründung, warum diese Instanz für die aktuelle Aufgabe gewählt wurde:
+- Qualitäts-Score: {{QUALITY_SCORE}}
+- Kontext-Passgenauigkeit: {{CONTEXT_FIT}}
+- Kosten-Prognose: {{COST_ESTIMATE}}
+
+## 5. Status
+- **Aktueller Status:** {{STATUS}} (draft / routing / queued / running / done / failed / cancelled)
+- **Laufzeit:** {{RUNTIME}}
+- **Token-Nutzung:** Eingänge: {{INPUT_TOKENS}}, Ausgänge: {{OUTPUT_TOKENS}}
+
+## 6. Fehler-Behandlung
+- Failover-Schwelle: {{FAILOVER_THRESHOLD}} Hops
+- Circuit Breaker Status: {{CIRCUIT_BREAKER_STATUS}}
+- Letzter Fehler (falls vorhanden): {{LAST_ERROR}}
+
+## 7. Workspace-Verzeichnis
+Pfad zu lokalem Workspace für diese Instanz:
+- {{WORKSPACE_DIR}}
+
+## 8. Spezialanweisungen
+Zusätzliche Konfigurationen oder Constraints für diese spezifische Instanz.
+
+---
+*Dieser Plan wird automatisch bei Task-Start und bei Änderungen der Routing-Entscheidung aktualisiert.*

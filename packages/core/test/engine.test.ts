@@ -240,9 +240,9 @@ describe("engine: Routing-Preview (Dry-Run)", () => {
 		expect(preview).toBeTruthy()
 		expect(preview?.taskId).toBe(task.id)
 		expect(preview?.decision.chosenInstanceId).toBeTruthy()
-		expect(preview!.decision.candidates.length).toBeGreaterThan(0)
-		expect(preview!.decision.executionId).toBe("")
-		expect(preview!.decision.profile.estTokens).toBeGreaterThan(0)
+		expect(preview?.decision.candidates.length).toBeGreaterThan(0)
+		expect(preview?.decision.executionId).toBe("")
+		expect(preview?.decision.profile.estTokens).toBeGreaterThan(0)
 
 		// Keine Seiteneffekte: keine Execution, Status unverändert, kein neues Event.
 		expect(listExecutionsByTask(db, task.id)).toHaveLength(0)

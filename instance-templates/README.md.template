@@ -1,0 +1,92 @@
+# Instanz-Dokumentation
+
+**Instanz-ID:** {{INSTANCE_ID}}  
+**Modell:** {{MODEL_ID}}  
+**Provider:** {{PROVIDER_TYPE}}  
+**Erstellt am:** {{TIMESTAMP}}
+
+## 📋 Übersicht
+
+Beschreibung dieser lokalen KI-Instanz und ihrer Fähigkeiten innerhalb des DiriZ-Orchestrierungssystems.
+
+---
+
+## ✨ Fähigkeiten / Capabilities
+
+Liste der verfügbaren Fertigkeiten für diese Instanz:
+- {{CAPABILITY_1}}
+- {{CAPABILITY_2}}
+- {{CAPABILITY_3}}
+
+---
+
+## 🔧 Konfiguration
+
+### Anbieter-Einstellungen
+- **Provider-Typ:** {{PROVIDER_TYPE}}
+- **Endpunkt URL:** {{BASE_URL}}
+- **API-Schlüssel:** (verschlüsselt/sicher gespeichert)
+- **Privacy-Modus:** {{PRIVACY_MODE}}
+
+### Modell-Eigenschaften
+- **Kontext-Fenster:** {{CONTEXT_WINDOW}} Token
+- **Quantisierung:** {{QUANTIZATION}}
+- **Verfügbare Sprachen:** {{LANGUAGES}}
+
+---
+
+## 📊 Monitoring & Metriken
+
+### Aktueller Status
+- **Status:** {{STATUS}} (online / offline / degraded)
+- **Letzte Prüfung:** {{LAST_CHECKED_AT}}
+- **Latenz:** {{LATENCY_MS}} ms (P50/P95)
+
+### Token-Nutzung
+- **24h Input:** {{INPUT_TOKENS_24h}}
+- **24h Output:** {{OUTPUT_TOKENS_24h}}
+- **Kosten (24h):** {{COST_USD_24h}}
+
+---
+
+## 📁 Workspace
+
+Verzeichnis für von der KI generierte Dateien:
+- {{WORKSPACE_DIR}}
+
+### Aktuelle Dateien
+Liste der imWorkspace erstellten Dateien wird hier angezeigt.
+
+---
+
+## 🔄 Routing & Entscheidungsfindung
+
+Informationen zur Auswahl dieser Instanz durch das DiriZ-System:
+- **Routing-Modus:** {{ROUTING_MODE}} (auto / pinned / round-robin / cost-aware)
+- **Qualitäts-Score:** {{QUALITY_SCORE}}
+- **Grund für Selektion:** {{SELECTION_REASON}}
+
+---
+
+## ⚠️ Fehlerbehandlung & Failover
+
+- **Max. Failover-Hops:** {{MAX_FAILOVER_HOPS}}
+- **Circuit Breaker Schwelle:** {{CIRCUIT_BREAKER_FAILURE_THRESHOLD}}
+- **Verhalten bei Ausfall:** Beschreibung des Verhaltens, wenn diese Instanz nicht verfügbar ist.
+
+---
+
+## 📝 Feedback & Bewertung
+
+Mögliche Bewertungen dieser Instanz-Ausführung:
+- 1-5 Sterne Bewertung
+- Kommentare zur Qualität
+- Automatische Signale für Abbruch oder Neu-Routing
+
+---
+
+*Diese Dokumentation wird automatisch aktualisiert bei:*
+- Jeder Task-Ausführung
+- Parameter-Änderungen
+- Status-Änderungen des Providers
+- Neue Modell-Discovery

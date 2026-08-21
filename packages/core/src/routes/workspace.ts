@@ -5,11 +5,19 @@
 
 import type { FastifyInstance } from "fastify"
 import type { AppContext } from "../app.js"
-import { getFileContent, workspaceFiles } from "../db/repositories.js"
+import { getFileContent, listFileHistory, workspaceFiles } from "../db/repositories.js"
 
 export function registerWorkspace(app: FastifyInstance, ctx: AppContext): void {
 	app.get("/api/workspace", () => {
 		return { dir: ctx.workspaceDir, files: workspaceFiles(ctx.db) }
+	})
+
+	app.get<{ Querystring: { path?: string } }>("/api/workspace/file-history", (req, reply) => {
+		const relPath = req.query.path
+		if (!relPath) {
+			return reply.code(400).send({ error: "path ist erforderlich" })
+		}
+		return listFileHistory(ctx.db, relPath)
 	})
 
 	app.get<{ Querystring: { executionId?: string; path?: string } }>("/api/workspace/file", (req, reply) => {

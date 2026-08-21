@@ -1,79 +1,92 @@
 # DiriZ Entwicklung Status
 
-## Aktueller Stand: Nach M1 (März 2026)
+> **Letzte Aktualisierung: 21.08.2026** — nach Abschluss von M2/Q4 (Prompt-Templates) und M3/Routing-Preview (Backend + UI).
 
-Dieses Dokument fasst den aktuellen Entwicklungsstand zusammen und zeigt auf, was bereits erledigt ist und was noch offen steht.
+## Aktueller Stand
 
----
+M0–M3 sind vollständig implementiert. Die zuletzt umgesetzten Plan-Items:
 
-## ✅ Erledigt (M0 & M1)
+- **M2/Q4 Prompt-Templates** („Senior-Dev“, „Kritischer Reviewer“) — Backend + UI
+- **M3 Routing-Preview (Dry-Run)** — Engine-Methode + API + UI
 
-### M0 - Grundlagen
-- [x] Monorepo-Einrichtung mit npm workspaces
-- [x] SQLite-Datenbank (`packages/core/src/db/`)
-- [x] TypeScript-Konfiguration für Core und Web-App
-- [x] `npm run dev` funktioniert lokal
-- [x] Lint, Build und Type-Check alle "green"
-
-### M1 - Provider & Agenten (Kern-Funktionalität)
-- [x] **Provider-Layer**: Ollama, LM Studio, OpenAI-compatible Models
-- [x] **Agent/Swarm-Zuweisung**: `assignmentMode` (auto/agent/swarm)
-- [x] **Model Merge Chain**: Kombiniert mehrere Model-Anbieter zu einem Logical Model
-- [x] **70+ Tests bestehen** im Test-Suite
-- [x] **Live Smoke Test** erfolgreich verlaufen
+Alle Checks sind grün: `npm run check` (Biome-Lint, Typecheck Core+Web, **74 Tests**) und `npm run build` (Core tsc + Web Vite-Bundle).
 
 ---
 
-## 🔄 In Bearbeitung / Teilweise Implementiert
+## ✅ Erledigt
 
-### M2 Q4 - System-Prompt-Templates ("Senior-Dev", "Kritischer Reviewer")
-- [x] **State-Variablen hinzugefügt**: `templates`, `editingTemplate`, `newTemplateName`, `newTemplatePrompt` in `apps/web/src/views/Tasks.tsx`
-- [ ] **UI-Integration**: Template-Auswahl-Dropdown im Task-Formular
-- [ ] **Template CRUD**: Create/Read/Update/Delete-Funktionalität für Prompt-Templates
-- [ ] **Integration mit Task-Form**: Templates sollen das `systemPrompt`-Feld vorbefüllen
+### M0 — Grundlagen
+- [x] Monorepo mit npm workspaces (`packages/*`, `apps/*`)
+- [x] Biome (Lint+Format), TypeScript strict, Vitest, Vite/React, Fastify-Skelett
+- [x] SQLite-Datenbank + Migrationen (`packages/core/db/migrations/`)
+- [x] `npm run dev` lokal: Web auf :5173, Core auf :8787
 
-**Status**: State wurde hinzugefügt, UI-Integration benötigt weitere Arbeit. Direkte JSX-Edits erwiesen sich als fehleranfällig.
+### M1 — Provider-Schicht
+- [x] Adapter: Ollama, LM Studio, OpenAI-kompatibel (Discovery + Health-Poller)
+- [x] Circuit Breaker / Status-Tracking der Instanzen
+- [x] UI: Instanzen-View mit Live-Status
 
-### M3 - Routing-Preview (Dry-Run): Entscheidung vor Ausführung anzeigen
-- [x] **Backend-Funktion**: `routeTaskWithoutExecution(db: Db, task: Task): RoutePreviewResult` in `packages/core/src/db/repositories.ts` hinzugefügt (nach `latestDecision`, Zeile ~676)
-- [x] **API-Route**: `/:id/route-preview` in `packages/core/src/routes/tasks.ts` definiert
-- [x] **Scoring-Logik**: Nutzt `DEFAULT_WEIGHTS` aus `packages/shared/src/scoring.ts` (contextFit, capabilityMatch, costScore, latencyScore)
-- [ ] **TypeScript-Typen**: Fehler aufgrund fehlender Imports und Schema-Property-Namens-Diskrepanzen (`context_window` vs `contextWindow`, `price_in_per_mtok` vs `pricePerMTok`)
-- [ ] **UI-Preview-Komponente**: Komponente, die das Routing-Ergebnis anzeigt (Score-Aufschlüsselung, Exclusions)
+### M2 — Task + manuelle Ausführung
+- [x] Task-Composer (Prompt, Pinned-Mode, Overrides für Temp/Max-Tokens/System-Prompt)
+- [x] Streaming-Execution mit Live-View (Stream, Usage), Abbruch (`engine.cancel`)
+- [x] Historie + Stream-Replay (Executions, Dateien, Decisions in Detail-Karte)
 
-**Status**: Backend-Funktion implementiert und Route definiert, aber Typ-Integration und UI-Preview fehlen noch.
+### M2/Q4 — Prompt-Templates (abgeschlossen 21.08.2026)
+- [x] Shared-Typ `PromptTemplate` (`packages/shared/src/tasks.ts`)
+- [x] Migration `0003_prompt_templates.sql`: Tabelle + Seed-Vorlagen **„Senior-Dev“** und **„Kritischer Reviewer“** (Beispiele aus Plan §Q4)
+- [x] Repository-CRUD: `listTemplates`, `getTemplate`, `createTemplate`, `updateTemplate`, `deleteTemplate` (`packages/core/src/db/repositories.ts`)
+- [x] REST-API: `GET/POST /api/templates`, `PATCH/DELETE /api/templates/:id` (`packages/core/src/routes/templates.ts`, registriert in `app.ts`)
+- [x] UI (Tasks-Ansicht):
+  - Template-Picker „Vorlage → System-Prompt“ befüllt das Override-Feld
+  - Verwaltung: Liste aller Vorlagen, Anwenden (Klick auf Namen), Löschen (✕)
+  - Aktuelle System-Prompt-Override als neue benannte Vorlage speichern
+- [x] Tests: CRUD + Seed-Defaults (`test/db.test.ts`), API-Routen (`test/app.test.ts`)
+
+### M3 — Routing-Engine („Dirigent“) (abgeschlossen 21.08.2026)
+- [x] Profil-Extraktion aus Prompt (`routing/profile.ts`, Tests in `test/profile.test.ts`)
+- [x] Gates + gewichtetes Scoring (`routing/policies.ts`, `routing/scorer.ts`, Tests in `test/routing.test.ts`)
+- [x] Auto-Mode: Agenten-Auswahl als reine Funktion `selectAgent()` extrahiert; Seiteneffekte bleiben in `resolveAgent()` (Testbarkeit)
+- [x] Explainability-Panel: `DecisionView` zeigt Kandidaten, Score-Aufschlüsselung pro Steuerungsgröße und Ausschlüsse mit Begründung
+- [x] **Routing-Preview / Dry-Run** (neue Implementierung):
+  - Shared-Typ `RoutePreview` (`packages/shared/src/tasks.ts`)
+  - `engine.preview(taskId)` in `execution/engine.ts`: nutzt die **exakt gleiche Pipeline** wie `runTask` (Profil → Policies → Scoring), aber ohne Execution, ohne Statusänderung, ohne Decision-Event und ohne Round-Robin-Cursor-Verschiebung
+  - API: `POST /api/tasks/:id/preview` (`packages/core/src/routes/tasks.ts`)
+  - UI: Button „Routing-Vorschau (Dry-Run)“ in der Detail-Karte; Ergebnispanel mit gewähltem Spezialisten + Begründung und vollständiger Entscheidung über `DecisionView`
+  - Tests: Preview ohne Seiteneffekte, unbekannte Task → `undefined` (`test/engine.test.ts`)
+- [x] Failover-Kette bei Provider-Ausfall (Tests in `test/engine.test.ts`, UI zeigt Failovers im Live-Stream)
 
 ---
 
-## 📋 Offene Roadmap-Items (Aus `docs/01-plan.md`)
+## 📋 Offene Roadmap-Items (aus `docs/01-plan.md`)
 
 | Meilenstein | Item | Status |
 |------------|------|--------|
-| **M2 Q4** | System-Prompt-Templates verwalten | Teilweise implementiert (State da, UI fehlt) |
-| **M3** | Routing-Preview (Dry-Run): User sieht routing decision vor Execution mit Score-Breakdown und Exclusion-Reasons | Backend-Funktion da, UI Preview fehlt |
-| **M4** | Cloud-Integration (Supabase / AWS RDS) | Nicht begonnen |
-| **M5** | Cost-Tracking & Budget-Oberwachung | Nicht begonnen |
-| **M6** | Webhook-Benachrichtigungen | Nicht begonnen |
-| **M7** | Multi-Tenant Isolation | Nicht begonnen |
-| **M8** | CLI-Tool für Adminsitrations-Aufgaben | Nicht begonnen |
+| **M4** (~2 Tage) | Cloud-Integration: OpenRouter (+ optional OpenAI), Keychain-Keys, Kosten-Tracking, Privacy local-only/allow-cloud, Cost-Aware | Nicht begonnen |
+| **M5** (~2–3 Tage) | Monitoring: Dashboard, Metriken-Charts (24 h/7 t), Live-Log, Queue-Ansicht, Ollama-Load (`/api/ps`), Statusleiste | Nicht begonnen |
+| **M6** (~2–3 Tage) | Datei-Workspace: `file:`-Block-Parsing, Workspace-Struktur, UI Baum/Vorschau/Diff, Verlinkung in Executions | Teilweise vorhanden (Datei-Ausgabe + Replay existieren; Workspace-UI fehlt) |
+| **M7** (~2–3 Tage) | Feedback & Polish: Ratings, lernendes qualityPrior, Einstellungen (Gewichte, Policies), Export/Import, Onboarding, E2E-Smoke | Nicht begonnen |
+| **M8** (optional, Phase 2) | Desktop & Agentik: Tauri-Wrapper, Tool-Call-Agent-Loop (`write_file`/`read_file`), Host-GPU/RAM-Monitor | Nicht begonnen |
+
+**Empfohlene Reihenfolge laut Plan:** M4–M6 sind unabhängig und parallelisierbar; M7 am Ende.
 
 ---
 
 ## 🔧 Technische Hinweise
 
-### TypeScript-Fehler (offen)
-Die folgenden Dateien haben Typ-Integrations-Probleme, die gelöst werden müssen:
+### Verifikation (21.08.2026)
+- `npm run lint` — grün (Biome, keine Fehler)
+- `npm run typecheck` — grün (Core + Web)
+- `npm test` — **74 Tests grün** (shared: 16, core: 58)
+- `npm run build` — grün (Core tsc-Emit + Web Vite-Bundle)
 
-1. `packages/core/src/db/repositories.ts` - `routeTaskWithoutExecution` Funktion referenziert Typen wie `CandidateScore`, `RoutePreviewResult`, `DEFAULT_WEIGHTS`, und nutzt Property-Namen, die möglicherweise nicht mit der Datenbank-Schema-Definition übereinstimmen.
+### Architektur-Entscheidungen (diese Iteration)
+- **Preview statt Duplikat:** Die Routing-Vorschau ruft dieselbe Engine-Pipeline auf wie die echte Ausführung (`selectAgent()` + Scoring). Damit kann sich Preview und Realität nicht entkoppeln — im Gegensatz zu früheren Ansätzen, die das Scoring in der Repository-Schicht nachgebaut haben.
+- **Templates als Override-Befüllung:** Eine Vorlage ersetzt den System-Prompt-Override des Tasks (höchste Priorität laut `TaskMetadata`/Overrides-Kette); sie wird nicht pro Task persistiert, sondern beim Anwenden kopiert.
 
-2. `apps/web/src/views/Tasks.tsx` - Neue State-Variablen für Templates wurden hinzugefügt, aber die UI-Komponenten (Dropdowns, Forms) fehlen noch oder haben JSX-Struktur-Probleme.
+### Nächste Schritte
+1. **M4 Cloud-Integration** starten: OpenRouter-Adapter + Keychain-Keys + Kosten-Tracking (Basis für Cost-Aware-Routing).
+2. Alternativ **M5 Monitoring**, falls das Dashboard priorisiert wird.
+3. Vor M7: Playwright-E2E-Smoke einrichten (Mock-Provider → Task → Stream → Historie).
 
-### Nächste Schritte Empfehlung
-
-1. **Für System-Prompt-Templates (M2 Q4)**: Vereinfachte UI - vielleicht nur ein Template-Selektor, der das `systemPrompt`-Feld vorbelegt, ohne volle CRUD zunächst.
-
-2. **Für Routing-Preview (M3)**: Einfacher API-Aufruf in der UI, der die Preview-Daten anzeigt, ohne die volle gewichtete Formel lokal reproduzieren zu müssen.
-
-3. **Alternative Approach**: Anstelle direkter `Tasks.tsx` Bearbeitung via Pattern-Matching, könnte ein neuer Bestandteil oder File erstellt werden, das die Template/Preview-Funktionalität hinzufügt.
 
 ---

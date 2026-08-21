@@ -1,4 +1,11 @@
-import type { PrivacyMode, PromptTemplate, RoutePreview, RoutingDecision, RoutingMode, Task } from "@diriz/shared"
+import type {
+	PrivacyMode,
+	PromptTemplate,
+	RoutePreview,
+	RoutingDecision,
+	RoutingMode,
+	Task,
+} from "@diriz/shared"
 import { useEffect, useState } from "react"
 import { api } from "../lib/api.js"
 import type { TaskDetail } from "../store.js"
@@ -16,6 +23,9 @@ export default function Tasks() {
 
 	const [selected, setSelected] = useState<string | undefined>(undefined)
 	const [showForm, setShowForm] = useState(false)
+\tconst [showQueue, setShowQueue] = useState(false)
+	const queueCount = tasks.filter((t) => t.status === "queued").length
+	const activeCount = tasks.filter((t) => t.status === "running").length
 	const [title, setTitle] = useState("")
 	const [prompt, setPrompt] = useState("")
 	const [privacy, setPrivacy] = useState<PrivacyMode>("local-only")
@@ -43,7 +53,10 @@ export default function Tasks() {
 	}, [selected, loadDetail])
 
 	const loadTemplates = () => {
-		void api.get<PromptTemplate[]>("/api/templates").then(setTemplates).catch(() => {})
+		void api
+			.get<PromptTemplate[]>("/api/templates")
+			.then(setTemplates)
+			.catch(() => {})
 	}
 
 	useEffect(loadTemplates, [])
@@ -143,6 +156,14 @@ export default function Tasks() {
 			<div className="row between">
 				<h1>Tasks</h1>
 				<button type="button" className="btn primary" onClick={() => setShowForm((v) => !v)}>
+
+			<div className="row between"
+				style={{ marginBottom: 8, gap: 4 }}>
+				<button type="button" className="btn secondary small" onClick={() => setShowQueue((v) => !v)}>
+					Queue ({queueCount})
+				</button>
+				<span className="muted">{activeCount} aktiv</span>
+			</div>
 					+ Neue Task
 				</button>
 			</div>
@@ -253,23 +274,23 @@ export default function Tasks() {
 									placeholder="—"
 								/>
 							</label>
-						<label className="field">
-							Vorlage → System-Prompt
-							<select
-								value=""
-								onChange={(e) => {
-									const t = templates.find((x) => x.id === e.target.value)
-									if (t) setOvSystem(t.prompt)
-								}}
-							>
-								<option value="">— Vorlage wählen —</option>
-								{templates.map((t) => (
-									<option key={t.id} value={t.id}>
-										{t.name}
-									</option>
-								))}
-							</select>
-						</label>
+							<label className="field">
+								Vorlage → System-Prompt
+								<select
+									value=""
+									onChange={(e) => {
+										const t = templates.find((x) => x.id === e.target.value)
+										if (t) setOvSystem(t.prompt)
+									}}
+								>
+									<option value="">— Vorlage wählen —</option>
+									{templates.map((t) => (
+										<option key={t.id} value={t.id}>
+											{t.name}
+										</option>
+									))}
+								</select>
+							</label>
 
 							<label className="field" style={{ flex: 1, minWidth: 240 }}>
 								Override System-Prompt
@@ -281,45 +302,45 @@ export default function Tasks() {
 							</label>
 						</div>
 					)}
-				{showOverrides && (
-					<div style={{ marginTop: 8 }}>
-						<strong>Vorlagen verwalten</strong>
-						<div className="row" style={{ marginTop: 6, gap: 8, flexWrap: "wrap" }}>
-							{templates.map((t) => (
-								<span key={t.id} className="badge">
-									<button
-										type="button"
-										className="linklike"
-										title="In System-Prompt übernehmen"
-										onClick={() => setOvSystem(t.prompt)}
-									>
-										{t.name}
-									</button>{" "}
-									·{" "}
-									<button type="button" className="linklike" onClick={() => void removeTemplate(t.id)}>
-										✕
-									</button>
-								</span>
-							))}
-							{templates.length === 0 && <span className="muted">Keine Vorlagen vorhanden.</span>}
+					{showOverrides && (
+						<div style={{ marginTop: 8 }}>
+							<strong>Vorlagen verwalten</strong>
+							<div className="row" style={{ marginTop: 6, gap: 8, flexWrap: "wrap" }}>
+								{templates.map((t) => (
+									<span key={t.id} className="badge">
+										<button
+											type="button"
+											className="linklike"
+											title="In System-Prompt übernehmen"
+											onClick={() => setOvSystem(t.prompt)}
+										>
+											{t.name}
+										</button>{" "}
+										·{" "}
+										<button type="button" className="linklike" onClick={() => void removeTemplate(t.id)}>
+											✕
+										</button>
+									</span>
+								))}
+								{templates.length === 0 && <span className="muted">Keine Vorlagen vorhanden.</span>}
+							</div>
+							<div className="row" style={{ marginTop: 6, gap: 8 }}>
+								<input
+									value={tplName}
+									onChange={(e) => setTplName(e.target.value)}
+									placeholder="Neue Vorlage — Name (speichert aktuellen System-Prompt)"
+								/>
+								<button
+									type="button"
+									className="btn"
+									onClick={() => void saveTemplate()}
+									disabled={tplName.trim().length === 0 || ovSystem.trim().length === 0}
+								>
+									Vorlage speichern
+								</button>
+							</div>
 						</div>
-						<div className="row" style={{ marginTop: 6, gap: 8 }}>
-							<input
-								value={tplName}
-								onChange={(e) => setTplName(e.target.value)}
-								placeholder="Neue Vorlage — Name (speichert aktuellen System-Prompt)"
-							/>
-							<button
-								type="button"
-								className="btn"
-								onClick={() => void saveTemplate()}
-								disabled={tplName.trim().length === 0 || ovSystem.trim().length === 0}
-							>
-								Vorlage speichern
-							</button>
-						</div>
-					</div>
-				)}
+					)}
 
 					<div className="row" style={{ marginTop: 10 }}>
 						<button
@@ -413,6 +434,28 @@ export default function Tasks() {
 							{detail?.executions.length ?? 0} Executions · {detail?.files.length ?? 0} Dateien
 						</span>
 					</div>
+
+					<div className="row" style={{ marginTop: 8, gap: 8 }}>
+						<button
+							type="button"
+							className="btn"
+							onClick={() => void runPreview(selected)}
+							disabled={previewBusy}
+						>
+							{previewBusy ? "Prüfe …" : "Routing-Vorschau (Dry-Run)"}
+						</button>
+					</div>
+
+					{preview && preview.taskId === selected && (
+						<div style={{ marginTop: 12 }}>
+							<strong>Routing-Vorschau — würde gewählt werden:</strong>{" "}
+							<span className="muted" style={{ fontSize: 12 }}>
+								{preview.agentName ? `Spezialist „${preview.agentName}“` : "kein Spezialist"}
+								{preview.agentReason ? ` (${preview.agentReason})` : ""}
+							</span>
+							<DecisionView decision={preview.decision} />
+						</div>
+					)}
 
 					{liveRuns.length > 0 && (
 						<pre className="output live-cursor" style={{ marginTop: 10 }}>

@@ -6,6 +6,8 @@ import { useStore } from "../store.js"
 
 export default function Tasks() {
 	const tasks = useStore((s) => s.tasks)
+	const agents = useStore((s) => s.agents)
+	const swarms = useStore((s) => s.swarms)
 	const live = useStore((s) => s.live)
 	const taskDetails = useStore((s) => s.taskDetails)
 	const refresh = useStore((s) => s.refreshTasks)
@@ -19,6 +21,13 @@ export default function Tasks() {
 	const [privacy, setPrivacy] = useState<PrivacyMode>("local-only")
 	const [mode, setMode] = useState<RoutingMode>("auto")
 	const [budget, setBudget] = useState("")
+	const [assignment, setAssignment] = useState<"auto" | "agent" | "swarm">("auto")
+	const [agentId, setAgentId] = useState("")
+	const [swarmId, setSwarmId] = useState("")
+	const [ovTemp, setOvTemp] = useState("")
+	const [ovMax, setOvMax] = useState("")
+	const [ovSystem, setOvSystem] = useState("")
+	const [showOverrides, setShowOverrides] = useState(false)
 	const [busy, setBusy] = useState(false)
 
 	useEffect(() => {
@@ -30,14 +39,29 @@ export default function Tasks() {
 	const createTask = async () => {
 		setBusy(true)
 		try {
+			const overrides =
+				ovTemp !== "" || ovMax !== "" || ovSystem !== ""
+					? {
+							temperature: ovTemp === "" ? undefined : Number(ovTemp),
+							maxTokens: ovMax === "" ? undefined : Number(ovMax),
+							systemPrompt: ovSystem || undefined,
+						}
+					: undefined
 			const task = await api.post<Task>("/api/tasks", {
 				title,
 				prompt,
 				metadata: { privacy, mode, budgetUsd: budget ? Number(budget) : undefined },
+				assignmentMode: assignment,
+				agentId: assignment === "agent" ? agentId || undefined : undefined,
+				swarmId: assignment === "swarm" ? swarmId || undefined : undefined,
+				overrides,
 			})
 			setTitle("")
 			setPrompt("")
 			setBudget("")
+			setOvTemp("")
+			setOvMax("")
+			setOvSystem("")
 			setShowForm(false)
 			await refresh()
 			setSelected(task.id)
@@ -117,12 +141,97 @@ export default function Tasks() {
 							placeholder="Was soll das Ergebnis sein?"
 						/>
 					</label>
+					<div className="row" style={{ marginTop: 8 }}>
+						<label className="field">
+							Spezialist-Zuweisung
+							<select
+								value={assignment}
+								onChange={(e) => setAssignment(e.target.value as "auto" | "agent" | "swarm")}
+							>
+								<option value="auto">auto (Prompt-Match)</option>
+								<option value="agent">fester Spezialist</option>
+								<option value="swarm">Swarm</option>
+							</select>
+						</label>
+						{assignment === "agent" && (
+							<label className="field">
+								Spezialist
+								<select value={agentId} onChange={(e) => setAgentId(e.target.value)}>
+									<option value="">— wählen —</option>
+									{agents
+										.filter((a) => a.enabled)
+										.map((a) => (
+											<option key={a.id} value={a.id}>
+												{a.name}
+											</option>
+										))}
+								</select>
+							</label>
+						)}
+						{assignment === "swarm" && (
+							<label className="field">
+								Swarm
+								<select value={swarmId} onChange={(e) => setSwarmId(e.target.value)}>
+									<option value="">— wählen —</option>
+									{swarms
+										.filter((x) => x.enabled)
+										.map((x) => (
+											<option key={x.id} value={x.id}>
+												{x.name}
+											</option>
+										))}
+								</select>
+							</label>
+						)}
+						<button type="button" className="btn" onClick={() => setShowOverrides((v) => !v)}>
+							Erweiterte Settings
+						</button>
+					</div>
+					{showOverrides && (
+						<div className="row" style={{ marginTop: 8 }}>
+							<label className="field">
+								Override Temperatur
+								<input
+									type="number"
+									step="0.1"
+									min={0}
+									max={2}
+									value={ovTemp}
+									onChange={(e) => setOvTemp(e.target.value)}
+									placeholder="—"
+								/>
+							</label>
+							<label className="field">
+								Override Max-Tokens
+								<input
+									type="number"
+									min={1}
+									value={ovMax}
+									onChange={(e) => setOvMax(e.target.value)}
+									placeholder="—"
+								/>
+							</label>
+							<label className="field" style={{ flex: 1, minWidth: 240 }}>
+								Override System-Prompt
+								<textarea
+									value={ovSystem}
+									onChange={(e) => setOvSystem(e.target.value)}
+									placeholder="Task-spezifische Anweisung …"
+								/>
+							</label>
+						</div>
+					)}
 					<div className="row" style={{ marginTop: 10 }}>
 						<button
 							type="button"
 							className="btn primary"
 							onClick={() => void createTask()}
-							disabled={busy || prompt.trim().length === 0}
+							disabled={
+								busy ||
+								prompt.trim().length === 0 ||
+								(assignment === "agent" && !agentId) ||
+								(assignment === "swarm" && !swarmId)
+							}
 						>
 							{busy ? "…" : "Task anlegen"}
 						</button>
@@ -263,6 +372,32 @@ export default function Tasks() {
 						</div>
 					)}
 
+					{detail?.agentSelection && (
+						<div style={{ marginTop: 12 }}>
+							<strong>Spezialisten-Zuordnung</strong>
+							<div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+								{detail.agentSelection.agentName ? (
+									<>
+										Gewählt: <strong>{detail.agentSelection.agentName}</strong>
+									</>
+								) : (
+									<>Kein Spezialist (freies Routing)</>
+								)}
+								{detail.agentSelection.reason && <> — {detail.agentSelection.reason}</>}
+							</div>
+							{detail.agentSelection.candidates.length > 0 && (
+								<div className="row" style={{ marginTop: 6, gap: 8 }}>
+									{[...detail.agentSelection.candidates]
+										.sort((a, b) => b.score - a.score)
+										.map((c) => (
+											<span key={c.agentId} className="badge" style={{ opacity: c.score === 0 ? 0.55 : 1 }}>
+												{c.name} · {c.score}
+											</span>
+										))}
+								</div>
+							)}
+						</div>
+					)}
 					{detail && detail.decisions.length > 0 && (
 						<div style={{ marginTop: 12 }}>
 							<strong>Routing-Entscheidung (Explainability)</strong>

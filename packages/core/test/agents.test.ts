@@ -1,0 +1,291 @@
+/**
+ * M1-Tests: Agent-/Swarm-Repository, Engine-Zuordnung (auto/agent/swarm),
+ * Agent-Pin, System-Prompt-Injection und Model-Settings-Merge
+ * (Provider ← Modell ← Task).
+ */
+
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import type {
+	ChatChunk,
+	ChatRequest,
+	DiscoveredModel,
+	HealthStatus,
+	LLMProvider,
+	ProviderType,
+} from "@diriz/shared"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import type { Db } from "../src/db/connection.js"
+import { openDatabase } from "../src/db/connection.js"
+import { migrate } from "../src/db/migrate.js"
+import {
+	createAgent,
+	createProvider,
+	createSwarm,
+	createTask,
+	deleteAgent,
+	deleteSwarm,
+	getAgent,
+	getSwarm,
+	getTask,
+	latestAgentSelection,
+	listAgents,
+	listExecutionsByTask,
+	updateAgent,
+	updateInstance,
+	updateSwarm,
+	upsertInstance,
+} from "../src/db/repositories.js"
+import { EventBus } from "../src/execution/bus.js"
+import { ExecutionEngine } from "../src/execution/engine.js"
+import { ProviderRegistry } from "../src/providers/registry.js"
+import { Feedback } from "../src/routing/feedback.js"
+
+/** Adapter, der den letzten Request aufzeichnet (Settings, System-Prompt). */
+class RecordingAdapter implements LLMProvider {
+	readonly label = "Rec"
+	lastRequest: ChatRequest | undefined
+
+	constructor(
+		readonly id: string,
+		readonly type: ProviderType,
+		private out: string,
+	) {}
+
+	async healthCheck(): Promise<HealthStatus> {
+		return { ok: true, latencyMs: 1 }
+	}
+	async listModels(): Promise<DiscoveredModel[]> {
+		return []
+	}
+	async *chat(req: ChatRequest): AsyncGenerator<ChatChunk> {
+		this.lastRequest = req
+		yield { type: "delta", text: this.out }
+		yield { type: "usage", tokensIn: 5, tokensOut: 10 }
+		yield { type: "done" }
+	}
+	async cancel(): Promise<void> {}
+}
+
+let db: Db
+let engine: ExecutionEngine
+let registry: ProviderRegistry
+let pAId: string
+let pBId: string
+let instAId: string
+let adapterA: RecordingAdapter
+let adapterB: RecordingAdapter
+let agentCode: string
+let agentText: string
+let swarmId: string
+
+beforeAll(() => {
+	const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-agents-"))
+	const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-agents-ws-"))
+	db = openDatabase(dataDir)
+	migrate(db)
+	const bus = new EventBus()
+	const feedback = new Feedback()
+	const log = () => {}
+	registry = new ProviderRegistry(
+		db,
+		(e) => bus.emit(e),
+		log,
+		() => undefined,
+	)
+
+	// Rechner A: Provider-Default temperature 0.2, Modell-Override topP 0.5.
+	pAId = createProvider(db, {
+		type: "ollama",
+		label: "Rechner A",
+		baseUrl: "http://a",
+		modelSettings: { temperature: 0.2 },
+	}).id
+	instAId = upsertInstance(
+		db,
+		pAId,
+		{ modelId: "mA", displayName: "M A", contextWindow: 32_000, capabilities: ["code"] },
+		"manual",
+	).id
+	updateInstance(db, instAId, { modelSettings: { topP: 0.5 } })
+
+	// Rechner B: ohne Settings.
+	pBId = createProvider(db, { type: "ollama", label: "Rechner B", baseUrl: "http://b" }).id
+	upsertInstance(
+		db,
+		pBId,
+		{ modelId: "mB", displayName: "M B", contextWindow: 32_000, capabilities: ["code"] },
+		"manual",
+	)
+
+	adapterA = new RecordingAdapter(pAId, "ollama", "A-Antwort")
+	adapterB = new RecordingAdapter(pBId, "ollama", "B-Antwort")
+	registry.registerAdapter(pAId, "ollama", "A", adapterA)
+	registry.registerAdapter(pBId, "ollama", "B", adapterB)
+	registry.recordSuccess(pAId)
+	registry.recordSuccess(pBId)
+
+	// Spezialisten.
+	agentCode = createAgent(db, {
+		name: "Code-Dev",
+		description: "React TypeScript Code Bug",
+		systemPrompt: "Du bist der Code-Spezialist.",
+		requiredCapabilities: ["code"],
+		privacy: "any",
+		pinnedProviderId: pAId,
+	}).id
+	agentText = createAgent(db, {
+		name: "Texter",
+		description: "Artikel Blog Essay Übersetzung",
+		privacy: "any",
+	}).id
+	swarmId = createSwarm(db, { name: "Frontend", agentIds: [agentText, agentCode] }).id
+
+	engine = new ExecutionEngine({ db, registry, feedback, emit: (e) => bus.emit(e), log, workspaceDir })
+})
+
+afterAll(() => {
+	db.close()
+})
+
+async function waitForTask(taskId: string, terminal: boolean = true): Promise<void> {
+	const deadline = Date.now() + 5000
+	for (;;) {
+		const t = getTask(db, taskId)
+		if (t && (!terminal || t.status === "done" || t.status === "failed" || t.status === "cancelled")) {
+			return
+		}
+		if (Date.now() > deadline) {
+			throw new Error(`Task ${taskId} nicht fertig (Status: ${getTask(db, taskId)?.status})`)
+		}
+		await new Promise((r) => setTimeout(r, 25))
+	}
+}
+
+describe("M1: Repository", () => {
+	it("Agent CRUD", () => {
+		const a = createAgent(db, { name: "Temp", description: "x", systemPrompt: "y" })
+		expect(getAgent(db, a.id)?.name).toBe("Temp")
+		expect(listAgents(db).some((x) => x.id === a.id)).toBe(true)
+		const updated = updateAgent(db, a.id, { name: "Temp2", enabled: false })
+		expect(updated?.name).toBe("Temp2")
+		expect(updated?.enabled).toBe(false)
+		expect(deleteAgent(db, a.id)).toBe(true)
+		expect(getAgent(db, a.id)).toBeUndefined()
+	})
+
+	it("Swarm CRUD", () => {
+		const s = createSwarm(db, { name: "Temp", agentIds: [agentCode] })
+		expect(getSwarm(db, s.id)?.agentIds).toEqual([agentCode])
+		const updated = updateSwarm(db, s.id, { agentIds: [] })
+		expect(updated?.agentIds).toEqual([])
+		expect(deleteSwarm(db, s.id)).toBe(true)
+	})
+
+	it("Task-Defaults: assignmentMode auto, keine Agenten", () => {
+		const t = createTask(db, { prompt: "hallo" })
+		expect(t.assignmentMode).toBe("auto")
+		expect(t.agentId).toBeUndefined()
+	})
+})
+
+describe("M1: Engine-Zuordnung", () => {
+	it("auto: wählt den passenden Spezialisten, pinnt den Rechner, injiziert System-Prompt & Settings", async () => {
+		const task = createTask(db, {
+			prompt: "Schreib eine React TypeScript Komponente",
+			assignmentMode: "auto",
+			overrides: { maxTokens: 256 },
+		})
+		const res = engine.start(task.id)
+		expect(res.accepted).toBe(true)
+		await waitForTask(task.id)
+		expect(getTask(db, task.id)?.status).toBe("done")
+
+		// Spezialist wurde automatisch gewählt und persistiert.
+		const sel = latestAgentSelection(db, task.id)
+		expect(sel?.agentId).toBe(agentCode)
+		expect(sel?.reason).toContain("Zuordnung")
+		expect(getTask(db, task.id)?.agentId).toBe(agentCode)
+
+		// Pin: Execution läuft auf Rechner A (pinnedProviderId).
+		const exec = listExecutionsByTask(db, task.id).find((e) => e.status === "done")
+		expect(exec?.providerId).toBe(pAId)
+
+		// System-Prompt des Spezialisten + Settings-Merge (Provider ← Modell ← Task).
+		const req = adapterA.lastRequest
+		expect(req?.messages?.[0]).toEqual({ role: "system", content: "Du bist der Code-Spezialist." })
+		expect(req?.messages?.[1]?.role).toBe("user")
+		expect(req?.settings?.temperature).toBe(0.2)
+		expect(req?.settings?.topP).toBe(0.5)
+		expect(req?.settings?.maxTokens).toBe(256)
+	})
+
+	it("auto: ohne relevanten Agent bleibt das Routing frei", async () => {
+		adapterA.lastRequest = undefined
+		adapterB.lastRequest = undefined
+		const task = createTask(db, { prompt: "hallo", assignmentMode: "auto" })
+		engine.start(task.id)
+		await waitForTask(task.id)
+		expect(getTask(db, task.id)?.status).toBe("done")
+		const sel = latestAgentSelection(db, task.id)
+		expect(sel?.agentId).toBeNull()
+		expect(sel?.reason).toContain("freies Routing")
+		// Kein System-Prompt ohne Agent (am Adapter des gewählten Rechners).
+		const exec = listExecutionsByTask(db, task.id).find((e) => e.status === "done")
+		const req = (exec?.providerId === pAId ? adapterA : adapterB).lastRequest
+		expect(req?.messages?.[0]?.role).toBe("user")
+	})
+
+	it("agent: manueller Spezialist wird respektiert", async () => {
+		const task = createTask(db, {
+			prompt: "Schreib einen Artikel",
+			assignmentMode: "agent",
+			agentId: agentText,
+		})
+		engine.start(task.id)
+		await waitForTask(task.id)
+		expect(getTask(db, task.id)?.status).toBe("done")
+		const sel = latestAgentSelection(db, task.id)
+		expect(sel?.agentId).toBe(agentText)
+		expect(sel?.reason).toContain("Manuell")
+	})
+
+	it("swarm: wählt den besten Mitglied-Agenten für den Prompt", async () => {
+		const task = createTask(db, {
+			prompt: "Schreib eine React Komponente in TypeScript",
+			assignmentMode: "swarm",
+			swarmId,
+		})
+		engine.start(task.id)
+		await waitForTask(task.id)
+		expect(getTask(db, task.id)?.status).toBe("done")
+		const sel = latestAgentSelection(db, task.id)
+		expect(sel?.agentId).toBe(agentCode)
+		expect(sel?.reason).toContain("Swarm")
+		expect(sel?.candidates?.length).toBe(2)
+	})
+
+	it("agent-Modus ohne Agent → Task schlägt fehl (klare Fehlermeldung)", async () => {
+		const task = createTask(db, { prompt: "irgendwas", assignmentMode: "agent" })
+		engine.start(task.id)
+		await waitForTask(task.id)
+		expect(getTask(db, task.id)?.status).toBe("failed")
+	})
+
+	it("deaktivierter Agent wird nie zugewiesen (auto)", async () => {
+		updateAgent(db, agentCode, { enabled: false })
+		try {
+			const task = createTask(db, {
+				prompt: "Schreib eine React TypeScript Komponente",
+				assignmentMode: "auto",
+			})
+			engine.start(task.id)
+			await waitForTask(task.id)
+			const sel = latestAgentSelection(db, task.id)
+			expect(sel?.agentId).not.toBe(agentCode)
+		} finally {
+			updateAgent(db, agentCode, { enabled: true })
+		}
+	})
+})

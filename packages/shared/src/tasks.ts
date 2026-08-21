@@ -2,8 +2,9 @@
  * Task- & Execution-Typen (`01-plan.md` §7, §11).
  */
 
+import type { AssignmentMode } from "./agents.js"
 import type { TaskProfile } from "./routing.js"
-import type { PrivacyMode, ProviderStatus, RoutingMode } from "./types.js"
+import type { ModelSettings, PrivacyMode, ProviderStatus, RoutingMode } from "./types.js"
 
 export type TaskStatus = "draft" | "routing" | "queued" | "running" | "done" | "failed" | "cancelled"
 
@@ -31,6 +32,14 @@ export interface Task {
 	status: TaskStatus
 	createdAt: string
 	finishedAt?: string
+	/** Zuordnung: `auto` (Prompt-Match), `agent` (fester Spezialist), `swarm`. */
+	assignmentMode?: AssignmentMode
+	/** Gewählter Spezialist (bei `auto`: Ergebnis der Auto-Zuordnung). */
+	agentId?: string
+	/** Swarm für den `swarm`-Modus. */
+	swarmId?: string
+	/** Task-Override für Model-Settings — höchste Priorität. */
+	overrides?: ModelSettings
 }
 
 export interface Execution {

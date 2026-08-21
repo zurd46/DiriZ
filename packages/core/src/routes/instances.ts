@@ -3,7 +3,7 @@
  * (Context-Fenster, Fähigkeiten, Sprachen, Preis), Entfernen.
  */
 
-import type { Capability } from "@diriz/shared"
+import type { Capability, ModelSettings } from "@diriz/shared"
 import type { FastifyInstance } from "fastify"
 import type { AppContext } from "../app.js"
 import { deleteInstance, getInstance, listInstances, updateInstance } from "../db/repositories.js"
@@ -18,6 +18,8 @@ interface InstancePatchBody {
 	quantization?: string
 	priceInPerMTok?: number
 	priceOutPerMTok?: number
+	/** "null" = Overrides zurücksetzen, weggelassen = unverändert. */
+	modelSettings?: ModelSettings | null
 }
 
 export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
@@ -38,6 +40,7 @@ export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
 			quantization: body.quantization,
 			priceInPerMTok: body.priceInPerMTok,
 			priceOutPerMTok: body.priceOutPerMTok,
+			modelSettings: body.modelSettings,
 		})
 		if (!instance) {
 			return reply.code(404).send({ error: "Instance nicht gefunden" })

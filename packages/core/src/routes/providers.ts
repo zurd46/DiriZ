@@ -4,7 +4,7 @@
  * im Klartext zurückgegeben (nur `hasApiKey`).
  */
 
-import type { ProviderType } from "@diriz/shared"
+import type { ModelSettings, ProviderType } from "@diriz/shared"
 import type { FastifyInstance } from "fastify"
 import type { AppContext } from "../app.js"
 import {
@@ -25,6 +25,7 @@ interface CreateBody {
 	baseUrl: string
 	apiKey?: string
 	config?: Record<string, unknown>
+	modelSettings?: ModelSettings
 }
 
 interface PatchBody {
@@ -32,6 +33,8 @@ interface PatchBody {
 	baseUrl?: string
 	enabled?: boolean
 	config?: Record<string, unknown>
+	/** "null" = zurücksetzen, weggelassen = unverändert. */
+	modelSettings?: ModelSettings | null
 	apiKey?: string
 	clearApiKey?: boolean
 }
@@ -49,11 +52,13 @@ export function registerProviders(app: FastifyInstance, ctx: AppContext): void {
 		if (!baseUrl || !/^https?:\/\//.test(baseUrl)) {
 			return reply.code(400).send({ error: "baseUrl muss eine http(s)-URL sein" })
 		}
+		const { modelSettings } = req.body ?? {}
 		const provider = createProvider(ctx.db, {
 			type: type as ProviderType,
 			label: label || type,
 			baseUrl,
 			config,
+			modelSettings: modelSettings ?? null,
 			apiKeyEnc: apiKey ? encryptString(apiKey, ctx.secret) : undefined,
 		})
 		try {

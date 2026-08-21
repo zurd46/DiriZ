@@ -54,6 +54,8 @@ export interface InstanceModel {
 	pricePerMTok?: { in: number; out: number }
 	source: ModelSource
 	status: ProviderStatus
+	/** Modell-spezifische Overrides — schlagen die Provider-Defaults. */
+	modelSettings?: ModelSettings | null
 	lastSeenAt: string
 }
 
@@ -69,8 +71,30 @@ export interface Provider {
 	latencyP95?: number
 	lastCheckedAt?: string
 	config: Record<string, unknown>
+	/** Default-Settings für alle Modelle auf diesem Rechner (volle Kontrolle). */
+	modelSettings?: ModelSettings | null
 	/** Ob ein API-Key hinterlegt ist — der Key selbst ist nie in der API sichtbar. */
 	hasApiKey: boolean
+}
+
+/**
+ * Model-Einstellungen — voll steuerbar pro Rechner (Provider), pro Modell
+ * und pro Task. Auflösung (späterer Eintrag gewinnt):
+ * Provider-Default ← Modell-Override ← Task-Override.
+ */
+export interface ModelSettings {
+	temperature?: number
+	topP?: number
+	topK?: number
+	minP?: number
+	maxTokens?: number
+	presencePenalty?: number
+	frequencyPenalty?: number
+	repeatPenalty?: number
+	seed?: number
+	stop?: string[]
+	/** System-Prompt — gilt für alle Requests auf dieser Ebene. */
+	systemPrompt?: string
 }
 
 export interface ChatMessage {
@@ -81,6 +105,8 @@ export interface ChatMessage {
 export interface ChatRequest {
 	messages: ChatMessage[]
 	model?: string
+	/** Vollständige Model-Settings — gewinnen über temperature/maxTokens. */
+	settings?: ModelSettings
 	temperature?: number
 	maxTokens?: number
 	signal?: AbortSignal

@@ -5,6 +5,7 @@
  * (Zustand-Store) und spätere Clients (Desktop, mobile) hängen sich daran.
  */
 
+import type { AgentScore, AssignmentMode } from "./agents.js"
 import type { RoutingDecision } from "./tasks.js"
 import type { ProviderStatus } from "./types.js"
 
@@ -13,6 +14,28 @@ export type LogLevel = "debug" | "info" | "warn" | "error"
 export interface TaskCreatedEvent {
 	event: "task.created"
 	data: { taskId: string }
+}
+
+export interface AgentSelectedEvent {
+	event: "task.agent_selected"
+	data: {
+		taskId: string
+		agentId?: string | null
+		agentName?: string
+		mode: AssignmentMode
+		reason?: string
+		candidates: AgentScore[]
+	}
+}
+
+export interface AgentsChangedEvent {
+	event: "agents.changed"
+	data: { agentId?: string }
+}
+
+export interface SwarmsChangedEvent {
+	event: "swarms.changed"
+	data: { swarmId?: string }
 }
 
 export interface RoutingDecidedEvent {
@@ -57,6 +80,9 @@ export interface LogEvent {
 
 export type CoreEvent =
 	| TaskCreatedEvent
+	| AgentSelectedEvent
+	| AgentsChangedEvent
+	| SwarmsChangedEvent
 	| RoutingDecidedEvent
 	| ExecutionDeltaEvent
 	| ExecutionUsageEvent
@@ -69,6 +95,9 @@ export type CoreEvent =
 /** Sämtliche Event-Namen — für Client-Validierung und Tests. */
 export const CORE_EVENT_NAMES = [
 	"task.created",
+	"task.agent_selected",
+	"agents.changed",
+	"swarms.changed",
 	"routing.decided",
 	"execution.delta",
 	"execution.usage",

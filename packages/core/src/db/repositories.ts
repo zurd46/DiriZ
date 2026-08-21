@@ -5,16 +5,21 @@
 
 import { randomUUID } from "node:crypto"
 import type {
+	Agent,
+	AgentPrivacy,
+	AgentScore,
 	Capability,
 	DiscoveredModel,
 	Execution,
 	ExecutionStatus,
 	InstanceModel,
+	ModelSettings,
 	ModelSource,
 	Provider,
 	ProviderStatus,
 	ProviderType,
 	RoutingDecision,
+	Swarm,
 	Task,
 	TaskMetadata,
 	TaskStatus,
@@ -36,7 +41,19 @@ interface ProviderRow {
 	last_checked_at: string | null
 	config_json: string
 	api_key_enc: string | null
+	model_settings: string | null
 	created_at: string
+}
+
+function parseSettings(value: string | null | undefined): ModelSettings | null {
+	if (!value) {
+		return null
+	}
+	try {
+		return JSON.parse(value) as ModelSettings
+	} catch {
+		return null
+	}
 }
 
 function mapProvider(row: ProviderRow): Provider {
@@ -51,6 +68,7 @@ function mapProvider(row: ProviderRow): Provider {
 		latencyP95: row.latency_p95 ?? undefined,
 		lastCheckedAt: row.last_checked_at ?? undefined,
 		config: JSON.parse(row.config_json) as Record<string, unknown>,
+		modelSettings: parseSettings(row.model_settings),
 		hasApiKey: row.api_key_enc !== null,
 	}
 }
@@ -60,6 +78,7 @@ export interface ProviderInput {
 	label: string
 	baseUrl: string
 	config?: Record<string, unknown>
+	modelSettings?: ModelSettings | null
 	/** Bereits verschlüsselter API-Key (AES-256-GCM) — nie im Klartext. */
 	apiKeyEnc?: string
 }
@@ -67,7 +86,7 @@ export interface ProviderInput {
 export function createProvider(db: Db, input: ProviderInput): Provider {
 	const id = randomUUID()
 	db.prepare(
-		"INSERT INTO providers (id, type, label, base_url, config_json, api_key_enc) VALUES (?, ?, ?, ?, ?, ?)",
+		"INSERT INTO providers (id, type, label, base_url, config_json, api_key_enc, model_settings) VALUES (?, ?, ?, ?, ?, ?, ?)",
 	).run(
 		id,
 		input.type,
@@ -75,6 +94,7 @@ export function createProvider(db: Db, input: ProviderInput): Provider {
 		input.baseUrl,
 		JSON.stringify(input.config ?? {}),
 		input.apiKeyEnc ?? null,
+		input.modelSettings ? JSON.stringify(input.modelSettings) : null,
 	)
 	const created = getProvider(db, id)
 	if (!created) {
@@ -106,6 +126,8 @@ export interface ProviderPatch {
 	baseUrl?: string
 	enabled?: boolean
 	config?: Record<string, unknown>
+	/** `null` = Settings zurücksetzen, `undefined` = unverändert. */
+	modelSettings?: ModelSettings | null
 	apiKeyEnc?: string
 	clearApiKey?: boolean
 }
@@ -119,6 +141,12 @@ export function updateProvider(db: Db, id: string, patch: ProviderPatch): Provid
 	const baseUrl = patch.baseUrl ?? row.base_url
 	const enabled = patch.enabled === undefined ? row.enabled : patch.enabled ? 1 : 0
 	const config = patch.config === undefined ? row.config_json : JSON.stringify(patch.config)
+	const modelSettings =
+		patch.modelSettings === undefined
+			? row.model_settings
+			: patch.modelSettings
+				? JSON.stringify(patch.modelSettings)
+				: null
 	let apiKeyEnc = row.api_key_enc
 	if (patch.clearApiKey) {
 		apiKeyEnc = null
@@ -127,8 +155,8 @@ export function updateProvider(db: Db, id: string, patch: ProviderPatch): Provid
 		apiKeyEnc = patch.apiKeyEnc
 	}
 	db.prepare(
-		"UPDATE providers SET label = ?, base_url = ?, enabled = ?, config_json = ?, api_key_enc = ? WHERE id = ?",
-	).run(label, baseUrl, enabled, config, apiKeyEnc, id)
+		"UPDATE providers SET label = ?, base_url = ?, enabled = ?, config_json = ?, api_key_enc = ?, model_settings = ? WHERE id = ?",
+	).run(label, baseUrl, enabled, config, apiKeyEnc, modelSettings, id)
 	return getProvider(db, id)
 }
 
@@ -163,6 +191,7 @@ interface InstanceRow {
 	price_out_per_mtok: number | null
 	source: string
 	status: string
+	model_settings: string | null
 	last_seen_at: string
 }
 
@@ -182,6 +211,7 @@ function mapInstance(row: InstanceRow): InstanceModel {
 				: undefined,
 		source: row.source as ModelSource,
 		status: row.status as ProviderStatus,
+		modelSettings: parseSettings(row.model_settings),
 		lastSeenAt: row.last_seen_at,
 	}
 }
@@ -202,8 +232,8 @@ export function upsertInstance(
 		db.prepare(
 			`INSERT INTO instances (id, provider_id, model_id, display_name, context_window,
 				capabilities_json, languages_json, quantization, price_in_per_mtok, price_out_per_mtok,
-				source, status, last_seen_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline', ?)`,
+				source, status, model_settings, last_seen_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline', ?, ?)`,
 		).run(
 			id,
 			providerId,
@@ -216,6 +246,7 @@ export function upsertInstance(
 			model.pricePerMTok?.in ?? null,
 			model.pricePerMTok?.out ?? null,
 			source,
+			null,
 			now,
 		)
 		const created = getInstance(db, id)
@@ -274,6 +305,8 @@ export interface InstancePatch {
 	quantization?: string
 	priceInPerMTok?: number
 	priceOutPerMTok?: number
+	/** `null` = Overrides zurücksetzen, `undefined` = unverändert. */
+	modelSettings?: ModelSettings | null
 }
 
 export function updateInstance(db: Db, id: string, patch: InstancePatch): InstanceModel | undefined {
@@ -288,6 +321,7 @@ export function updateInstance(db: Db, id: string, patch: InstancePatch): Instan
 		capabilities: patch.capabilities ?? current.capabilities,
 		languages: patch.languages ?? current.languages,
 		quantization: patch.quantization !== undefined ? patch.quantization : current.quantization,
+		modelSettings: patch.modelSettings === undefined ? (current.modelSettings ?? null) : patch.modelSettings,
 		pricePerMTok:
 			patch.priceInPerMTok !== undefined || patch.priceOutPerMTok !== undefined
 				? {
@@ -298,7 +332,7 @@ export function updateInstance(db: Db, id: string, patch: InstancePatch): Instan
 	}
 	db.prepare(
 		`UPDATE instances SET display_name = ?, context_window = ?, capabilities_json = ?, languages_json = ?,
-			quantization = ?, price_in_per_mtok = ?, price_out_per_mtok = ? WHERE id = ?`,
+			quantization = ?, price_in_per_mtok = ?, price_out_per_mtok = ?, model_settings = ? WHERE id = ?`,
 	).run(
 		next.displayName,
 		next.contextWindow,
@@ -307,6 +341,7 @@ export function updateInstance(db: Db, id: string, patch: InstancePatch): Instan
 		next.quantization ?? null,
 		next.pricePerMTok?.in ?? null,
 		next.pricePerMTok?.out ?? null,
+		next.modelSettings ? JSON.stringify(next.modelSettings) : null,
 		id,
 	)
 	return getInstance(db, id)
@@ -332,6 +367,10 @@ interface TaskRow {
 	status: string
 	created_at: string
 	finished_at: string | null
+	assignment_mode: string
+	agent_id: string | null
+	swarm_id: string | null
+	overrides_json: string | null
 }
 
 function mapTask(row: TaskRow): Task {
@@ -343,6 +382,10 @@ function mapTask(row: TaskRow): Task {
 		status: row.status as TaskStatus,
 		createdAt: row.created_at,
 		finishedAt: row.finished_at ?? undefined,
+		assignmentMode: (row.assignment_mode || "auto") as Task["assignmentMode"],
+		agentId: row.agent_id ?? undefined,
+		swarmId: row.swarm_id ?? undefined,
+		overrides: parseSettings(row.overrides_json) ?? undefined,
 	}
 }
 
@@ -350,6 +393,10 @@ export interface TaskInput {
 	title?: string
 	prompt: string
 	metadata?: Partial<TaskMetadata>
+	assignmentMode?: "auto" | "agent" | "swarm"
+	agentId?: string
+	swarmId?: string
+	overrides?: ModelSettings | null
 }
 
 export function createTask(db: Db, input: TaskInput): Task {
@@ -367,13 +414,32 @@ export function createTask(db: Db, input: TaskInput): Task {
 	}
 	const title = (input.title ?? "").trim() || input.prompt.slice(0, 60)
 	db.prepare(
-		"INSERT INTO tasks (id, title, prompt, metadata_json, privacy, mode, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?)",
-	).run(id, title, input.prompt, JSON.stringify(meta), meta.privacy, meta.mode, now)
+		`INSERT INTO tasks (id, title, prompt, metadata_json, privacy, mode, status, created_at,
+			assignment_mode, agent_id, swarm_id, overrides_json)
+		 VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)`,
+	).run(
+		id,
+		title,
+		input.prompt,
+		JSON.stringify(meta),
+		meta.privacy,
+		meta.mode,
+		now,
+		input.assignmentMode ?? "auto",
+		input.agentId ?? null,
+		input.swarmId ?? null,
+		input.overrides ? JSON.stringify(input.overrides) : null,
+	)
 	const created = getTask(db, id)
 	if (!created) {
 		throw new Error("task create failed")
 	}
 	return created
+}
+
+/** Engine schreibt die finale Agenten-Zuordnung zurück (auto-Modus). */
+export function setTaskAgentSelection(db: Db, id: string, agentId: string | null): void {
+	db.prepare("UPDATE tasks SET agent_id = ? WHERE id = ?").run(agentId, id)
 }
 
 export function listTasks(db: Db, opts?: { status?: TaskStatus; limit?: number }): Task[] {
@@ -793,4 +859,279 @@ export function timeseries(db: Db, hours: number): TimeseriesPoint[] {
 		costUsd: Math.round(r.cost * 1_000_000) / 1_000_000,
 		errors: r.errors ?? 0,
 	}))
+}
+
+/* ------------------------------------ Agents ---------------------------------- */
+
+interface AgentRow {
+	id: string
+	name: string
+	description: string
+	system_prompt: string
+	required_capabilities: string
+	preferred_capabilities: string
+	privacy: string
+	pinned_provider_id: string | null
+	pinned_instance_id: string | null
+	enabled: number
+	created_at: string
+	updated_at: string
+}
+
+function mapAgent(row: AgentRow): Agent {
+	return {
+		id: row.id,
+		name: row.name,
+		description: row.description,
+		systemPrompt: row.system_prompt,
+		requiredCapabilities: JSON.parse(row.required_capabilities) as Capability[],
+		preferredCapabilities: JSON.parse(row.preferred_capabilities) as Capability[],
+		privacy: row.privacy as AgentPrivacy,
+		pinnedProviderId: row.pinned_provider_id,
+		pinnedInstanceId: row.pinned_instance_id,
+		enabled: row.enabled === 1,
+		createdAt: row.created_at,
+		updatedAt: row.updated_at,
+	}
+}
+
+export interface AgentInput {
+	name: string
+	description?: string
+	systemPrompt?: string
+	requiredCapabilities?: Capability[]
+	preferredCapabilities?: Capability[]
+	privacy?: AgentPrivacy
+	pinnedProviderId?: string | null
+	pinnedInstanceId?: string | null
+	enabled?: boolean
+}
+
+export function createAgent(db: Db, input: AgentInput): Agent {
+	const id = randomUUID()
+	const now = new Date().toISOString()
+	db.prepare(
+		`INSERT INTO agents (id, name, description, system_prompt, required_capabilities, preferred_capabilities,
+			privacy, pinned_provider_id, pinned_instance_id, enabled, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	).run(
+		id,
+		input.name.trim(),
+		input.description ?? "",
+		input.systemPrompt ?? "",
+		JSON.stringify(input.requiredCapabilities ?? []),
+		JSON.stringify(input.preferredCapabilities ?? []),
+		input.privacy ?? "any",
+		input.pinnedProviderId ?? null,
+		input.pinnedInstanceId ?? null,
+		input.enabled === false ? 0 : 1,
+		now,
+		now,
+	)
+	const created = getAgent(db, id)
+	if (!created) {
+		throw new Error("agent create failed")
+	}
+	return created
+}
+
+export function listAgents(db: Db): Agent[] {
+	const rows = db
+		.prepare("SELECT * FROM agents ORDER BY name COLLATE NOCASE, created_at")
+		.all() as unknown as AgentRow[]
+	return rows.map(mapAgent)
+}
+
+export function getAgent(db: Db, id: string): Agent | undefined {
+	const row = db.prepare("SELECT * FROM agents WHERE id = ?").get(id) as unknown as AgentRow | undefined
+	return row ? mapAgent(row) : undefined
+}
+
+export interface AgentPatch {
+	name?: string
+	description?: string
+	systemPrompt?: string
+	requiredCapabilities?: Capability[]
+	preferredCapabilities?: Capability[]
+	privacy?: AgentPrivacy
+	pinnedProviderId?: string | null
+	pinnedInstanceId?: string | null
+	enabled?: boolean
+}
+
+export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent | undefined {
+	const row = db.prepare("SELECT * FROM agents WHERE id = ?").get(id) as unknown as AgentRow | undefined
+	if (!row) {
+		return undefined
+	}
+	db.prepare(
+		`UPDATE agents SET name = ?, description = ?, system_prompt = ?, required_capabilities = ?,
+			preferred_capabilities = ?, privacy = ?, pinned_provider_id = ?, pinned_instance_id = ?,
+			enabled = ?, updated_at = ? WHERE id = ?`,
+	).run(
+		patch.name?.trim() || row.name,
+		patch.description ?? row.description,
+		patch.systemPrompt ?? row.system_prompt,
+		JSON.stringify(patch.requiredCapabilities ?? JSON.parse(row.required_capabilities)),
+		JSON.stringify(patch.preferredCapabilities ?? JSON.parse(row.preferred_capabilities)),
+		patch.privacy ?? row.privacy,
+		patch.pinnedProviderId === undefined ? row.pinned_provider_id : patch.pinnedProviderId,
+		patch.pinnedInstanceId === undefined ? row.pinned_instance_id : patch.pinnedInstanceId,
+		patch.enabled === undefined ? row.enabled : patch.enabled ? 1 : 0,
+		new Date().toISOString(),
+		id,
+	)
+	return getAgent(db, id)
+}
+
+export function deleteAgent(db: Db, id: string): boolean {
+	return db.prepare("DELETE FROM agents WHERE id = ?").run(id).changes > 0
+}
+
+/* ------------------------------------ Swarms ---------------------------------- */
+
+interface SwarmRow {
+	id: string
+	name: string
+	description: string
+	agent_ids: string
+	enabled: number
+	created_at: string
+	updated_at: string
+}
+
+function mapSwarm(row: SwarmRow): Swarm {
+	return {
+		id: row.id,
+		name: row.name,
+		description: row.description,
+		agentIds: JSON.parse(row.agent_ids) as string[],
+		enabled: row.enabled === 1,
+		createdAt: row.created_at,
+		updatedAt: row.updated_at,
+	}
+}
+
+export interface SwarmInput {
+	name: string
+	description?: string
+	agentIds?: string[]
+	enabled?: boolean
+}
+
+export function createSwarm(db: Db, input: SwarmInput): Swarm {
+	const id = randomUUID()
+	const now = new Date().toISOString()
+	db.prepare(
+		"INSERT INTO swarms (id, name, description, agent_ids, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+	).run(
+		id,
+		input.name.trim(),
+		input.description ?? "",
+		JSON.stringify(input.agentIds ?? []),
+		input.enabled === false ? 0 : 1,
+		now,
+		now,
+	)
+	const created = getSwarm(db, id)
+	if (!created) {
+		throw new Error("swarm create failed")
+	}
+	return created
+}
+
+export function listSwarms(db: Db): Swarm[] {
+	const rows = db
+		.prepare("SELECT * FROM swarms ORDER BY name COLLATE NOCASE, created_at")
+		.all() as unknown as SwarmRow[]
+	return rows.map(mapSwarm)
+}
+
+export function getSwarm(db: Db, id: string): Swarm | undefined {
+	const row = db.prepare("SELECT * FROM swarms WHERE id = ?").get(id) as unknown as SwarmRow | undefined
+	return row ? mapSwarm(row) : undefined
+}
+
+export interface SwarmPatch {
+	name?: string
+	description?: string
+	agentIds?: string[]
+	enabled?: boolean
+}
+
+export function updateSwarm(db: Db, id: string, patch: SwarmPatch): Swarm | undefined {
+	const row = db.prepare("SELECT * FROM swarms WHERE id = ?").get(id) as unknown as SwarmRow | undefined
+	if (!row) {
+		return undefined
+	}
+	db.prepare(
+		"UPDATE swarms SET name = ?, description = ?, agent_ids = ?, enabled = ?, updated_at = ? WHERE id = ?",
+	).run(
+		patch.name?.trim() || row.name,
+		patch.description ?? row.description,
+		JSON.stringify(patch.agentIds ?? JSON.parse(row.agent_ids)),
+		patch.enabled === undefined ? row.enabled : patch.enabled ? 1 : 0,
+		new Date().toISOString(),
+		id,
+	)
+	return getSwarm(db, id)
+}
+
+export function deleteSwarm(db: Db, id: string): boolean {
+	return db.prepare("DELETE FROM swarms WHERE id = ?").run(id).changes > 0
+}
+
+/* ------------------------------- Agent-Selection ------------------------------- */
+
+export interface AgentSelectionRecord {
+	taskId: string
+	mode: string
+	agentId: string | null
+	agentName?: string
+	reason?: string
+	candidates: AgentScore[]
+	createdAt: string
+}
+
+/** Persistiert die Zuordnungs-Entscheidung (Explainability, analog routing_decisions). */
+export function saveAgentSelection(db: Db, sel: AgentSelectionRecord): void {
+	db.prepare(
+		`INSERT INTO agent_selections (task_id, mode, agent_id, agent_name, reason, candidates_json, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+	).run(
+		sel.taskId,
+		sel.mode,
+		sel.agentId,
+		sel.agentName ?? null,
+		sel.reason ?? null,
+		JSON.stringify(sel.candidates ?? []),
+		sel.createdAt,
+	)
+}
+
+export function latestAgentSelection(db: Db, taskId: string): AgentSelectionRecord | undefined {
+	const row = db
+		.prepare("SELECT * FROM agent_selections WHERE task_id = ? ORDER BY id DESC LIMIT 1")
+		.get(taskId) as
+		| {
+				mode: string
+				agent_id: string | null
+				agent_name: string | null
+				reason: string | null
+				candidates_json: string
+				created_at: string
+		  }
+		| undefined
+	if (!row) {
+		return undefined
+	}
+	return {
+		taskId,
+		mode: row.mode,
+		agentId: row.agent_id,
+		agentName: row.agent_name ?? undefined,
+		reason: row.reason ?? undefined,
+		candidates: JSON.parse(row.candidates_json) as AgentScore[],
+		createdAt: row.created_at,
+	}
 }

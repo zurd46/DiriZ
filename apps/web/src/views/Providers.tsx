@@ -1,5 +1,6 @@
-import type { ProviderType } from "@diriz/shared"
+import type { InstanceModel, ModelSettings, ProviderType } from "@diriz/shared"
 import { useState } from "react"
+import SettingsEditor from "../components/SettingsEditor.js"
 import { api } from "../lib/api.js"
 import { useStore } from "../store.js"
 
@@ -16,6 +17,67 @@ export default function Providers() {
 	const [baseUrl, setBaseUrl] = useState("http://localhost:11434")
 	const [apiKey, setApiKey] = useState("")
 	const [busy, setBusy] = useState(false)
+
+	// Model-Settings (pro Rechner) + Modell-Overrides.
+	const [expanded, setExpanded] = useState<string | null>(null)
+	const [settings, setSettings] = useState<ModelSettings>({})
+	const [instExpanded, setInstExpanded] = useState<string | null>(null)
+	const [instSettings, setInstSettings] = useState<ModelSettings>({})
+	const [instances, setInstances] = useState<InstanceModel[]>([])
+	const [busySettings, setBusySettings] = useState(false)
+
+	const openSettings = async (p: (typeof providers)[number]) => {
+		if (expanded === p.id) {
+			setExpanded(null)
+			return
+		}
+		setExpanded(p.id)
+		setSettings({ ...p.modelSettings })
+		setInstExpanded(null)
+		try {
+			const data = await api.get<{ instances?: InstanceModel[] }>(`/api/providers/${p.id}`)
+			setInstances(data.instances ?? [])
+		} catch {
+			setInstances([])
+		}
+	}
+
+	const saveSettings = async () => {
+		if (!expanded) return
+		setBusySettings(true)
+		try {
+			await api.patch(`/api/providers/${expanded}`, { modelSettings: settings })
+			await refresh()
+		} catch (e) {
+			setLastError(e instanceof Error ? e.message : String(e))
+		} finally {
+			setBusySettings(false)
+		}
+	}
+
+	const saveInstSettings = async (instId: string) => {
+		setBusySettings(true)
+		try {
+			await api.patch(`/api/instances/${instId}`, { modelSettings: instSettings })
+			await refresh()
+		} catch (e) {
+			setLastError(e instanceof Error ? e.message : String(e))
+		} finally {
+			setBusySettings(false)
+		}
+	}
+
+	const clearInstSettings = async (instId: string) => {
+		setBusySettings(true)
+		try {
+			await api.patch(`/api/instances/${instId}`, { modelSettings: null })
+			await refresh()
+		} catch (e) {
+			setLastError(e instanceof Error ? e.message : String(e))
+		} finally {
+			setBusySettings(false)
+		}
+	}
 
 	const needsKey = type === "openrouter" || type === "openai"
 
@@ -161,6 +223,13 @@ export default function Providers() {
 									>
 										Entdecken
 									</button>
+									<button
+										type="button"
+										className={`btn ${expanded === p.id ? "primary" : ""}`}
+										onClick={() => void openSettings(p)}
+									>
+										⚙ Settings
+									</button>
 									<button type="button" className="btn danger" onClick={() => void remove(p.id)}>
 										Entfernen
 									</button>
@@ -177,6 +246,89 @@ export default function Providers() {
 					</tbody>
 				</table>
 			</div>
+
+			{expanded && (
+				<div className="card">
+					<div className="row between">
+						<strong>⚙ Model-Settings: {providers.find((x) => x.id === expanded)?.label}</strong>
+						<button type="button" className="btn" onClick={() => setExpanded(null)}>
+							Schließen
+						</button>
+					</div>
+					<p className="muted" style={{ marginTop: 4 }}>
+						Gilt für alle Modelle auf diesem Rechner. Reihenfolge: <strong>Provider-Default</strong> ←
+						Modell-Override ← Task-Override.
+					</p>
+					<SettingsEditor value={settings} onChange={setSettings} />
+					<div className="row" style={{ marginTop: 10 }}>
+						<button
+							type="button"
+							className="btn primary"
+							onClick={() => void saveSettings()}
+							disabled={busySettings}
+						>
+							{busySettings ? "…" : "Speichern"}
+						</button>
+						<button type="button" className="btn" onClick={() => setSettings({})}>
+							Zurücksetzen
+						</button>
+					</div>
+
+					{instances.length > 0 && (
+						<div style={{ marginTop: 14 }}>
+							<strong>Modell-Overrides</strong>
+							<div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+								Pro Modell einzelne Werte überschreiben (z. B. Kontext- oder Temperatur-Anpassung je Modell).
+							</div>
+							<div style={{ marginTop: 8 }}>
+								{instances.map((inst) => (
+									<div key={inst.id} style={{ marginTop: 8 }}>
+										<button
+											type="button"
+											className="linklike"
+											onClick={() => {
+												if (instExpanded === inst.id) {
+													setInstExpanded(null)
+												} else {
+													setInstExpanded(inst.id)
+													setInstSettings({ ...inst.modelSettings })
+												}
+											}}
+										>
+											<strong>{inst.displayName}</strong>
+											{inst.modelSettings && Object.keys(inst.modelSettings).length > 0
+												? " — Overrides ✓"
+												: " — ohne Overrides"}
+										</button>
+										{instExpanded === inst.id && (
+											<div style={{ marginTop: 6, paddingLeft: 10, borderLeft: "2px solid var(--border)" }}>
+												<SettingsEditor value={instSettings} onChange={setInstSettings} />
+												<div className="row" style={{ marginTop: 8 }}>
+													<button
+														type="button"
+														className="btn primary"
+														onClick={() => void saveInstSettings(inst.id)}
+														disabled={busySettings}
+													>
+														Speichern
+													</button>
+													<button
+														type="button"
+														onClick={() => void clearInstSettings(inst.id)}
+														disabled={busySettings}
+													>
+														Overrides löschen
+													</button>
+												</div>
+											</div>
+										)}
+									</div>
+								))}
+							</div>
+						</div>
+					)}
+				</div>
+			)}
 		</div>
 	)
 }

@@ -42,6 +42,9 @@ export function connectStream(
 		// Generic-Listener: Fastify sendet benannte Events (`event: <name>`).
 		const names = [
 			"task.created",
+			"task.agent_selected",
+			"agents.changed",
+			"swarms.changed",
 			"routing.decided",
 			"execution.delta",
 			"execution.usage",

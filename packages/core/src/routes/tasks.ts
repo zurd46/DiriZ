@@ -3,13 +3,17 @@
  * Routing-Entscheidungen, Dateien, Bewertungen.
  */
 
-import type { TaskMetadata, TaskStatus } from "@diriz/shared"
+import type { ModelSettings, TaskMetadata, TaskStatus } from "@diriz/shared"
 import type { FastifyInstance } from "fastify"
 import type { AppContext } from "../app.js"
+import type { Db } from "../db/connection.js"
 import {
 	createTask,
+	getAgent,
 	getExecution,
+	getSwarm,
 	getTask,
+	latestAgentSelection,
 	latestDecision,
 	listExecutionsByTask,
 	listFilesByTask,
@@ -22,6 +26,50 @@ interface CreateBody {
 	title?: string
 	prompt: string
 	metadata?: Partial<TaskMetadata>
+	assignmentMode?: "auto" | "agent" | "swarm"
+	agentId?: string
+	swarmId?: string
+	overrides?: ModelSettings
+}
+
+type AssignmentModeValue = "auto" | "agent" | "swarm"
+
+/** Prüft die Zuweisung konsistent (Create, Patch, Start). */
+function validateAssignment(
+	db: Db,
+	assignmentMode: AssignmentModeValue | undefined,
+	agentId?: string,
+	swarmId?: string,
+): string | undefined {
+	const mode = assignmentMode ?? "auto"
+	if (!["auto", "agent", "swarm"].includes(mode)) {
+		return "assignmentMode muss auto, agent oder swarm sein"
+	}
+	if (mode === "agent") {
+		if (!agentId) {
+			return 'Zuweisungsmodus "agent" benötigt einen agentId'
+		}
+		const agent = getAgent(db, agentId)
+		if (!agent) {
+			return `Agent ${agentId} existiert nicht`
+		}
+		if (!agent.enabled) {
+			return `Agent ${agent.name} ist deaktiviert`
+		}
+	}
+	if (mode === "swarm") {
+		if (!swarmId) {
+			return 'Zuweisungsmodus "swarm" benötigt einen swarmId'
+		}
+		const swarm = getSwarm(db, swarmId)
+		if (!swarm) {
+			return `Swarm ${swarmId} existiert nicht`
+		}
+		if (!swarm.enabled) {
+			return `Swarm ${swarm.name} ist deaktiviert`
+		}
+	}
+	return undefined
 }
 
 export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
@@ -38,11 +86,15 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 	})
 
 	app.post<{ Body: CreateBody }>("/api/tasks", (req, reply) => {
-		const { title, prompt, metadata } = req.body ?? {}
+		const { title, prompt, metadata, assignmentMode, agentId, swarmId, overrides } = req.body ?? {}
 		if (!prompt || prompt.trim().length === 0) {
 			return reply.code(400).send({ error: "prompt fehlt" })
 		}
-		const task = createTask(ctx.db, { title, prompt, metadata })
+		const assignmentErr = validateAssignment(ctx.db, assignmentMode, agentId, swarmId)
+		if (assignmentErr) {
+			return reply.code(400).send({ error: assignmentErr })
+		}
+		const task = createTask(ctx.db, { title, prompt, metadata, assignmentMode, agentId, swarmId, overrides })
 		ctx.bus.emit({ event: "task.created", data: { taskId: task.id } })
 		return reply.code(201).send(task)
 	})
@@ -58,27 +110,64 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 			executions,
 			files: listFilesByTask(ctx.db, task.id),
 			decisions: executions.map((e) => latestDecision(ctx.db, e.id)).filter((d) => d !== undefined),
+			agentSelection: latestAgentSelection(ctx.db, task.id),
+			agent: task.agentId ? getAgent(ctx.db, task.agentId) : undefined,
 			running: ctx.engine.isRunning(task.id),
 		}
 	})
 
-	app.patch<{ Params: { id: string }; Body: { title?: string; prompt?: string } }>(
-		"/api/tasks/:id",
-		(req, reply) => {
-			const task = getTask(ctx.db, req.params.id)
-			if (!task) {
-				return reply.code(404).send({ error: "Task nicht gefunden" })
-			}
-			if (ctx.engine.isRunning(task.id)) {
-				return reply.code(409).send({ error: "Task läuft — kann nicht bearbeitet werden" })
-			}
-			const { title, prompt } = req.body ?? {}
-			const newTitle = title?.trim() || task.title
-			const newPrompt = prompt?.trim() || task.prompt
-			ctx.db.prepare("UPDATE tasks SET title = ?, prompt = ? WHERE id = ?").run(newTitle, newPrompt, task.id)
-			return getTask(ctx.db, task.id)
-		},
-	)
+	interface PatchBody {
+		title?: string
+		prompt?: string
+		assignmentMode?: AssignmentModeValue
+		/** "null" = Agent/Swarm zurücksetzen. */
+		agentId?: string | null
+		swarmId?: string | null
+		/** "null" = Overrides zurücksetzen. */
+		overrides?: ModelSettings | null
+	}
+
+	app.patch<{ Params: { id: string }; Body: PatchBody }>("/api/tasks/:id", (req, reply) => {
+		const task = getTask(ctx.db, req.params.id)
+		if (!task) {
+			return reply.code(404).send({ error: "Task nicht gefunden" })
+		}
+		if (ctx.engine.isRunning(task.id)) {
+			return reply.code(409).send({ error: "Task läuft — kann nicht bearbeitet werden" })
+		}
+		const body = req.body ?? {}
+		const merged = {
+			assignmentMode: body.assignmentMode ?? task.assignmentMode ?? "auto",
+			agentId: body.agentId === null ? undefined : (body.agentId ?? task.agentId),
+			swarmId: body.swarmId === null ? undefined : (body.swarmId ?? task.swarmId),
+		}
+		const assignmentErr = validateAssignment(ctx.db, merged.assignmentMode, merged.agentId, merged.swarmId)
+		if (assignmentErr) {
+			return reply.code(400).send({ error: assignmentErr })
+		}
+		const newTitle = body.title?.trim() || task.title
+		const newPrompt = body.prompt?.trim() || task.prompt
+		ctx.db
+			.prepare(
+				"UPDATE tasks SET title = ?, prompt = ?, assignment_mode = ?, agent_id = ?, swarm_id = ?, overrides_json = ? WHERE id = ?",
+			)
+			.run(
+				newTitle,
+				newPrompt,
+				merged.assignmentMode,
+				merged.agentId ?? null,
+				merged.swarmId ?? null,
+				body.overrides === null
+					? null
+					: body.overrides
+						? JSON.stringify(body.overrides)
+						: task.overrides
+							? JSON.stringify(task.overrides)
+							: null,
+				task.id,
+			)
+		return getTask(ctx.db, task.id)
+	})
 
 	app.delete<{ Params: { id: string } }>("/api/tasks/:id", (req, reply) => {
 		const task = getTask(ctx.db, req.params.id)
@@ -96,6 +185,18 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 		const task = getTask(ctx.db, req.params.id)
 		if (!task) {
 			return reply.code(404).send({ error: "Task nicht gefunden" })
+		}
+		if (ctx.engine.isRunning(task.id)) {
+			return reply.code(409).send({ error: "Task läuft bereits" })
+		}
+		const assignmentErr = validateAssignment(
+			ctx.db,
+			task.assignmentMode ?? "auto",
+			task.agentId,
+			task.swarmId,
+		)
+		if (assignmentErr) {
+			return reply.code(400).send({ error: assignmentErr })
 		}
 		const result = ctx.engine.start(task.id)
 		if (!result.accepted) {

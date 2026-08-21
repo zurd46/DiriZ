@@ -3,7 +3,16 @@
  * Live-Executions. SSE-Events aktualisieren den Store direkt.
  */
 
-import type { CoreEvent, Execution, LogEvent, Provider, RoutingDecision, Task } from "@diriz/shared"
+import type {
+	Agent,
+	CoreEvent,
+	Execution,
+	LogEvent,
+	Provider,
+	RoutingDecision,
+	Swarm,
+	Task,
+} from "@diriz/shared"
 import { create } from "zustand"
 import { api } from "./lib/api.js"
 import type { StreamEvent } from "./lib/sse.js"
@@ -27,6 +36,16 @@ export interface TaskDetail {
 	files: { relPath: string; size: number }[]
 	decisions: RoutingDecision[]
 	running?: boolean
+	agentSelection?: {
+		taskId: string
+		mode: string
+		agentId: string | null
+		agentName?: string
+		reason?: string
+		candidates: { agentId: string; name: string; score: number; reasons: string[] }[]
+		createdAt: string
+	}
+	agent?: Agent
 }
 
 export interface ProviderView extends Provider {
@@ -49,6 +68,8 @@ export interface MetricsView {
 interface State {
 	connected: boolean
 	providers: ProviderView[]
+	agents: Agent[]
+	swarms: Swarm[]
 	tasks: (Task & { running?: boolean })[]
 	logs: LogLine[]
 	metrics: MetricsView | null
@@ -60,6 +81,8 @@ interface State {
 	setConnected(connected: boolean): void
 	setLastError(message?: string): void
 	refreshProviders(): Promise<void>
+	refreshAgents(): Promise<void>
+	refreshSwarms(): Promise<void>
 	refreshTasks(): Promise<void>
 	refreshLogs(): Promise<void>
 	refreshMetrics(): Promise<void>
@@ -72,6 +95,8 @@ const MAX_LOGS = 500
 export const useStore = create<State>((set, get) => ({
 	connected: false,
 	providers: [],
+	agents: [],
+	swarms: [],
 	tasks: [],
 	logs: [],
 	metrics: null,
@@ -87,6 +112,24 @@ export const useStore = create<State>((set, get) => ({
 		try {
 			const providers = await api.get<ProviderView[]>("/api/providers")
 			set({ providers })
+		} catch (e) {
+			set({ lastError: e instanceof Error ? e.message : String(e) })
+		}
+	},
+
+	refreshAgents: async () => {
+		try {
+			const agents = await api.get<Agent[]>("/api/agents")
+			set({ agents })
+		} catch (e) {
+			set({ lastError: e instanceof Error ? e.message : String(e) })
+		}
+	},
+
+	refreshSwarms: async () => {
+		try {
+			const swarms = await api.get<Swarm[]>("/api/swarms")
+			set({ swarms })
 		} catch (e) {
 			set({ lastError: e instanceof Error ? e.message : String(e) })
 		}
@@ -137,6 +180,20 @@ export const useStore = create<State>((set, get) => ({
 		switch (core.event) {
 			case "task.created":
 				void state.refreshTasks()
+				break
+			case "task.agent_selected": {
+				const taskId = (core as { data: { taskId?: string } }).data?.taskId
+				void state.refreshTasks()
+				if (taskId && state.taskDetails[taskId]) {
+					void state.loadTaskDetail(taskId)
+				}
+				break
+			}
+			case "agents.changed":
+				void state.refreshAgents()
+				break
+			case "swarms.changed":
+				void state.refreshSwarms()
 				break
 			case "routing.decided": {
 				const { executionId } = core.data

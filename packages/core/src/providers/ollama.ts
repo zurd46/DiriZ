@@ -63,6 +63,8 @@ export class OllamaProvider implements LLMProvider {
 	}
 
 	async *chat(req: ChatRequest): AsyncGenerator<ChatChunk> {
+		// Model-Settings in Ollama-`options` mappen; undefined wird verworfen.
+		const s = req.settings ?? {}
 		const res = await fetch(`${this.baseUrl}/api/chat`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
@@ -71,11 +73,16 @@ export class OllamaProvider implements LLMProvider {
 				messages: req.messages,
 				stream: true,
 				keep_alive: 0,
-				temperature: req.temperature,
-				// Ollama kennt `num_predict` statt max_tokens — beides senden,
-				// neuerer Server nehmen `max_tokens`.
-				num_predict: req.maxTokens,
-				max_tokens: req.maxTokens,
+				options: {
+					temperature: s.temperature ?? req.temperature,
+					num_predict: s.maxTokens ?? req.maxTokens,
+					top_k: s.topK,
+					top_p: s.topP,
+					min_p: s.minP,
+					repeat_penalty: s.repeatPenalty,
+					seed: s.seed,
+					stop: s.stop,
+				},
 			}),
 			signal: req.signal,
 		})

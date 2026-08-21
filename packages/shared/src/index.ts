@@ -2,6 +2,7 @@
  * @diriz/shared — gemeinsame Typen, Event-Kontrakte, Konstanten & Scoring.
  */
 
+export * from "./agents.js"
 export * from "./constants.js"
 export * from "./events.js"
 export * from "./routing.js"

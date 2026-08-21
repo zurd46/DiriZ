@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react"
 import { connectStream } from "./lib/sse.js"
 import { useStore } from "./store.js"
+import Agents from "./views/Agents.js"
 import Dashboard from "./views/Dashboard.js"
 import Logs from "./views/Logs.js"
 import Providers from "./views/Providers.js"
 import Tasks from "./views/Tasks.js"
 
-type View = "dashboard" | "providers" | "tasks" | "logs"
+type View = "dashboard" | "providers" | "agents" | "tasks" | "logs"
 
 const NAV: { id: View; label: string }[] = [
 	{ id: "dashboard", label: "Dashboard" },
 	{ id: "providers", label: "Provider" },
+	{ id: "agents", label: "Agenten" },
 	{ id: "tasks", label: "Tasks" },
 	{ id: "logs", label: "Logs" },
 ]
@@ -23,6 +25,8 @@ export default function App() {
 	useEffect(() => {
 		const state = useStore.getState()
 		void state.refreshProviders()
+		void state.refreshAgents()
+		void state.refreshSwarms()
 		void state.refreshTasks()
 		void state.refreshMetrics()
 		const handle = connectStream(handleStreamEvent, setConnected)
@@ -59,6 +63,7 @@ export default function App() {
 			<main className="main">
 				{view === "dashboard" && <Dashboard />}
 				{view === "providers" && <Providers />}
+				{view === "agents" && <Agents />}
 				{view === "tasks" && <Tasks />}
 				{view === "logs" && <Logs />}
 			</main>

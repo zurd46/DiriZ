@@ -90,6 +90,9 @@ export class OpenAiCompatProvider implements LLMProvider {
 	}
 
 	async *chat(req: ChatRequest): AsyncGenerator<ChatChunk> {
+		// Model-Settings (Provider/Modell/Task) in den OpenAI-`ody mappen;
+		// undefined-Felder werden von JSON.stringify automatisch verworfen.
+		const s = req.settings ?? {}
 		const res = await fetch(`${this.baseUrl}/chat/completions`, {
 			method: "POST",
 			headers: { "content-type": "application/json", ...this.headers() },
@@ -98,8 +101,14 @@ export class OpenAiCompatProvider implements LLMProvider {
 				messages: req.messages,
 				stream: true,
 				stream_options: { include_usage: true },
-				temperature: req.temperature,
-				max_tokens: req.maxTokens,
+				temperature: s.temperature ?? req.temperature,
+				max_tokens: s.maxTokens ?? req.maxTokens,
+				top_p: s.topP,
+				top_k: s.topK,
+				presence_penalty: s.presencePenalty,
+				frequency_penalty: s.frequencyPenalty,
+				seed: s.seed,
+				stop: s.stop,
 			}),
 			signal: req.signal,
 		})

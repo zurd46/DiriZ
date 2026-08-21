@@ -9,24 +9,40 @@
  */
 
 import {
+	type Agent,
+	type AgentProfile,
+	type AgentScore,
 	type CandidateScore,
+	type ChatMessage,
 	type CoreEvent,
 	DEFAULT_CONCURRENCY,
 	DEFAULT_TIMEOUTS,
 	DEFAULT_WEIGHTS,
 	type Execution,
 	MAX_FAILOVER_HOPS,
+	MIN_AGENT_SCORE,
+	type ModelSettings,
 	type RoutingDecision,
+	scoreAgents,
 	type Task,
+	type TaskProfile,
+	toAgentCandidate,
 } from "@diriz/shared"
 import type { Db } from "../db/connection.js"
 import {
 	appendChunk,
 	createExecution,
+	getAgent,
 	getExecution,
+	getInstance,
+	getProvider,
+	getSwarm,
 	getTask,
+	listAgents,
+	saveAgentSelection,
 	saveDecision,
 	saveFile,
+	setTaskAgentSelection,
 	setTaskStatus,
 	updateExecution,
 } from "../db/repositories.js"
@@ -174,6 +190,137 @@ export class ExecutionEngine {
 		return result
 	}
 
+	/* ---------------------------- Agent-Zuordnung (M1) --------------------------- */
+
+	/**
+	 * Wählt den Spezialisten für die Task je nach Zuweisungsmodus:
+	 * - `agent`: der feste Agent (task.agentId)
+	 * - `swarm`: best bewertetes Mitglied des Swarms
+	 * - `auto`: best bewerteter Agent, wenn er MIN_AGENT_SCORE erreicht — sonst keins
+	 *
+	 * Die Entscheidung wird persistiert und als `task.agent_selected` emittiert
+	 * (Explainability: Kandidaten + Gründe).
+	 */
+	private resolveAgent(task: Task): Agent | undefined {
+		const { db, emit, log } = this.deps
+		const mode = task.assignmentMode ?? "auto"
+		const fail = (msg: string): never => {
+			setTaskStatus(db, task.id, "failed", new Date().toISOString())
+			throw new Error(msg)
+		}
+		const profile = extractProfile(task)
+		const agentProfile: AgentProfile = {
+			privacy: profile.privacy,
+			requiredCapabilities: profile.requiredCapabilities,
+			preferredCapabilities: profile.preferredCapabilities,
+		}
+		const pool = listAgents(db).filter((a) => a.enabled)
+
+		let agent: Agent | undefined
+		let candidates: AgentScore[] = []
+		let reason = ""
+
+		if (mode === "agent") {
+			if (!task.agentId) {
+				return fail('Zuweisungsmodus "agent", aber kein Agent gewählt')
+			}
+			agent = getAgent(db, task.agentId)
+			if (!agent?.enabled) {
+				return fail(`Agent ${task.agentId} existiert nicht oder ist deaktiviert`)
+			}
+			reason = "Manuell zugewiesener Spezialist"
+			candidates = [{ agentId: agent.id, name: agent.name, score: 0, reasons: [reason] }]
+		} else if (mode === "swarm") {
+			if (!task.swarmId) {
+				return fail('Zuweisungsmodus "swarm", aber kein Swarm gewählt')
+			}
+			const swarm = getSwarm(db, task.swarmId)
+			if (!swarm?.enabled) {
+				return fail(`Swarm ${task.swarmId} existiert nicht oder ist deaktiviert`)
+			}
+			const members = pool.filter((a) => swarm.agentIds.includes(a.id))
+			if (members.length === 0) {
+				return fail(`Swarm „${swarm.name}“ enthält keine aktiven Agenten`)
+			}
+			candidates = scoreAgents(task.prompt, agentProfile, members.map(toAgentCandidate))
+			agent = members.find((a) => a.id === candidates[0]?.agentId)
+			reason =
+				members.length === 1
+					? `Einziger Agent im Swarm „${swarm.name}“`
+					: `Bester Agent im Swarm „${swarm.name}“`
+		} else {
+			candidates = scoreAgents(task.prompt, agentProfile, pool.map(toAgentCandidate))
+			const best = candidates[0]
+			if (best && best.score >= MIN_AGENT_SCORE) {
+				agent = pool.find((a) => a.id === best.agentId)
+				reason =
+					best.reasons.length > 0
+						? `Automatische Zuordnung: ${best.reasons.join("; ")}`
+						: "Automatische Zuordnung"
+			} else {
+				reason = "Kein Spezialist relevant genug — freies Routing"
+			}
+		}
+
+		saveAgentSelection(db, {
+			taskId: task.id,
+			mode,
+			agentId: agent?.id ?? null,
+			agentName: agent?.name,
+			reason,
+			candidates,
+			createdAt: new Date().toISOString(),
+		})
+		setTaskAgentSelection(db, task.id, agent?.id ?? null)
+		emit({
+			event: "task.agent_selected",
+			data: {
+				taskId: task.id,
+				agentId: agent?.id ?? null,
+				agentName: agent?.name,
+				mode,
+				reason,
+				candidates,
+			},
+		})
+		log("info", "agents", `Task ${task.id}: ${agent ? `Spezialist „${agent.name}“` : "kein Agent"} (${mode})`)
+		return agent
+	}
+
+	/** Agent-Einschränkungen → Routing-Profil (Privacy, Fähigkeiten, Pins). */
+	private applyAgentConstraints(profile: TaskProfile, agent?: Agent): TaskProfile {
+		if (!agent) {
+			return profile
+		}
+		let next: TaskProfile = { ...profile }
+		if (agent.privacy === "local-only") {
+			next = { ...next, privacy: "local-only" }
+		}
+		if (agent.requiredCapabilities.length > 0 || agent.preferredCapabilities.length > 0) {
+			next = {
+				...next,
+				requiredCapabilities: [...new Set([...next.requiredCapabilities, ...agent.requiredCapabilities])],
+				preferredCapabilities: [...new Set([...next.preferredCapabilities, ...agent.preferredCapabilities])],
+			}
+		}
+		// Pins greifen nur, wenn die Task selbst nichts gepinnt hat.
+		const taskPinned =
+			next.mode === "pinned" || next.pinnedProviderId !== undefined || next.pinnedModelId !== undefined
+		if (taskPinned) {
+			return next
+		}
+		if (agent.pinnedInstanceId) {
+			const inst = getInstance(this.deps.db, agent.pinnedInstanceId)
+			if (inst) {
+				return { ...next, mode: "pinned", pinnedProviderId: inst.providerId, pinnedModelId: inst.modelId }
+			}
+		}
+		if (agent.pinnedProviderId) {
+			return { ...next, mode: "pinned", pinnedProviderId: agent.pinnedProviderId }
+		}
+		return next
+	}
+
 	/* ----------------------------- Routing + Loop ------------------------------ */
 
 	/**
@@ -188,7 +335,10 @@ export class ExecutionEngine {
 		}
 
 		setTaskStatus(db, task.id, "routing")
-		const profile = extractProfile(task)
+
+		// M1: Spezialisten-Zuordnung (auto/agent/swarm) vor dem Routing.
+		const agent = this.resolveAgent(task)
+		const profile = this.applyAgentConstraints(extractProfile(task), agent)
 		const candidates = this.buildCandidates()
 		const { weights, excluded, allowed } = applyPolicies(candidates, profile, DEFAULT_WEIGHTS)
 
@@ -246,7 +396,7 @@ export class ExecutionEngine {
 
 			setTaskStatus(db, task.id, "running")
 			try {
-				return await this.streamExecution(execution, choice)
+				return await this.streamExecution(execution, choice, agent)
 			} catch (e) {
 				if (e instanceof CancelledError) {
 					const now = new Date().toISOString()
@@ -311,7 +461,11 @@ export class ExecutionEngine {
 	 * Usage erfassen, am Ende Workspace-Dateien schreiben und finalisieren.
 	 * Wirft bei Timeout/Abbruch/Provider-Fehler.
 	 */
-	private async streamExecution(execution: Execution, choice: PolicyCandidate): Promise<Execution> {
+	private async streamExecution(
+		execution: Execution,
+		choice: PolicyCandidate,
+		agent?: Agent,
+	): Promise<Execution> {
 		const { db, emit, log, registry, feedback, workspaceDir } = this.deps
 		const adapter = registry.adapter(choice.instance.providerId)
 		if (!adapter) {
@@ -350,9 +504,24 @@ export class ExecutionEngine {
 		let tokensOut = 0
 		const startedAt = Date.now()
 		try {
+			// Model-Settings auflösen: Provider ← Modell ← Task (späterer Eintrag gewinnt).
+			const provider = getProvider(db, choice.instance.providerId)
+			const effective: ModelSettings = {
+				...provider?.modelSettings,
+				...choice.instance.modelSettings,
+				...task.overrides,
+			}
+			const systemPrompt = (agent?.systemPrompt ?? "").trim() || (effective.systemPrompt ?? "").trim()
+			const messages: ChatMessage[] = systemPrompt
+				? [
+						{ role: "system", content: systemPrompt },
+						{ role: "user", content: task.prompt },
+					]
+				: [{ role: "user", content: task.prompt }]
 			const stream = adapter.chat({
-				messages: [{ role: "user", content: task.prompt }],
+				messages,
 				model: choice.instance.modelId,
+				settings: effective,
 				signal: controller.signal,
 			})
 			for await (const chunk of stream) {

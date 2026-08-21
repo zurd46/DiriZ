@@ -10,6 +10,7 @@ import type { Db } from "./db/connection.js"
 import type { EventBus } from "./execution/bus.js"
 import type { ExecutionEngine } from "./execution/engine.js"
 import type { ProviderRegistry } from "./providers/registry.js"
+import { registerAgents } from "./routes/agents.js"
 import { registerHealth } from "./routes/health.js"
 import { registerInstances } from "./routes/instances.js"
 import { registerLogs } from "./routes/logs.js"
@@ -37,6 +38,7 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
 
 	registerHealth(app, ctx)
 	registerProviders(app, ctx)
+	registerAgents(app, ctx)
 	registerInstances(app, ctx)
 	registerTasks(app, ctx)
 	registerLogs(app, ctx)

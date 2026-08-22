@@ -11,6 +11,7 @@ import { createProvider } from "../src/providers/factory.js"
 import { LmStudioProvider } from "../src/providers/lmstudio.js"
 import { OllamaProvider } from "../src/providers/ollama.js"
 
+let lastAuth: string | undefined
 let server: http.Server
 let baseUrl: string
 
@@ -18,6 +19,7 @@ beforeAll(async () => {
 	server = http.createServer((req, res) => {
 		const url = req.url ?? ""
 		if (req.method === "GET" && url === "/api/tags") {
+			lastAuth = req.headers.authorization as string | undefined
 			res.writeHead(200, { "content-type": "application/json" })
 			res.end(JSON.stringify({ models: [{ name: "llama3" }, { name: "mistral" }] }))
 			return
@@ -40,6 +42,7 @@ beforeAll(async () => {
 			return
 		}
 		if (req.method === "GET" && url === "/v1/models") {
+			lastAuth = req.headers.authorization as string | undefined
 			res.writeHead(200, { "content-type": "application/json" })
 			res.end(
 				JSON.stringify({
@@ -112,6 +115,19 @@ describe("adapter: Ollama", () => {
 		expect(usage && usage.type === "usage" && usage.tokensIn).toBe(3)
 		expect(chunks.at(-1)?.type).toBe("done")
 	})
+
+	it("sendet API-Key als Bearer-Token (Auth-Proxy)", async () => {
+		const provider = new OllamaProvider("ollama-auth", baseUrl, "Ollama Auth", "sekret-123")
+		await provider.listModels()
+		expect(lastAuth).toBe("Bearer sekret-123")
+	})
+
+	it("sendet ohne Key keinen Authorization-Header", async () => {
+		lastAuth = undefined
+		const provider = new OllamaProvider("ollama-noauth", baseUrl)
+		await provider.listModels()
+		expect(lastAuth).toBeUndefined()
+	})
 })
 
 describe("adapter: OpenAI-kompatibel (LM Studio)", () => {
@@ -137,6 +153,12 @@ describe("adapter: OpenAI-kompatibel (LM Studio)", () => {
 		expect(text).toBe("Hi there")
 		const usage = chunks.find((c) => c.type === "usage")
 		expect(usage && usage.type === "usage" && usage.tokensOut).toBe(9)
+	})
+
+	it("sendet API-Key als Bearer-Token", async () => {
+		const provider = new LmStudioProvider("lmstudio-auth", `${baseUrl}/v1`, "key-abc")
+		await provider.listModels()
+		expect(lastAuth).toBe("Bearer key-abc")
 	})
 })
 

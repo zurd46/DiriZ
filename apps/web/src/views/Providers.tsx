@@ -79,7 +79,7 @@ export default function Providers() {
 		}
 	}
 
-	const needsKey = type === "openrouter" || type === "openai"
+	const requiresKey = type === "openrouter" || type === "openai"
 
 	const addProvider = async () => {
 		setBusy(true)
@@ -87,8 +87,8 @@ export default function Providers() {
 			await api.post("/api/providers", {
 				type,
 				label: label || type,
-				baseUrl: needsKey && !baseUrl ? undefined : baseUrl,
-				apiKey: needsKey ? apiKey : undefined,
+				baseUrl: requiresKey && !baseUrl ? undefined : baseUrl,
+				apiKey: apiKey || undefined,
 			})
 			setLabel("")
 			setApiKey("")
@@ -151,26 +151,25 @@ export default function Providers() {
 								value={baseUrl}
 								onChange={(e) => setBaseUrl(e.target.value)}
 								placeholder={type === "ollama" ? "http://localhost:11434" : "https://…/v1"}
-								disabled={needsKey}
+								disabled={requiresKey}
 							/>
 						</label>
-						{needsKey && (
-							<label className="field">
-								API-Key
-								<input
-									type="password"
-									value={apiKey}
-									onChange={(e) => setApiKey(e.target.value)}
-									placeholder="sk-…"
-								/>
-							</label>
-						)}
+						<label className="field">
+							API-Key {requiresKey ? "" : "(optional)"}
+							<input
+								type="password"
+								value={apiKey}
+								onChange={(e) => setApiKey(e.target.value)}
+								placeholder="sk-… / Bearer-Token"
+							/>
+						</label>
 						<button type="button" className="btn primary" onClick={() => void addProvider()} disabled={busy}>
 							{busy ? "…" : "Speichern"}
 						</button>
 					</div>
 					<p className="muted" style={{ marginBottom: 0 }}>
-						API-Keys werden verschlüsselt in <code>~/.diriz</code> gespeichert und nie zurückgegeben.
+						API-Key wird als Bearer-Token gesendet (<code>Authorization: Bearer …</code>) und verschlüsselt in{" "}
+						<code>~/.diriz</code> gespeichert — nie zurückgegeben.
 					</p>
 				</div>
 			)}

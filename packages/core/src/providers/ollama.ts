@@ -48,11 +48,18 @@ export class OllamaProvider implements LLMProvider {
 	/** M8 Agentik: Ollama ≥ 0.6 unterstützt `tools` im Chat-Request. */
 	readonly supportsTools = true
 	private baseUrl: string
+	private apiKey?: string
 
-	constructor(id: string, baseUrl: string, label = "Ollama") {
+	constructor(id: string, baseUrl: string, label = "Ollama", apiKey?: string) {
 		this.id = id
 		this.baseUrl = baseUrl.replace(/\/+$/, "")
 		this.label = label
+		this.apiKey = apiKey
+	}
+
+	/** Optionaler API-Key (z. B. Auth-Proxy vor Ollama) wird als Bearer-Token gesendet. */
+	private headers(): Record<string, string> {
+		return this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {}
 	}
 
 	async healthCheck(): Promise<HealthStatus> {
@@ -67,6 +74,7 @@ export class OllamaProvider implements LLMProvider {
 
 	async listModels(): Promise<DiscoveredModel[]> {
 		const data = await fetchJson<{ models?: { name: string }[] }>(`${this.baseUrl}/api/tags`, {
+			headers: this.headers(),
 			timeoutMs: 5000,
 		})
 		return (data.models ?? []).map((m) => ({ modelId: m.name, displayName: m.name }))
@@ -77,7 +85,7 @@ export class OllamaProvider implements LLMProvider {
 		const data = await fetchJson<{
 			models?: { name: string; size_vram?: number }[]
 			size_vram_total?: number
-		}>(`${this.baseUrl}/api/ps`, { timeoutMs: 5000 })
+		}>(`${this.baseUrl}/api/ps`, { headers: this.headers(), timeoutMs: 5000 })
 		return {
 			loadedModels: (data.models ?? []).map((m) => ({ modelId: m.name, memoryBytes: m.size_vram ?? 0 })),
 			totalMemoryBytes: data.size_vram_total,
@@ -108,7 +116,7 @@ export class OllamaProvider implements LLMProvider {
 		}
 		const res = await fetch(`${this.baseUrl}/api/chat`, {
 			method: "POST",
-			headers: { "content-type": "application/json" },
+			headers: { "content-type": "application/json", ...this.headers() },
 			body: JSON.stringify(body),
 			signal: req.signal,
 		})

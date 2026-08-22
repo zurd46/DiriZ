@@ -18,7 +18,7 @@ export function createProvider(
 ): LLMProvider {
 	switch (type) {
 		case "ollama":
-			return new OllamaProvider(id, baseUrl, label)
+			return new OllamaProvider(id, baseUrl, label, apiKey)
 		case "lmstudio":
 			return new LmStudioProvider(id, baseUrl, apiKey)
 		case "openai-compat":

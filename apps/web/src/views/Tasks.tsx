@@ -11,6 +11,18 @@ import { api } from "../lib/api.js"
 import type { TaskDetail } from "../store.js"
 import { useStore } from "../store.js"
 
+/** Entwurf beim Bearbeiten einer Task. */
+interface TaskDraft {
+	title: string
+	prompt: string
+	assignment: "auto" | "agent" | "swarm"
+	agentId: string
+	swarmId: string
+	ovTemp: string
+	ovMax: string
+	ovSystem: string
+}
+
 export default function Tasks() {
 	const tasks = useStore((s) => s.tasks)
 	const agents = useStore((s) => s.agents)
@@ -44,6 +56,13 @@ export default function Tasks() {
 	const [tplName, setTplName] = useState("")
 	const [preview, setPreview] = useState<RoutePreview | undefined>(undefined)
 	const [previewBusy, setPreviewBusy] = useState(false)
+
+	// Bearbeiten: Task (Titel, Prompt, Zuweisung, Overrides) und Vorlagen.
+	const [editTask, setEditTask] = useState<string | null>(null)
+	const [tDraft, setTDraft] = useState<TaskDraft | null>(null)
+	const [editTpl, setEditTpl] = useState<string | null>(null)
+	const [tplDraftName, setTplDraftName] = useState("")
+	const [tplDraftPrompt, setTplDraftPrompt] = useState("")
 
 	useEffect(() => {
 		if (selected) {
@@ -115,6 +134,74 @@ export default function Tasks() {
 				setSelected(undefined)
 			}
 			await refresh()
+		} catch (e) {
+			setLastError(e instanceof Error ? e.message : String(e))
+		}
+	}
+
+	const startEditTask = (task: Task) => {
+		if (editTask === task.id) {
+			setEditTask(null)
+			return
+		}
+		setEditTask(task.id)
+		setTDraft({
+			title: task.title,
+			prompt: task.prompt,
+			assignment: task.assignmentMode ?? "auto",
+			agentId: task.agentId ?? "",
+			swarmId: task.swarmId ?? "",
+			ovTemp: task.overrides?.temperature !== undefined ? String(task.overrides.temperature) : "",
+			ovMax: task.overrides?.maxTokens !== undefined ? String(task.overrides.maxTokens) : "",
+			ovSystem: task.overrides?.systemPrompt ?? "",
+		})
+	}
+
+	const saveTask = async () => {
+		if (!editTask || !tDraft) return
+		setBusy(true)
+		try {
+			const hasOverrides = tDraft.ovTemp !== "" || tDraft.ovMax !== "" || tDraft.ovSystem !== ""
+			await api.patch(`/api/tasks/${editTask}`, {
+				title: tDraft.title,
+				prompt: tDraft.prompt,
+				assignmentMode: tDraft.assignment,
+				agentId: tDraft.assignment === "agent" ? tDraft.agentId || null : null,
+				swarmId: tDraft.assignment === "swarm" ? tDraft.swarmId || null : null,
+				overrides: hasOverrides
+					? {
+							temperature: tDraft.ovTemp === "" ? undefined : Number(tDraft.ovTemp),
+							maxTokens: tDraft.ovMax === "" ? undefined : Number(tDraft.ovMax),
+							systemPrompt: tDraft.ovSystem || undefined,
+						}
+					: null,
+			})
+			setEditTask(null)
+			setTDraft(null)
+			await refresh()
+		} catch (e) {
+			setLastError(e instanceof Error ? e.message : String(e))
+		} finally {
+			setBusy(false)
+		}
+	}
+
+	const startEditTemplate = (tpl: PromptTemplate) => {
+		if (editTpl === tpl.id) {
+			setEditTpl(null)
+			return
+		}
+		setEditTpl(tpl.id)
+		setTplDraftName(tpl.name)
+		setTplDraftPrompt(tpl.prompt)
+	}
+
+	const updateTemplate = async () => {
+		if (!editTpl) return
+		try {
+			await api.patch(`/api/templates/${editTpl}`, { name: tplDraftName.trim(), prompt: tplDraftPrompt })
+			setEditTpl(null)
+			loadTemplates()
 		} catch (e) {
 			setLastError(e instanceof Error ? e.message : String(e))
 		}
@@ -358,6 +445,15 @@ export default function Tasks() {
 											{t.name}
 										</button>{" "}
 										·{" "}
+										<button
+											type="button"
+											className="linklike"
+											title="Vorlage bearbeiten"
+											onClick={() => startEditTemplate(t)}
+										>
+											✏️
+										</button>{" "}
+										·{" "}
 										<button type="button" className="linklike" onClick={() => void removeTemplate(t.id)}>
 											✕
 										</button>
@@ -365,6 +461,33 @@ export default function Tasks() {
 								))}
 								{templates.length === 0 && <span className="muted">Keine Vorlagen vorhanden.</span>}
 							</div>
+							{editTpl && (
+								<div style={{ marginTop: 8, paddingLeft: 10, borderLeft: "2px solid var(--border)" }}>
+									<div className="row">
+										<label className="field" style={{ minWidth: 200 }}>
+											Vorlagen-Name
+											<input value={tplDraftName} onChange={(e) => setTplDraftName(e.target.value)} />
+										</label>
+									</div>
+									<label className="field" style={{ marginTop: 6 }}>
+										Vorlagen-Prompt
+										<textarea value={tplDraftPrompt} onChange={(e) => setTplDraftPrompt(e.target.value)} />
+									</label>
+									<div className="row" style={{ marginTop: 8 }}>
+										<button
+											type="button"
+											className="btn primary"
+											onClick={() => void updateTemplate()}
+											disabled={tplDraftName.trim().length === 0 || tplDraftPrompt.trim().length === 0}
+										>
+											Vorlage speichern
+										</button>
+										<button type="button" className="btn" onClick={() => setEditTpl(null)}>
+											Abbrechen
+										</button>
+									</div>
+								</div>
+							)}
 							<div className="row" style={{ marginTop: 6, gap: 8 }}>
 								<input
 									value={tplName}
@@ -437,6 +560,15 @@ export default function Tasks() {
 								<td className="row">
 									<button
 										type="button"
+										className={`btn ${editTask === t.id ? "primary" : ""}`}
+										onClick={() => startEditTask(t)}
+										disabled={t.running}
+										title={t.running ? "Laufende Tasks können nicht bearbeitet werden" : "Task bearbeiten"}
+									>
+										✏️ Bearbeiten
+									</button>
+									<button
+										type="button"
 										className="btn primary"
 										onClick={() => void act(`/api/tasks/${t.id}/start`)}
 									>
@@ -466,6 +598,129 @@ export default function Tasks() {
 					</tbody>
 				</table>
 			</div>
+
+			{editTask && tDraft && (
+				<div className="card">
+					<div className="row between">
+						<strong>✏️ Task bearbeiten: {tasks.find((t) => t.id === editTask)?.title ?? editTask}</strong>
+						<button type="button" className="btn" onClick={() => setEditTask(null)}>
+							Schließen
+						</button>
+					</div>
+					<div className="row" style={{ marginTop: 8 }}>
+						<label className="field" style={{ flex: 1, minWidth: 220 }}>
+							Titel
+							<input value={tDraft.title} onChange={(e) => setTDraft({ ...tDraft, title: e.target.value })} />
+						</label>
+						<label className="field">
+							Spezialist-Zuweisung
+							<select
+								value={tDraft.assignment}
+								onChange={(e) =>
+									setTDraft({ ...tDraft, assignment: e.target.value as "auto" | "agent" | "swarm" })
+								}
+							>
+								<option value="auto">auto (Prompt-Match)</option>
+								<option value="agent">fester Spezialist</option>
+								<option value="swarm">Swarm</option>
+							</select>
+						</label>
+						{tDraft.assignment === "agent" && (
+							<label className="field">
+								Spezialist
+								<select
+									value={tDraft.agentId}
+									onChange={(e) => setTDraft({ ...tDraft, agentId: e.target.value })}
+								>
+									<option value="">— wählen —</option>
+									{agents
+										.filter((a) => a.enabled)
+										.map((a) => (
+											<option key={a.id} value={a.id}>
+												{a.name}
+											</option>
+										))}
+								</select>
+							</label>
+						)}
+						{tDraft.assignment === "swarm" && (
+							<label className="field">
+								Swarm
+								<select
+									value={tDraft.swarmId}
+									onChange={(e) => setTDraft({ ...tDraft, swarmId: e.target.value })}
+								>
+									<option value="">— wählen —</option>
+									{swarms
+										.filter((x) => x.enabled)
+										.map((x) => (
+											<option key={x.id} value={x.id}>
+												{x.name}
+											</option>
+										))}
+								</select>
+							</label>
+						)}
+					</div>
+					<label className="field" style={{ marginTop: 8 }}>
+						Prompt
+						<textarea
+							value={tDraft.prompt}
+							onChange={(e) => setTDraft({ ...tDraft, prompt: e.target.value })}
+						/>
+					</label>
+					<div className="row" style={{ marginTop: 8 }}>
+						<label className="field">
+							Override Temperatur
+							<input
+								type="number"
+								step="0.1"
+								min={0}
+								max={2}
+								value={tDraft.ovTemp}
+								onChange={(e) => setTDraft({ ...tDraft, ovTemp: e.target.value })}
+								placeholder="—"
+							/>
+						</label>
+						<label className="field">
+							Override Max-Tokens
+							<input
+								type="number"
+								min={1}
+								value={tDraft.ovMax}
+								onChange={(e) => setTDraft({ ...tDraft, ovMax: e.target.value })}
+								placeholder="—"
+							/>
+						</label>
+						<label className="field" style={{ flex: 1, minWidth: 240 }}>
+							Override System-Prompt
+							<textarea
+								value={tDraft.ovSystem}
+								onChange={(e) => setTDraft({ ...tDraft, ovSystem: e.target.value })}
+								placeholder="Task-spezifische Anweisung …"
+							/>
+						</label>
+					</div>
+					<div className="row" style={{ marginTop: 10 }}>
+						<button
+							type="button"
+							className="btn primary"
+							onClick={() => void saveTask()}
+							disabled={
+								busy ||
+								tDraft.prompt.trim().length === 0 ||
+								(tDraft.assignment === "agent" && !tDraft.agentId) ||
+								(tDraft.assignment === "swarm" && !tDraft.swarmId)
+							}
+						>
+							{busy ? "…" : "Speichern"}
+						</button>
+						<button type="button" className="btn" onClick={() => setEditTask(null)}>
+							Abbrechen
+						</button>
+					</div>
+				</div>
+			)}
 
 			{selected && (
 				<div className="card">

@@ -6,6 +6,8 @@
 import { randomUUID } from "node:crypto"
 import type {
 	Agent,
+	AgentDoc,
+	AgentDocKind,
 	AgentPrivacy,
 	AgentScore,
 	Capability,
@@ -25,6 +27,7 @@ import type {
 	TaskMetadata,
 	TaskStatus,
 } from "@diriz/shared"
+import { AGENT_DOC_KINDS, defaultAgentDoc, parseInitDoc } from "@diriz/shared"
 import type { LogEntry } from "../logger.js"
 import type { Db } from "./connection.js"
 
@@ -193,6 +196,7 @@ interface InstanceRow {
 	source: string
 	status: string
 	model_settings: string | null
+	enabled?: number
 	last_seen_at: string
 	locked_until: string | null
 }
@@ -214,6 +218,8 @@ function mapInstance(row: InstanceRow): InstanceModel {
 		source: row.source as ModelSource,
 		status: row.status as ProviderStatus,
 		modelSettings: parseSettings(row.model_settings),
+		// Defensive Default: ohne Spalte (ältere Schemas) gilt "aktiv".
+		enabled: row.enabled === undefined ? true : row.enabled === 1,
 		lastSeenAt: row.last_seen_at,
 		lockedUntil: row.locked_until ?? undefined,
 	}
@@ -310,6 +316,8 @@ export interface InstancePatch {
 	priceOutPerMTok?: number
 	/** `null` = Overrides zurücksetzen, `undefined` = unverändert. */
 	modelSettings?: ModelSettings | null
+	/** Modell auf diesem Rechner aktivieren/deaktivieren (Routing-Gate). */
+	enabled?: boolean
 }
 
 export function updateInstance(db: Db, id: string, patch: InstancePatch): InstanceModel | undefined {
@@ -325,6 +333,7 @@ export function updateInstance(db: Db, id: string, patch: InstancePatch): Instan
 		languages: patch.languages ?? current.languages,
 		quantization: patch.quantization !== undefined ? patch.quantization : current.quantization,
 		modelSettings: patch.modelSettings === undefined ? (current.modelSettings ?? null) : patch.modelSettings,
+		enabled: patch.enabled !== undefined ? patch.enabled : current.enabled,
 		pricePerMTok:
 			patch.priceInPerMTok !== undefined || patch.priceOutPerMTok !== undefined
 				? {
@@ -335,7 +344,7 @@ export function updateInstance(db: Db, id: string, patch: InstancePatch): Instan
 	}
 	db.prepare(
 		`UPDATE instances SET display_name = ?, context_window = ?, capabilities_json = ?, languages_json = ?,
-			quantization = ?, price_in_per_mtok = ?, price_out_per_mtok = ?, model_settings = ? WHERE id = ?`,
+			quantization = ?, price_in_per_mtok = ?, price_out_per_mtok = ?, model_settings = ?, enabled = ? WHERE id = ?`,
 	).run(
 		next.displayName,
 		next.contextWindow,
@@ -345,6 +354,7 @@ export function updateInstance(db: Db, id: string, patch: InstancePatch): Instan
 		next.pricePerMTok?.in ?? null,
 		next.pricePerMTok?.out ?? null,
 		next.modelSettings ? JSON.stringify(next.modelSettings) : null,
+		next.enabled ? 1 : 0,
 		id,
 	)
 	return getInstance(db, id)
@@ -840,7 +850,7 @@ export function metricsSummary(db: Db, activeExecutions: number): MetricsSummary
 	return {
 		providers: count("SELECT COUNT(*) AS n FROM providers"),
 		onlineProviders: count("SELECT COUNT(*) AS n FROM providers WHERE status = 'online'"),
-		instances: count("SELECT COUNT(*) AS n FROM instances"),
+		instances: count("SELECT COUNT(*) AS n FROM instances WHERE enabled = 1"),
 		tasks: count("SELECT COUNT(*) AS n FROM tasks"),
 		executions: count("SELECT COUNT(*) AS n FROM executions"),
 		activeExecutions,
@@ -900,6 +910,7 @@ interface AgentRow {
 	privacy: string
 	pinned_provider_id: string | null
 	pinned_instance_id: string | null
+	model_settings: string | null
 	enabled: number
 	created_at: string
 	updated_at: string
@@ -916,6 +927,7 @@ function mapAgent(row: AgentRow): Agent {
 		privacy: row.privacy as AgentPrivacy,
 		pinnedProviderId: row.pinned_provider_id,
 		pinnedInstanceId: row.pinned_instance_id,
+		modelSettings: row.model_settings ? (JSON.parse(row.model_settings) as ModelSettings) : null,
 		enabled: row.enabled === 1,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
@@ -931,7 +943,10 @@ export interface AgentInput {
 	privacy?: AgentPrivacy
 	pinnedProviderId?: string | null
 	pinnedInstanceId?: string | null
+	modelSettings?: ModelSettings | null
 	enabled?: boolean
+	/** Startinhalte der Dokumente (Import); sonst werden Vorlagen erzeugt. */
+	docs?: Partial<Record<AgentDocKind, string>>
 }
 
 export function createAgent(db: Db, input: AgentInput): Agent {
@@ -939,8 +954,8 @@ export function createAgent(db: Db, input: AgentInput): Agent {
 	const now = new Date().toISOString()
 	db.prepare(
 		`INSERT INTO agents (id, name, description, system_prompt, required_capabilities, preferred_capabilities,
-			privacy, pinned_provider_id, pinned_instance_id, enabled, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			privacy, pinned_provider_id, pinned_instance_id, model_settings, enabled, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	).run(
 		id,
 		input.name.trim(),
@@ -951,10 +966,17 @@ export function createAgent(db: Db, input: AgentInput): Agent {
 		input.privacy ?? "any",
 		input.pinnedProviderId ?? null,
 		input.pinnedInstanceId ?? null,
+		input.modelSettings ? JSON.stringify(input.modelSettings) : null,
 		input.enabled === false ? 0 : 1,
 		now,
 		now,
 	)
+	// Dokumente (plan/changelog/init) sofort anlegen — jeder Spezialist hat sie.
+	for (const kind of AGENT_DOC_KINDS) {
+		const content = input.docs?.[kind] ?? defaultAgentDoc(kind, input.name.trim(), now)
+		writeAgentDoc(db, id, kind, content, now)
+	}
+	syncAgentSettingsFromInit(db, id)
 	const created = getAgent(db, id)
 	if (!created) {
 		throw new Error("agent create failed")
@@ -983,6 +1005,8 @@ export interface AgentPatch {
 	privacy?: AgentPrivacy
 	pinnedProviderId?: string | null
 	pinnedInstanceId?: string | null
+	/** `null` = Voreinstellungen löschen, weggelassen = unverändert. */
+	modelSettings?: ModelSettings | null
 	enabled?: boolean
 }
 
@@ -994,7 +1018,7 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent | unde
 	db.prepare(
 		`UPDATE agents SET name = ?, description = ?, system_prompt = ?, required_capabilities = ?,
 			preferred_capabilities = ?, privacy = ?, pinned_provider_id = ?, pinned_instance_id = ?,
-			enabled = ?, updated_at = ? WHERE id = ?`,
+			model_settings = ?, enabled = ?, updated_at = ? WHERE id = ?`,
 	).run(
 		patch.name?.trim() || row.name,
 		patch.description ?? row.description,
@@ -1004,6 +1028,11 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent | unde
 		patch.privacy ?? row.privacy,
 		patch.pinnedProviderId === undefined ? row.pinned_provider_id : patch.pinnedProviderId,
 		patch.pinnedInstanceId === undefined ? row.pinned_instance_id : patch.pinnedInstanceId,
+		patch.modelSettings === undefined
+			? row.model_settings
+			: patch.modelSettings === null
+				? null
+				: JSON.stringify(patch.modelSettings),
 		patch.enabled === undefined ? row.enabled : patch.enabled ? 1 : 0,
 		new Date().toISOString(),
 		id,
@@ -1012,7 +1041,95 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent | unde
 }
 
 export function deleteAgent(db: Db, id: string): boolean {
+	db.prepare("DELETE FROM agent_docs WHERE agent_id = ?").run(id)
 	return db.prepare("DELETE FROM agents WHERE id = ?").run(id).changes > 0
+}
+
+/* -------------------------- Agenten-Dokumente (M9) --------------------------- */
+
+interface AgentDocRow {
+	agent_id: string
+	kind: string
+	content: string
+	updated_at: string
+}
+
+function mapAgentDoc(row: AgentDocRow): AgentDoc {
+	return {
+		agentId: row.agent_id,
+		kind: row.kind as AgentDocKind,
+		content: row.content,
+		updatedAt: row.updated_at,
+	}
+}
+
+function writeAgentDoc(db: Db, agentId: string, kind: AgentDocKind, content: string, now: string): void {
+	db.prepare(
+		`INSERT INTO agent_docs (agent_id, kind, content, updated_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(agent_id, kind) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
+	).run(agentId, kind, content, now)
+}
+
+/** Alle drei Dokumente eines Spezialisten — fehlende werden aus Vorlagen ergänzt. */
+export function listAgentDocs(db: Db, agentId: string): AgentDoc[] {
+	const agent = getAgent(db, agentId)
+	if (!agent) {
+		return []
+	}
+	const rows = db
+		.prepare("SELECT * FROM agent_docs WHERE agent_id = ?")
+		.all(agentId) as unknown as AgentDocRow[]
+	const byKind = new Map(rows.map((r) => [r.kind, mapAgentDoc(r)]))
+	const now = new Date().toISOString()
+	return AGENT_DOC_KINDS.map((kind) => {
+		const existing = byKind.get(kind)
+		if (existing) {
+			return existing
+		}
+		// Alt-Agenten (vor M9) bekommen ihre Dokumente beim ersten Zugriff.
+		const content = defaultAgentDoc(kind, agent.name, agent.createdAt || now)
+		writeAgentDoc(db, agentId, kind, content, now)
+		return { agentId, kind, content, updatedAt: now }
+	})
+}
+
+export function getAgentDoc(db: Db, agentId: string, kind: AgentDocKind): AgentDoc | undefined {
+	return listAgentDocs(db, agentId).find((d) => d.kind === kind)
+}
+
+/**
+ * Speichert ein Dokument. Bei `init.md` werden die Model-Voreinstellungen
+ * daraus neu abgeleitet und in `agents.model_settings` gespiegelt.
+ */
+export function saveAgentDoc(
+	db: Db,
+	agentId: string,
+	kind: AgentDocKind,
+	content: string,
+): AgentDoc | undefined {
+	if (!getAgent(db, agentId)) {
+		return undefined
+	}
+	const now = new Date().toISOString()
+	writeAgentDoc(db, agentId, kind, content, now)
+	if (kind === "init") {
+		syncAgentSettingsFromInit(db, agentId)
+	}
+	return { agentId, kind, content, updatedAt: now }
+}
+
+/** Liest `init.md` und schreibt die abgeleiteten Settings an den Agenten. */
+export function syncAgentSettingsFromInit(db: Db, agentId: string): ModelSettings {
+	const row = db
+		.prepare("SELECT content FROM agent_docs WHERE agent_id = ? AND kind = 'init'")
+		.get(agentId) as { content: string } | undefined
+	const settings = parseInitDoc(row?.content ?? "")
+	const empty = Object.keys(settings).length === 0
+	db.prepare("UPDATE agents SET model_settings = ? WHERE id = ?").run(
+		empty ? null : JSON.stringify(settings),
+		agentId,
+	)
+	return settings
 }
 
 /* ------------------------------------ Swarms ---------------------------------- */

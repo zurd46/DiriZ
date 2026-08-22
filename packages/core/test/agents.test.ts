@@ -32,6 +32,7 @@ import {
 	latestAgentSelection,
 	listAgents,
 	listExecutionsByTask,
+	saveAgentDoc,
 	updateAgent,
 	updateInstance,
 	updateSwarm,
@@ -66,6 +67,11 @@ class RecordingAdapter implements LLMProvider {
 		yield { type: "done" }
 	}
 	async cancel(): Promise<void> {}
+
+	/** Setzt die Aufzeichnung zurück (ohne den Typ am Feld einzuengen). */
+	reset(): void {
+		this.lastRequest = undefined
+	}
 }
 
 let db: Db
@@ -287,5 +293,35 @@ describe("M1: Engine-Zuordnung", () => {
 		} finally {
 			updateAgent(db, agentCode, { enabled: true })
 		}
+	})
+})
+
+describe("M9: Model-Voreinstellungen aus init.md", () => {
+	it("Agent-Settings schlagen Provider/Modell — und die Task schlägt den Agenten", async () => {
+		adapterA.reset()
+		saveAgentDoc(db, agentCode, "init", "- Temperature: 0.9\n- Top-P: 0.1\n- Max-Tokens: 999\n")
+		expect(getAgent(db, agentCode)?.modelSettings).toEqual({
+			temperature: 0.9,
+			topP: 0.1,
+			maxTokens: 999,
+		})
+
+		const task = createTask(db, {
+			prompt: "Schreib eine React TypeScript Komponente",
+			assignmentMode: "agent",
+			agentId: agentCode,
+			overrides: { maxTokens: 111 },
+		})
+		engine.start(task.id)
+		await waitForTask(task.id)
+		expect(getTask(db, task.id)?.status).toBe("done")
+
+		const req = adapterA.lastRequest
+		expect(req?.settings?.temperature).toBe(0.9) // Agent schlägt Provider-Default 0.2
+		expect(req?.settings?.topP).toBe(0.1) // Agent schlägt Modell-Override 0.5
+		expect(req?.settings?.maxTokens).toBe(111) // Task schlägt den Agenten
+
+		saveAgentDoc(db, agentCode, "init", "")
+		expect(getAgent(db, agentCode)?.modelSettings).toBeNull()
 	})
 })

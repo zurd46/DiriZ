@@ -108,7 +108,15 @@ export class OpenAiCompatProvider implements LLMProvider {
 			headers: this.headers(),
 			timeoutMs: 5000,
 		})
-		const arr = Array.isArray(data) ? data : (data.data ?? [])
+		const arr = Array.isArray(data) ? data : (data.data ?? null)
+		if (!arr) {
+			// Manche Server (z. B. LM Studio ohne `/v1`-Pfad) antworten mit
+			// HTTP 200 + Fehler-JSON — das muss als Fehler durchgehen, nicht
+			// als „online, aber 0 Modelle".
+			throw new ProviderHttpError(
+				`Unerwartete Antwort von ${this.baseUrl}/models (keine Modellliste): ${JSON.stringify(data).slice(0, 200)}`,
+			)
+		}
 		return arr.map((m) => ({
 			modelId: m.id,
 			displayName: m.name ?? m.id,

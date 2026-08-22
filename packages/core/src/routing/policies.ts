@@ -56,6 +56,10 @@ export function applyPolicies(
 	}
 
 	for (const c of candidates) {
+		if (!c.instance.enabled) {
+			pushExcluded(c, "Modell auf diesem Rechner deaktiviert")
+			continue
+		}
 		if (!c.providerOnline) {
 			pushExcluded(c, "Provider offline oder Circuit-Breaker offen")
 			continue

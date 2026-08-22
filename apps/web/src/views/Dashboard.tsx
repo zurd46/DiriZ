@@ -1,5 +1,5 @@
 import type { HostMetrics, LoadInfo } from "@diriz/shared"
-import { useEffect, useState } from "react"
+import { type CSSProperties, useEffect, useState } from "react"
 import { api } from "../lib/api.js"
 import { useStore } from "../store.js"
 
@@ -15,6 +15,92 @@ function formatBytes(bytes: number): string {
 	return `${Math.round(bytes / 1_048_576)} MB`
 }
 
+function formatCompact(n: number): string {
+	if (n >= 1_000_000) return `${(n / 1_000_000).toLocaleString("de-DE", { maximumFractionDigits: 1 })} M`
+	if (n >= 1_000) return `${(n / 1_000).toLocaleString("de-DE", { maximumFractionDigits: 1 })} k`
+	return n.toLocaleString("de-DE")
+}
+
+function loadClass(pct: number): "ok" | "warn" | "err" {
+	if (pct > 85) return "err"
+	if (pct > 60) return "warn"
+	return "ok"
+}
+
+/* ---------------------------------- Icons ----------------------------------- */
+
+const svgProps = {
+	width: 17,
+	height: 17,
+	viewBox: "0 0 24 24",
+	fill: "none",
+	stroke: "currentColor",
+	strokeWidth: 1.8,
+	strokeLinecap: "round" as const,
+	strokeLinejoin: "round" as const,
+}
+
+function IconServer() {
+	return (
+		<svg {...svgProps} aria-hidden="true">
+			<rect x="3" y="4" width="18" height="7" rx="2" />
+			<rect x="3" y="13" width="18" height="7" rx="2" />
+			<path d="M7 7.5h.01M7 16.5h.01" />
+		</svg>
+	)
+}
+
+function IconLayers() {
+	return (
+		<svg {...svgProps} aria-hidden="true">
+			<path d="m12 3 9 5-9 5-9-5 9-5Z" />
+			<path d="m3 13.5 9 5 9-5" />
+		</svg>
+	)
+}
+
+function IconTasks() {
+	return (
+		<svg {...svgProps} aria-hidden="true">
+			<path d="M4 6h10M4 12h10M4 18h7" />
+			<path d="m15 15.5 2 2 4-4.5" />
+		</svg>
+	)
+}
+
+function IconBolt() {
+	return (
+		<svg {...svgProps} aria-hidden="true">
+			<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" />
+		</svg>
+	)
+}
+
+function IconTokens() {
+	return (
+		<svg {...svgProps} aria-hidden="true">
+			<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18" />
+		</svg>
+	)
+}
+
+function IconCost() {
+	return (
+		<svg {...svgProps} aria-hidden="true">
+			<circle cx="12" cy="12" r="9" />
+			<path d="M15 9.3c-.7-1-1.8-1.6-3-1.6-1.9 0-3.2 1-3.2 2.4s1.3 2.4 3.2 2.4 3.2.9 3.2 2.4-1.3 2.4-3.2 2.4c-1.2 0-2.3-.6-3-1.6M12 5.8v1.9M12 16.3v1.9" />
+		</svg>
+	)
+}
+
+function IconChart() {
+	return (
+		<svg {...svgProps} aria-hidden="true">
+			<path d="M4 20v-9M10 20V5M16 20v-6M3 20h18" />
+		</svg>
+	)
+}
+
 export default function Dashboard() {
 	const metrics = useStore((s) => s.metrics)
 	const timeseries = useStore((s) => s.timeseries)
@@ -24,6 +110,7 @@ export default function Dashboard() {
 	const [series7d, setSeries7d] = useState<typeof timeseries | null>(null)
 	const [ollamaLoads, setOllamaLoads] = useState<OllamaLoad[]>([])
 	const [host, setHost] = useState<HostMetrics | null>(null)
+	const [dismissedError, setDismissedError] = useState<string | null>(null)
 
 	// M8: Host-Metriken (RAM/CPU/GPU) — alle 5 s aktualisieren.
 	useEffect(() => {
@@ -106,194 +193,253 @@ export default function Dashboard() {
 			: raw
 
 	const maxTokens = Math.max(1, ...points.map((t) => t.tokens))
+	const labelStep = Math.max(1, Math.ceil(points.length / 8))
+	const xLabel = (bucket: string) => (range === 24 ? `${bucket.slice(11, 13)}h` : bucket.slice(5))
+
+	const cards = [
+		{
+			label: "Provider (online)",
+			value: `${metrics?.onlineProviders ?? 0} / ${metrics?.providers ?? 0}`,
+			icon: <IconServer />,
+			color: "#4f8cff",
+		},
+		{ label: "Modelle", value: String(metrics?.instances ?? 0), icon: <IconLayers />, color: "#a78bfa" },
+		{ label: "Tasks", value: String(metrics?.tasks ?? 0), icon: <IconTasks />, color: "#34d399" },
+		{
+			label: "Executions (aktiv)",
+			value: `${metrics?.activeExecutions ?? 0} / ${metrics?.executions ?? 0}`,
+			icon: <IconBolt />,
+			color: "#f59e0b",
+		},
+		{
+			label: "Tokens (24 h)",
+			value: formatCompact((metrics?.tokensIn24h ?? 0) + (metrics?.tokensOut24h ?? 0)),
+			sub: `${formatCompact(metrics?.tokensIn24h ?? 0)} in · ${formatCompact(metrics?.tokensOut24h ?? 0)} out`,
+			icon: <IconTokens />,
+			color: "#38bdf8",
+		},
+		{
+			label: "Kosten (24 h)",
+			value: `$${(metrics?.costUsd24h ?? 0).toLocaleString("de-DE", { maximumFractionDigits: 4 })}`,
+			icon: <IconCost />,
+			color: "#f472b6",
+		},
+	]
 
 	return (
-		<div>
-			<h1>Dashboard</h1>
-			{lastError && <div className="error-banner">{lastError}</div>}
-			<div className="grid">
-				<div className="card metric">
-					<div className="label">Provider (online)</div>
-					<div className="value">
-						{metrics?.onlineProviders ?? 0} / {metrics?.providers ?? 0}
+		<div className="fade-in">
+			<div className="page-head">
+				<div>
+					<h1>Dashboard</h1>
+					<p className="page-sub">Überblick über Provider, Token-Volumen und System-Last</p>
+				</div>
+				{host && (
+					<span className="live-chip" title="Host-Metriken werden alle 5 Sekunden aktualisiert">
+						<span className="live-dot" />
+						live · {new Date(host.timestamp).toLocaleTimeString("de-DE")}
+					</span>
+				)}
+			</div>
+
+			{lastError && lastError !== dismissedError && (
+				<div className="error-banner" role="alert">
+					<span>{lastError}</span>
+					<button
+						type="button"
+						className="error-close"
+						aria-label="Fehlermeldung schließen"
+						onClick={() => setDismissedError(lastError)}
+					>
+						✕
+					</button>
+				</div>
+			)}
+
+			<div className="metrics-grid">
+				{cards.map((c) => (
+					<div key={c.label} className="card metric-card" style={{ "--mc": c.color } as CSSProperties}>
+						<div className="icon-chip">{c.icon}</div>
+						<div className="label">{c.label}</div>
+						<div className="value">{c.value}</div>
+						{"sub" in c && c.sub ? <div className="metric-sub">{c.sub}</div> : null}
 					</div>
-				</div>
-				<div className="card metric">
-					<div className="label">Modelle</div>
-					<div className="value">{metrics?.instances ?? 0}</div>
-				</div>
-				<div className="card metric">
-					<div className="label">Tasks</div>
-					<div className="value">{metrics?.tasks ?? 0}</div>
-				</div>
-				<div className="card metric">
-					<div className="label">Executions (aktiv)</div>
-					<div className="value">
-						{metrics?.activeExecutions ?? 0} / {metrics?.executions ?? 0}
-					</div>
-				</div>
-				<div className="card metric">
-					<div className="label">Tokens (24 h)</div>
-					<div className="value">
-						{(metrics?.tokensIn24h ?? 0).toLocaleString("de-DE")} in ·{" "}
-						{(metrics?.tokensOut24h ?? 0).toLocaleString("de-DE")} out
-					</div>
-				</div>
-				<div className="card metric">
-					<div className="label">Kosten (24 h)</div>
-					<div className="value">{(metrics?.costUsd24h ?? 0).toFixed(4)} $</div>
-				</div>
+				))}
 			</div>
 
 			<div className="card">
-				<div className="row between" style={{ alignItems: "center" }}>
-					<strong>Token-Volumen &amp; Requests</strong>
-					<div className="row" style={{ gap: 4 }}>
-						<button
-							type="button"
-							className={`btn ${range === 24 ? "primary" : ""}`}
-							onClick={() => setRange(24)}
-						>
-							24 h
-						</button>
-						<button
-							type="button"
-							className={`btn ${range === 168 ? "primary" : ""}`}
-							onClick={() => setRange(168)}
-						>
-							7 Tage
-						</button>
+				<div className="card-head">
+					<div>
+						<div className="card-title">Token-Volumen &amp; Requests</div>
+						<div className="card-sub">
+							{range === 24 ? "Letzte 24 Stunden, stündlich" : "Letzte 7 Tage, täglich"}
+						</div>
 					</div>
-				</div>
-				<div className="row" style={{ gap: 3, height: 96, alignItems: "flex-end", marginTop: 12 }}>
-					{points.length === 0 && <span className="muted">Noch keine Daten — führe eine Task aus.</span>}
-					{points.map((t) => (
-						<div
-							key={t.bucket}
-							style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}
-						>
-							<div
-								title={`${t.bucket} — ${t.tokens.toLocaleString("de-DE")} Tokens · ${t.requests} Requests · $${t.costUsd.toFixed(3)}${t.errors ? ` · ${t.errors} Fehler` : ""}`}
-								style={{
-									width: "100%",
-									maxWidth: 28,
-									background: t.errors > 0 ? "var(--warn)" : "var(--accent)",
-									height: `${Math.max(4, (t.tokens / maxTokens) * 76)}px`,
-									borderRadius: 3,
-								}}
-							/>
-							<span className="muted" style={{ fontSize: 10 }}>
-								{range === 24 ? `${t.bucket.slice(11, 13)}h` : t.bucket.slice(5)}
+					<div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+						<div className="legend">
+							<span>
+								<i style={{ background: "var(--accent)" }} />
+								Tokens
+							</span>
+							<span>
+								<i style={{ background: "var(--warn)" }} />
+								Fehler
 							</span>
 						</div>
-					))}
+						<div className="seg">
+							<button type="button" className={range === 24 ? "active" : ""} onClick={() => setRange(24)}>
+								24 h
+							</button>
+							<button type="button" className={range === 168 ? "active" : ""} onClick={() => setRange(168)}>
+								7 Tage
+							</button>
+						</div>
+					</div>
 				</div>
-			</div>
-
-			<div className="card">
-				<strong>Ollama Load</strong>
-				{ollamaLoads.length === 0 && (
-					<p className="muted" style={{ margin: "8px 0 0" }}>
-						Kein Ollama-Provider verbunden.
-					</p>
-				)}
-				{ollamaLoads.map((l) => {
-					const usedPct =
-						l.usedMemoryBytes !== undefined && l.totalMemoryBytes
-							? Math.round((l.usedMemoryBytes / l.totalMemoryBytes) * 100)
-							: null
-					return (
-						<div key={l.providerId} style={{ marginTop: 12 }}>
-							<div className="row between">
-								<span>{l.label ?? l.providerId}</span>
-								<span className="muted">
-									{l.loadedModels.length === 0
-										? "keine Modelle geladen"
-										: `${l.loadedModels.length} Modell(e)`}
-									{usedPct !== null && ` · ${usedPct}% VRAM`}
-								</span>
-							</div>
-							{usedPct !== null && (
-								<div style={{ height: 6, background: "var(--panel-2)", borderRadius: 3, marginTop: 6 }}>
+				{points.length === 0 ? (
+					<div className="empty">
+						<span className="icon-chip" style={{ "--mc": "var(--accent)" } as CSSProperties}>
+							<IconChart />
+						</span>
+						Noch keine Daten — führe eine Task aus, um hier das Token-Volumen zu sehen.
+					</div>
+				) : (
+					<>
+						<div className="chart-wrap">
+							{points.map((t) => (
+								<div
+									key={t.bucket}
+									className="chart-col"
+									title={`${t.bucket} — ${t.tokens.toLocaleString("de-DE")} Tokens · ${t.requests} Requests · $${t.costUsd.toFixed(3)}${t.errors ? ` · ${t.errors} Fehler` : ""}`}
+								>
 									<div
-										style={{
-											width: `${Math.min(100, usedPct)}%`,
-											height: "100%",
-											borderRadius: 3,
-											background: usedPct > 85 ? "var(--err)" : usedPct > 60 ? "var(--warn)" : "var(--ok)",
-										}}
+										className={`chart-bar${t.errors > 0 ? " error" : ""}`}
+										style={{ height: `${Math.max(3, (t.tokens / maxTokens) * 100)}%` }}
 									/>
-								</div>
-							)}
-							{l.loadedModels.map((m) => (
-								<div key={m.modelId} className="row between" style={{ fontSize: 12, marginTop: 4 }}>
-									<span className="mono">{m.modelId}</span>
-									<span className="muted">{formatBytes(m.memoryBytes)}</span>
 								</div>
 							))}
 						</div>
-					)
-				})}
+						<div className="chart-x">
+							{points.map((t, i) => (
+								<span key={t.bucket}>{i % labelStep === 0 ? xLabel(t.bucket) : ""}</span>
+							))}
+						</div>
+					</>
+				)}
 			</div>
 
-			<div className="card">
-				<strong>System (Host)</strong>
-				{host === null && (
-					<p className="muted" style={{ margin: "8px 0 0" }}>
-						Lade Host-Metriken …
-					</p>
-				)}
-				{host !== null && (
-					<div style={{ marginTop: 12 }}>
-						<div className="row between" style={{ fontSize: 13 }}>
-							<span title="RAM-Belegung dieses Rechners — Basis der Routing-Achse „Host-Last“">RAM</span>
-							<span>
-								{formatBytes(host.ramUsedBytes)} / {formatBytes(host.ramTotalBytes)} ·{" "}
-								<strong>{host.ramUsagePct}%</strong>
-							</span>
+			<div className="dash-cols">
+				<div className="card">
+					<div className="card-head">
+						<div>
+							<div className="card-title">Ollama Load</div>
+							<div className="card-sub">Geladene Modelle &amp; VRAM-Belegung</div>
 						</div>
-						<div style={{ height: 6, background: "var(--panel-2)", borderRadius: 3, marginTop: 6 }}>
-							<div
-								style={{
-									width: `${Math.min(100, host.ramUsagePct)}%`,
-									height: "100%",
-									borderRadius: 3,
-									background:
-										host.ramUsagePct > 85
-											? "var(--err)"
-											: host.ramUsagePct > 60
-												? "var(--warn)"
-												: "var(--ok)",
-								}}
-							/>
-						</div>
-						<div className="row between" style={{ fontSize: 12, marginTop: 8 }}>
-							<span>CPU</span>
-							<span>
-								{host.cpuCores} Kerne · Last (1 min) {host.loadAvg1m.toFixed(1)}
-							</span>
-						</div>
-						<div className="row between" style={{ fontSize: 12, marginTop: 4 }}>
-							<span>GPU</span>
-							<span>
-								{host.gpu
-									? `${host.gpu.name}${host.gpu.vramTotalBytes ? ` · ${formatBytes(host.gpu.vramUsedBytes ?? 0)} / ${formatBytes(host.gpu.vramTotalBytes)} VRAM` : ""}`
-									: "nicht detektierbar (Metal/Apple Silicon)"}
-							</span>
-						</div>
-						<div className="muted" style={{ fontSize: 11, marginTop: 8 }}>
-							{host.platform}/{host.arch} · Uptime {Math.round(host.uptimeSec / 3600)} h
-						</div>
+						{ollamaLoads.length > 0 && <span className="pill ok">{ollamaLoads.length} Provider</span>}
 					</div>
-				)}
+					{ollamaLoads.length === 0 ? (
+						<div className="empty">Kein Ollama-Provider verbunden.</div>
+					) : (
+						ollamaLoads.map((l) => {
+							const usedPct =
+								l.usedMemoryBytes !== undefined && l.totalMemoryBytes
+									? Math.round((l.usedMemoryBytes / l.totalMemoryBytes) * 100)
+									: null
+							return (
+								<div key={l.providerId} style={{ marginTop: 14 }}>
+									<div className="row between">
+										<span style={{ fontWeight: 600 }}>{l.label ?? l.providerId}</span>
+										{usedPct !== null ? (
+											<span className={`pill ${loadClass(usedPct)}`}>{usedPct}% VRAM</span>
+										) : (
+											<span className="muted" style={{ fontSize: 12 }}>
+												keine Modelle geladen
+											</span>
+										)}
+									</div>
+									{usedPct !== null && (
+										<div className="bar-track">
+											<div
+												className={`bar-fill ${loadClass(usedPct)}`}
+												style={{ width: `${Math.min(100, usedPct)}%` }}
+											/>
+										</div>
+									)}
+									{l.loadedModels.length > 0 && (
+										<div className="model-chips">
+											{l.loadedModels.map((m) => (
+												<span key={m.modelId} className="chip">
+													{m.modelId} <b>{formatBytes(m.memoryBytes)}</b>
+												</span>
+											))}
+										</div>
+									)}
+								</div>
+							)
+						})
+					)}
+				</div>
+
+				<div className="card">
+					<div className="card-head">
+						<div>
+							<div className="card-title">System (Host)</div>
+							<div className="card-sub">RAM, CPU &amp; GPU des Rechners</div>
+						</div>
+						{host && <span className="pill ok">{Math.round(host.uptimeSec / 3600)} h Uptime</span>}
+					</div>
+					{host === null ? (
+						<div style={{ marginTop: 14 }}>
+							<div className="skeleton" />
+							<div className="skeleton" style={{ width: "85%" }} />
+							<div className="skeleton" style={{ width: "60%" }} />
+						</div>
+					) : (
+						<div style={{ marginTop: 14, display: "grid", gap: 12 }}>
+							<div>
+								<div className="row between" style={{ fontSize: 13 }}>
+									<span title="RAM-Belegung dieses Rechners — Basis der Routing-Achse „Host-Last“">RAM</span>
+									<span>
+										{formatBytes(host.ramUsedBytes)} / {formatBytes(host.ramTotalBytes)} ·{" "}
+										<strong>{host.ramUsagePct}%</strong>
+									</span>
+								</div>
+								<div className="bar-track">
+									<div
+										className={`bar-fill ${loadClass(host.ramUsagePct)}`}
+										style={{ width: `${Math.min(100, host.ramUsagePct)}%` }}
+									/>
+								</div>
+							</div>
+							<div className="row between" style={{ fontSize: 13 }}>
+								<span>CPU</span>
+								<span>
+									{host.cpuCores} Kerne · Last (1 min) {host.loadAvg1m.toFixed(1)}
+								</span>
+							</div>
+							<div className="row between" style={{ fontSize: 13 }}>
+								<span>GPU</span>
+								<span>
+									{host.gpu
+										? `${host.gpu.name}${host.gpu.vramTotalBytes ? ` · ${formatBytes(host.gpu.vramUsedBytes ?? 0)} / ${formatBytes(host.gpu.vramTotalBytes)} VRAM` : ""}`
+										: "nicht detektierbar (Metal/Apple Silicon)"}
+								</span>
+							</div>
+							<div className="muted" style={{ fontSize: 11 }}>
+								{host.platform}/{host.arch} · Uptime {Math.round(host.uptimeSec / 3600)} h
+							</div>
+						</div>
+					)}
+				</div>
 			</div>
 
 			<div className="card">
-				<div className="row between">
-					<strong>Provider</strong>
-					<span className="muted">{providers.length} verbunden</span>
+				<div className="card-head">
+					<div>
+						<div className="card-title">Provider</div>
+						<div className="card-sub">{providers.length} verbunden</div>
+					</div>
 				</div>
-				<table className="table" style={{ marginTop: 8 }}>
+				<table className="table" style={{ marginTop: 10 }}>
 					<thead>
 						<tr>
 							<th>Name</th>
@@ -309,7 +455,7 @@ export default function Dashboard() {
 								<td>{p.label}</td>
 								<td className="muted">{p.type}</td>
 								<td>
-									<span className={`dot ${p.status}`} /> {p.status}
+									<span className={`pill ${p.status}`}>{p.status}</span>
 								</td>
 								<td>{p.instanceCount ?? 0}</td>
 								<td>{p.latencyP50 !== undefined ? `${p.latencyP50} ms` : "–"}</td>

@@ -35,6 +35,7 @@ import {
 	setTaskStatus,
 	timeseries,
 	updateExecution,
+	updateInstance,
 	updateProvider,
 	updateTemplate,
 	upsertInstance,
@@ -119,6 +120,24 @@ describe("db: Instances", () => {
 
 		setInstanceStatus(db, a.id, "online")
 		expect(listInstances(db, p.id)[0]?.status).toBe("online")
+		deleteProvider(db, p.id)
+	})
+
+	it("schaltet Modelle pro Rechner an/aus (enabled-Flag)", () => {
+		const p = createProvider(db, { type: "ollama", label: "Oll", baseUrl: "http://localhost:11434" })
+		const a = upsertInstance(db, p.id, { modelId: "m-a", displayName: "A" }, "discovered")
+		upsertInstance(db, p.id, { modelId: "m-b", displayName: "B" }, "discovered")
+		expect(a.enabled).toBe(true) // Default: aktiv
+
+		const before = metricsSummary(db, 0).instances
+		const off = updateInstance(db, a.id, { enabled: false })
+		expect(off?.enabled).toBe(false)
+		expect(listInstances(db, p.id).filter((i) => i.enabled)).toHaveLength(1)
+		expect(metricsSummary(db, 0).instances).toBe(before - 1)
+
+		const on = updateInstance(db, a.id, { enabled: true })
+		expect(on?.enabled).toBe(true)
+		expect(metricsSummary(db, 0).instances).toBe(before)
 		deleteProvider(db, p.id)
 	})
 })

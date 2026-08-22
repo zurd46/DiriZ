@@ -5,7 +5,13 @@
  * - Import: Upsert derselben Entitäten (keine Provider/Keys — bewusst ausgeschlossen).
  */
 
-import { DEFAULT_WEIGHTS, normalizeWeights, type ScoringWeights } from "@diriz/shared"
+import {
+	type AgentDocKind,
+	DEFAULT_WEIGHTS,
+	isAgentDocKind,
+	normalizeWeights,
+	type ScoringWeights,
+} from "@diriz/shared"
 import type { FastifyInstance } from "fastify"
 import type { AppContext } from "../app.js"
 import {
@@ -13,10 +19,12 @@ import {
 	createSwarm,
 	createTemplate,
 	getSetting,
+	listAgentDocs,
 	listAgents,
 	listSwarms,
 	listTasks,
 	listTemplates,
+	saveAgentDoc,
 	setSetting,
 	updateAgent,
 	updateSwarm,
@@ -80,7 +88,11 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			version: 1,
 			exportedAt: new Date().toISOString(),
 			tasks: listTasks(ctx.db),
-			agents: listAgents(ctx.db),
+			// Agenten inklusive ihrer Dokumente (plan/changelog/init.md).
+			agents: listAgents(ctx.db).map((a) => ({
+				...a,
+				docs: Object.fromEntries(listAgentDocs(ctx.db, a.id).map((d) => [d.kind, d.content])),
+			})),
 			swarms: listSwarms(ctx.db),
 			templates: listTemplates(ctx.db),
 			settings: { routingWeights: normalizeWeights(weights) },
@@ -96,13 +108,16 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 		let imported = 0
 
 		const agents = Array.isArray(body.agents) ? body.agents : []
-		for (const a of agents as { name?: string }[]) {
+		for (const a of agents as { name?: string; docs?: Record<string, string> }[]) {
 			if (!a.name) continue
 			const existing = listAgents(ctx.db).find((x) => x.name === a.name)
-			if (existing) {
-				updateAgent(ctx.db, existing.id, a as never)
-			} else {
-				createAgent(ctx.db, a as never)
+			const agentId = existing
+				? (updateAgent(ctx.db, existing.id, a as never)?.id ?? existing.id)
+				: createAgent(ctx.db, a as never).id
+			for (const [kind, content] of Object.entries(a.docs ?? {})) {
+				if (isAgentDocKind(kind) && typeof content === "string") {
+					saveAgentDoc(ctx.db, agentId, kind as AgentDocKind, content)
+				}
 			}
 			imported++
 		}

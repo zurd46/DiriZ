@@ -631,11 +631,13 @@ export class ExecutionEngine {
 		let tokensOut = 0
 		const startedAt = Date.now()
 		try {
-			// Model-Settings auflösen: Provider ← Modell ← Task (späterer Eintrag gewinnt).
+			// Model-Settings auflösen: Provider ← Modell ← Agent (`init.md`) ← Task
+			// (späterer Eintrag gewinnt).
 			const provider = getProvider(db, choice.instance.providerId)
 			const effective: ModelSettings = {
 				...provider?.modelSettings,
 				...choice.instance.modelSettings,
+				...agent?.modelSettings,
 				...task.overrides,
 			}
 			const systemPrompt = (agent?.systemPrompt ?? "").trim() || (effective.systemPrompt ?? "").trim()

@@ -4,6 +4,7 @@
 
 export * from "./agents.js"
 export * from "./constants.js"
+export * from "./docs.js"
 export * from "./events.js"
 export * from "./routing.js"
 export * from "./scoring.js"

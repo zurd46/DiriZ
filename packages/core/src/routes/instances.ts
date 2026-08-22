@@ -20,6 +20,8 @@ interface InstancePatchBody {
 	priceOutPerMTok?: number
 	/** "null" = Overrides zurücksetzen, weggelassen = unverändert. */
 	modelSettings?: ModelSettings | null
+	/** Modell auf diesem Rechner aktivieren/deaktivieren (Routing-Gate). */
+	enabled?: boolean
 }
 
 export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
@@ -41,6 +43,7 @@ export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
 			priceInPerMTok: body.priceInPerMTok,
 			priceOutPerMTok: body.priceOutPerMTok,
 			modelSettings: body.modelSettings,
+			enabled: body.enabled,
 		})
 		if (!instance) {
 			return reply.code(404).send({ error: "Instance nicht gefunden" })

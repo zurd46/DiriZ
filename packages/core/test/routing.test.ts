@@ -16,6 +16,7 @@ function instance(over: Partial<InstanceModel>): InstanceModel {
 		languages: ["python"],
 		source: "discovered",
 		status: "online",
+		enabled: true,
 		lastSeenAt: new Date().toISOString(),
 		...over,
 	}
@@ -48,6 +49,15 @@ describe("routing: Policies", () => {
 		expect(allowed.map((c) => c.instance.id)).toEqual(["local"])
 		expect(excluded).toHaveLength(1)
 		expect(excluded[0]?.reason).toContain("local-only")
+	})
+
+	it("schließt deaktivierte Modelle pro Rechner aus (Modell-Auswahl)", () => {
+		const on = candidate(instance({ id: "on" }))
+		const off = candidate(instance({ id: "off", enabled: false }))
+		const { allowed, excluded } = applyPolicies([on, off], profile, DEFAULT_WEIGHTS)
+		expect(allowed.map((c) => c.instance.id)).toEqual(["on"])
+		expect(excluded).toHaveLength(1)
+		expect(excluded[0]?.reason).toContain("deaktiviert")
 	})
 
 	it("erlaubt Cloud bei allow-cloud", () => {

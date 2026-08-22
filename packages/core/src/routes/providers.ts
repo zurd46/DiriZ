@@ -41,7 +41,10 @@ interface PatchBody {
 
 export function registerProviders(app: FastifyInstance, ctx: AppContext): void {
 	app.get("/api/providers", () => {
-		return listProviders(ctx.db).map((p) => ({ ...p, instanceCount: listInstances(ctx.db, p.id).length }))
+		return listProviders(ctx.db).map((p) => {
+			const insts = listInstances(ctx.db, p.id)
+			return { ...p, instanceCount: insts.filter((i) => i.enabled).length }
+		})
 	})
 
 	app.post<{ Body: CreateBody }>("/api/providers", (req, reply) => {
@@ -81,7 +84,7 @@ export function registerProviders(app: FastifyInstance, ctx: AppContext): void {
 			return reply.code(404).send({ error: "Provider nicht gefunden" })
 		}
 		const instances = listInstances(ctx.db, provider.id)
-		return { ...provider, instanceCount: instances.length, instances }
+		return { ...provider, instanceCount: instances.filter((i) => i.enabled).length, instances }
 	})
 
 	app.get<{ Params: { id: string } }>("/api/providers/:id/load", (req, reply) => {
@@ -97,6 +100,12 @@ export function registerProviders(app: FastifyInstance, ctx: AppContext): void {
 
 	app.patch<{ Params: { id: string }; Body: PatchBody }>("/api/providers/:id", (req, reply) => {
 		const body = req.body ?? {}
+		if (body.baseUrl !== undefined && !/^https?:\/\//.test(body.baseUrl)) {
+			return reply.code(400).send({ error: "baseUrl muss eine http(s)-URL sein" })
+		}
+		if (body.label !== undefined && body.label.trim().length === 0) {
+			return reply.code(400).send({ error: "label darf nicht leer sein" })
+		}
 		const provider = updateProvider(ctx.db, req.params.id, {
 			...body,
 			apiKeyEnc: body.apiKey ? encryptString(body.apiKey, ctx.secret) : undefined,

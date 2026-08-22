@@ -4,7 +4,17 @@
  * hier wird nur verwaltet: Spezialist, Rollen, Pins, Swarm-Mitgliedschaft.
  */
 
-import type { AgentPrivacy, Capability } from "@diriz/shared"
+import {
+	AGENT_DOC_FILES,
+	type AgentDocKind,
+	type AgentPrivacy,
+	appendChangelogEntry,
+	type Capability,
+	isAgentDocKind,
+	type ModelSettings,
+	parseInitDoc,
+	renderInitDoc,
+} from "@diriz/shared"
 import type { FastifyInstance } from "fastify"
 import type { AppContext } from "../app.js"
 import {
@@ -13,8 +23,11 @@ import {
 	deleteAgent,
 	deleteSwarm,
 	getAgent,
+	getAgentDoc,
+	listAgentDocs,
 	listAgents,
 	listSwarms,
+	saveAgentDoc,
 	updateAgent,
 	updateSwarm,
 } from "../db/repositories.js"
@@ -31,7 +44,23 @@ interface AgentBody {
 	privacy?: string
 	pinnedProviderId?: string | null
 	pinnedInstanceId?: string | null
+	/** Model-Voreinstellungen — schreibt zugleich das `init.md` des Agenten. */
+	modelSettings?: ModelSettings | null
 	enabled?: boolean
+}
+
+/** Feld-Labels für den automatischen Changelog-Eintrag beim Bearbeiten. */
+const FIELD_LABELS: Record<string, string> = {
+	name: "Name",
+	description: "Beschreibung",
+	systemPrompt: "System-Prompt",
+	requiredCapabilities: "Pflicht-Fähigkeiten",
+	preferredCapabilities: "Wunsch-Fähigkeiten",
+	privacy: "Privacy",
+	pinnedProviderId: "Rechner-Pin",
+	pinnedInstanceId: "Modell-Pin",
+	modelSettings: "Model-Voreinstellungen",
+	enabled: "Status",
 }
 
 function validateAgentBody(body: AgentBody): string | undefined {
@@ -44,6 +73,20 @@ function validateAgentBody(body: AgentBody): string | undefined {
 		return `privacy muss einer von ${PRIVACIES.join(", ")} sein`
 	}
 	return undefined
+}
+
+/** Was hat sich beim Bearbeiten wirklich geändert? (für `changelog.md`) */
+function changedFields(before: Record<string, unknown>, body: AgentBody): string[] {
+	const changed: string[] = []
+	for (const [key, value] of Object.entries(body)) {
+		if (value === undefined || !(key in FIELD_LABELS)) {
+			continue
+		}
+		if (JSON.stringify(value ?? null) !== JSON.stringify(before[key] ?? null)) {
+			changed.push(FIELD_LABELS[key] ?? key)
+		}
+	}
+	return changed
 }
 
 export function registerAgents(app: FastifyInstance, ctx: AppContext): void {
@@ -72,6 +115,7 @@ export function registerAgents(app: FastifyInstance, ctx: AppContext): void {
 			pinnedProviderId: body.pinnedProviderId ?? null,
 			pinnedInstanceId: body.pinnedInstanceId ?? null,
 			enabled: body.enabled,
+			docs: body.modelSettings ? { init: renderInitDoc(body.modelSettings, body.name.trim()) } : undefined,
 		})
 		ctx.bus.emit({ event: "agents.changed", data: { agentId: agent.id } })
 		return reply.code(201).send(agent)
@@ -83,7 +127,7 @@ export function registerAgents(app: FastifyInstance, ctx: AppContext): void {
 			return reply.code(404).send({ error: "Agent nicht gefunden" })
 		}
 		const swarms = listSwarms(ctx.db).filter((sw) => sw.enabled && sw.agentIds.includes(agent.id))
-		return { ...agent, swarms }
+		return { ...agent, swarms, docs: listAgentDocs(ctx.db, agent.id) }
 	})
 
 	app.patch<{ Params: { id: string }; Body: AgentBody }>("/api/agents/:id", (req, reply) => {
@@ -91,6 +135,20 @@ export function registerAgents(app: FastifyInstance, ctx: AppContext): void {
 		const err = validateAgentBody(body)
 		if (err) {
 			return reply.code(400).send({ error: err })
+		}
+		const before = getAgent(ctx.db, req.params.id)
+		if (!before) {
+			return reply.code(404).send({ error: "Agent nicht gefunden" })
+		}
+		const changed = changedFields(before as unknown as Record<string, unknown>, body)
+		// Model-Settings sind aus `init.md` abgeleitet — also dort hineinschreiben.
+		if (body.modelSettings !== undefined) {
+			saveAgentDoc(
+				ctx.db,
+				req.params.id,
+				"init",
+				renderInitDoc(body.modelSettings ?? {}, body.name?.trim() || before.name),
+			)
 		}
 		const agent = updateAgent(ctx.db, req.params.id, {
 			name: body.name,
@@ -106,9 +164,54 @@ export function registerAgents(app: FastifyInstance, ctx: AppContext): void {
 		if (!agent) {
 			return reply.code(404).send({ error: "Agent nicht gefunden" })
 		}
+		if (changed.length > 0) {
+			const doc = getAgentDoc(ctx.db, agent.id, "changelog")
+			saveAgentDoc(
+				ctx.db,
+				agent.id,
+				"changelog",
+				appendChangelogEntry(
+					doc?.content ?? "",
+					`Bearbeitet: ${changed.join(", ")}`,
+					new Date().toISOString(),
+				),
+			)
+		}
 		ctx.bus.emit({ event: "agents.changed", data: { agentId: agent.id } })
 		return agent
 	})
+
+	/* --------------------- Dokumente: plan/changelog/init.md -------------------- */
+
+	app.get<{ Params: { id: string } }>("/api/agents/:id/docs", (req, reply) => {
+		if (!getAgent(ctx.db, req.params.id)) {
+			return reply.code(404).send({ error: "Agent nicht gefunden" })
+		}
+		return { agentId: req.params.id, docs: listAgentDocs(ctx.db, req.params.id) }
+	})
+
+	app.put<{ Params: { id: string; kind: string }; Body: { content?: string } }>(
+		"/api/agents/:id/docs/:kind",
+		(req, reply) => {
+			const { id, kind } = req.params
+			if (!isAgentDocKind(kind)) {
+				return reply
+					.code(400)
+					.send({ error: `kind muss einer von ${Object.values(AGENT_DOC_FILES).join(", ")} sein` })
+			}
+			const content = req.body?.content
+			if (typeof content !== "string") {
+				return reply.code(400).send({ error: "content ist erforderlich" })
+			}
+			const doc = saveAgentDoc(ctx.db, id, kind as AgentDocKind, content)
+			if (!doc) {
+				return reply.code(404).send({ error: "Agent nicht gefunden" })
+			}
+			ctx.bus.emit({ event: "agents.changed", data: { agentId: id } })
+			// `init.md` wirkt: die abgeleiteten Settings gleich zurückgeben.
+			return { ...doc, settings: kind === "init" ? parseInitDoc(content) : undefined }
+		},
+	)
 
 	app.delete<{ Params: { id: string } }>("/api/agents/:id", (req, reply) => {
 		if (!deleteAgent(ctx.db, req.params.id)) {

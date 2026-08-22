@@ -56,6 +56,8 @@ export interface InstanceModel {
 	status: ProviderStatus
 	/** Modell-spezifische Overrides — schlagen die Provider-Defaults. */
 	modelSettings?: ModelSettings | null
+	/** false = Modell auf diesem Rechner deaktiviert (vom Routing ausgeschlossen). */
+	enabled: boolean
 	lastSeenAt: string
 	lockedUntil?: string | null
 }

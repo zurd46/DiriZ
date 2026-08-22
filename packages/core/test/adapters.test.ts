@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createProvider } from "../src/providers/factory.js"
 import { LmStudioProvider } from "../src/providers/lmstudio.js"
 import { OllamaProvider } from "../src/providers/ollama.js"
+import { OpenAiCompatProvider } from "../src/providers/openai-compat.js"
 
 let lastAuth: string | undefined
 let server: http.Server
@@ -56,6 +57,17 @@ beforeAll(async () => {
 					],
 				}),
 			)
+			return
+		}
+		if (req.method === "GET" && url === "/api/v1/models") {
+			res.writeHead(200, { "content-type": "application/json" })
+			res.end(JSON.stringify({ data: [{ id: "gpt-x", name: "GPT X" }] }))
+			return
+		}
+		if (req.method === "GET" && url === "/models") {
+			// So antwortet LM Studio auf unbekannte Endpunkte: HTTP 200 + Fehler-JSON.
+			res.writeHead(200, { "content-type": "application/json" })
+			res.end(JSON.stringify({ error: "Unexpected endpoint or method. (GET /models)" }))
 			return
 		}
 		if (req.method === "POST" && url === "/v1/chat/completions") {
@@ -159,6 +171,30 @@ describe("adapter: OpenAI-kompatibel (LM Studio)", () => {
 		const provider = new LmStudioProvider("lmstudio-auth", `${baseUrl}/v1`, "key-abc")
 		await provider.listModels()
 		expect(lastAuth).toBe("Bearer key-abc")
+	})
+
+	it("ergänzt fehlenden /v1-Pfad automatisch (LM-Studio-Konvention)", async () => {
+		const provider = new LmStudioProvider("lmstudio-nov1", baseUrl) // bewusst ohne /v1
+		const models = await provider.listModels()
+		expect(models[0]?.modelId).toBe("gpt-x")
+	})
+
+	it("lässt vorhandene Versions-Pfade (/api/v1) unverändert", async () => {
+		const provider = new LmStudioProvider("lmstudio-apiv1", `${baseUrl}/api/v1`)
+		const models = await provider.listModels()
+		expect(models[0]?.modelId).toBe("gpt-x")
+	})
+
+	it("meldet 200 + Fehler-JSON als Fehler statt „online, aber 0 Modelle“", async () => {
+		const provider = new OpenAiCompatProvider({
+			id: "compat-err",
+			type: "openai-compat",
+			label: "X",
+			baseUrl,
+		})
+		await expect(provider.listModels()).rejects.toThrow("keine Modellliste")
+		const health = await provider.healthCheck()
+		expect(health.ok).toBe(false)
 	})
 })
 

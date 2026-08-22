@@ -10,7 +10,7 @@
  * keine Drift möglich.
  */
 
-import type { Capability, PrivacyMode } from "./types.js"
+import type { Capability, ModelSettings, PrivacyMode } from "./types.js"
 
 /** Wie eine Task einem Spezialisten zugeordnet wird. */
 export type AssignmentMode = "auto" | "agent" | "swarm"
@@ -32,6 +32,11 @@ export interface Agent {
 	/** Optional: Routing auf einen konkreten Rechner bzw. ein konkretes Modell. */
 	pinnedProviderId?: string | null
 	pinnedInstanceId?: string | null
+	/**
+	 * Model-Voreinstellungen dieses Spezialisten — Quelle ist sein `init.md`
+	 * (siehe `docs.ts`). Auflösung: Provider ← Modell ← **Agent** ← Task.
+	 */
+	modelSettings?: ModelSettings | null
 	enabled: boolean
 	createdAt: string
 	updatedAt: string

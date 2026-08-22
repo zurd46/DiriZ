@@ -15,16 +15,38 @@ import type {
 import { errorMessage, fetchJson, jsonLines, ProviderHttpError } from "./http.js"
 
 interface OllamaChatChunk {
-	message?: { content?: string }
+	message?: {
+		content?: string
+		tool_calls?: { function?: { name?: string; arguments?: Record<string, unknown> } }[]
+	}
 	done?: boolean
 	prompt_eval_count?: number
 	eval_count?: number
+}
+
+/** Gemeinsame ChatMessage → Ollama-`messages` (inkl. Tool-Rollen, M8). */
+function toOllamaMessages(messages: ChatRequest["messages"]): unknown[] {
+	return messages.map((m) => {
+		if (m.role === "tool") {
+			return { role: "tool", content: m.content }
+		}
+		if (m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0) {
+			return {
+				role: "assistant",
+				content: m.content || "",
+				tools: m.toolCalls.map((c) => ({ function: { name: c.name, arguments: c.arguments ?? {} } })),
+			}
+		}
+		return { role: m.role, content: m.content }
+	})
 }
 
 export class OllamaProvider implements LLMProvider {
 	readonly id: string
 	readonly type = "ollama"
 	readonly label: string
+	/** M8 Agentik: Ollama ≥ 0.6 unterstützt `tools` im Chat-Request. */
+	readonly supportsTools = true
 	private baseUrl: string
 
 	constructor(id: string, baseUrl: string, label = "Ollama") {
@@ -65,25 +87,29 @@ export class OllamaProvider implements LLMProvider {
 	async *chat(req: ChatRequest): AsyncGenerator<ChatChunk> {
 		// Model-Settings in Ollama-`options` mappen; undefined wird verworfen.
 		const s = req.settings ?? {}
+		const body: Record<string, unknown> = {
+			model: req.model,
+			messages: toOllamaMessages(req.messages),
+			stream: true,
+			keep_alive: 0,
+			options: {
+				temperature: s.temperature ?? req.temperature,
+				num_predict: s.maxTokens ?? req.maxTokens,
+				top_k: s.topK,
+				top_p: s.topP,
+				min_p: s.minP,
+				repeat_penalty: s.repeatPenalty,
+				seed: s.seed,
+				stop: s.stop,
+			},
+		}
+		if (req.tools && req.tools.length > 0) {
+			body.tools = req.tools.map((t) => ({ type: "function", function: t }))
+		}
 		const res = await fetch(`${this.baseUrl}/api/chat`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				model: req.model,
-				messages: req.messages,
-				stream: true,
-				keep_alive: 0,
-				options: {
-					temperature: s.temperature ?? req.temperature,
-					num_predict: s.maxTokens ?? req.maxTokens,
-					top_k: s.topK,
-					top_p: s.topP,
-					min_p: s.minP,
-					repeat_penalty: s.repeatPenalty,
-					seed: s.seed,
-					stop: s.stop,
-				},
-			}),
+			body: JSON.stringify(body),
 			signal: req.signal,
 		})
 		if (!res.ok || !res.body) {
@@ -102,6 +128,12 @@ export class OllamaProvider implements LLMProvider {
 			const text = obj.message?.content
 			if (text) {
 				yield { type: "delta", text }
+			}
+			for (const [i, tc] of (obj.message?.tool_calls ?? []).entries()) {
+				yield {
+					type: "tool_call",
+					call: { id: `ollama_${i}`, name: tc.function?.name ?? "", arguments: tc.function?.arguments ?? {} },
+				}
 			}
 			if (obj.done) {
 				tokensIn = obj.prompt_eval_count ?? 0

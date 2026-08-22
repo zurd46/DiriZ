@@ -23,6 +23,7 @@
     "test": "npm run test --workspace @diriz/shared && npm run test --workspace @diriz/core",
     "build": "npm run build --workspace @diriz/core && npm run build --workspace @diriz/web",
     "start": "npm run start --workspace @diriz/core",
+    "desktop": "npm run dev --workspace @diriz/desktop",
     "check": "npm run lint && npm run typecheck && npm run test"
   },
   "devDependencies": {

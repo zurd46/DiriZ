@@ -99,8 +99,12 @@ export interface ModelSettings {
 }
 
 export interface ChatMessage {
-	role: "system" | "user" | "assistant"
+	role: "system" | "user" | "assistant" | "tool"
 	content: string
+	/** `assistant`: vom Modell angeforderte Tool-Calls (M8 Agentik). */
+	toolCalls?: ToolCallRequest[]
+	/** `tool`: ID des Calls, auf den diese Antwort reagiert. */
+	toolCallId?: string
 }
 
 export interface ChatRequest {
@@ -111,13 +115,52 @@ export interface ChatRequest {
 	temperature?: number
 	maxTokens?: number
 	signal?: AbortSignal
+	/** Tool-Specs (M8 Agentik) — nur von Adaptern mit `supportsTools` genutzt. */
+	tools?: ToolSpec[]
 }
 
 /** Stream-Chunks eines Adapter-Calls. */
 export type ChatChunk =
 	| { type: "delta"; text: string }
 	| { type: "usage"; tokensIn: number; tokensOut: number }
+	| { type: "tool_call"; call: ToolCallRequest }
 	| { type: "done" }
+
+/** Tool-Spezifikation (JSON-Schema) — M8 Agentik, OpenAI-`tools`-Format. */
+export interface ToolSpec {
+	name: string
+	description: string
+	parameters: Record<string, unknown>
+}
+
+/** Ein vom Modell angeforderter Tool-Call. */
+export interface ToolCallRequest {
+	id: string
+	name: string
+	arguments: Record<string, unknown>
+}
+
+/** GPU-Info des Hosts (falls detektierbar; macOS/Metal liefert null). */
+export interface GpuInfo {
+	name: string
+	vramTotalBytes?: number
+	vramUsedBytes?: number
+}
+
+/** Host-Metriken (M8): RAM/CPU/GPU des Rechners, auf dem der Core läuft. */
+export interface HostMetrics {
+	platform: string
+	arch: string
+	cpuCores: number
+	loadAvg1m: number
+	ramTotalBytes: number
+	ramUsedBytes: number
+	/** 0–100. */
+	ramUsagePct: number
+	gpu?: GpuInfo | null
+	uptimeSec: number
+	timestamp: string
+}
 
 /** Provider-eigene Load-Info (z. B. Ollama `/api/ps`). */
 export interface LoadInfo {
@@ -134,6 +177,8 @@ export interface LLMProvider {
 	readonly id: string
 	readonly type: ProviderType
 	readonly label: string
+	/** true = Adapter versteht Tool-Calls (M8 Agentik). */
+	readonly supportsTools?: boolean
 	healthCheck(): Promise<HealthStatus>
 	listModels(): Promise<DiscoveredModel[]>
 	chat(req: ChatRequest): AsyncGenerator<ChatChunk>

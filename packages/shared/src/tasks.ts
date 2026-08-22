@@ -22,6 +22,8 @@ export interface TaskMetadata {
 	/** Pinned-Modus: konkrete Instanz statt Routing. */
 	preferredProviderId?: string
 	preferredModelId?: string
+	/** M8 Agentik: Modell darf Datei-Tools (read/write/list) in der Sandbox nutzen. */
+	agentMode?: boolean
 }
 
 export interface Task {

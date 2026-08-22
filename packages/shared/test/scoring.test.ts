@@ -62,4 +62,33 @@ describe("scoring", () => {
 			DEFAULT_WEIGHTS.latencyScore
 		expect(sum).toBeCloseTo(1)
 	})
+
+	it("M8: hostLoad fehlt in alten Settings → bleibt 0 (Backward-Kompatibilität)", () => {
+		const w = normalizeWeights({
+			contextFit: 1,
+			capabilityMatch: 1,
+			qualityPrior: 1,
+			loadScore: 1,
+			costScore: 1,
+			latencyScore: 1,
+		})
+		expect(w.hostLoad ?? 0).toBeCloseTo(0)
+		const sum = Object.values(w).reduce((a, b) => a + (b ?? 0), 0)
+		expect(sum).toBeCloseTo(1)
+	})
+
+	it("M8: hostLoad-Gewicht wird mit den anderen renormiert", () => {
+		const w = normalizeWeights({
+			contextFit: 3,
+			capabilityMatch: 3,
+			qualityPrior: 2,
+			loadScore: 1,
+			costScore: 1,
+			latencyScore: 1,
+			hostLoad: 1,
+		})
+		expect(w.hostLoad).toBeCloseTo(1 / 12)
+		const sum = Object.values(w).reduce((a, b) => a + (b ?? 0), 0)
+		expect(sum).toBeCloseTo(1)
+	})
 })

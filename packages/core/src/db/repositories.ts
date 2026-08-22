@@ -414,6 +414,7 @@ export function createTask(db: Db, input: TaskInput): Task {
 		budgetUsd: input.metadata?.budgetUsd,
 		preferredProviderId: input.metadata?.preferredProviderId,
 		preferredModelId: input.metadata?.preferredModelId,
+		agentMode: input.metadata?.agentMode,
 	}
 	const title = (input.title ?? "").trim() || input.prompt.slice(0, 60)
 	db.prepare(

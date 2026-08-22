@@ -1,4 +1,4 @@
-import type { LoadInfo } from "@diriz/shared"
+import type { HostMetrics, LoadInfo } from "@diriz/shared"
 import { useEffect, useState } from "react"
 import { api } from "../lib/api.js"
 import { useStore } from "../store.js"
@@ -23,6 +23,26 @@ export default function Dashboard() {
 	const [range, setRange] = useState<Range>(24)
 	const [series7d, setSeries7d] = useState<typeof timeseries | null>(null)
 	const [ollamaLoads, setOllamaLoads] = useState<OllamaLoad[]>([])
+	const [host, setHost] = useState<HostMetrics | null>(null)
+
+	// M8: Host-Metriken (RAM/CPU/GPU) — alle 5 s aktualisieren.
+	useEffect(() => {
+		let cancelled = false
+		const load = () => {
+			api
+				.get<HostMetrics>("/api/host/metrics")
+				.then((h) => {
+					if (!cancelled) setHost(h)
+				})
+				.catch(() => {})
+		}
+		load()
+		const timer = setInterval(load, 5000)
+		return () => {
+			cancelled = true
+			clearInterval(timer)
+		}
+	}, [])
 
 	useEffect(() => {
 		if (range === 168 && series7d === null) {
@@ -214,6 +234,58 @@ export default function Dashboard() {
 						</div>
 					)
 				})}
+			</div>
+
+			<div className="card">
+				<strong>System (Host)</strong>
+				{host === null && (
+					<p className="muted" style={{ margin: "8px 0 0" }}>
+						Lade Host-Metriken …
+					</p>
+				)}
+				{host !== null && (
+					<div style={{ marginTop: 12 }}>
+						<div className="row between" style={{ fontSize: 13 }}>
+							<span title="RAM-Belegung dieses Rechners — Basis der Routing-Achse „Host-Last“">RAM</span>
+							<span>
+								{formatBytes(host.ramUsedBytes)} / {formatBytes(host.ramTotalBytes)} ·{" "}
+								<strong>{host.ramUsagePct}%</strong>
+							</span>
+						</div>
+						<div style={{ height: 6, background: "var(--panel-2)", borderRadius: 3, marginTop: 6 }}>
+							<div
+								style={{
+									width: `${Math.min(100, host.ramUsagePct)}%`,
+									height: "100%",
+									borderRadius: 3,
+									background:
+										host.ramUsagePct > 85
+											? "var(--err)"
+											: host.ramUsagePct > 60
+												? "var(--warn)"
+												: "var(--ok)",
+								}}
+							/>
+						</div>
+						<div className="row between" style={{ fontSize: 12, marginTop: 8 }}>
+							<span>CPU</span>
+							<span>
+								{host.cpuCores} Kerne · Last (1 min) {host.loadAvg1m.toFixed(1)}
+							</span>
+						</div>
+						<div className="row between" style={{ fontSize: 12, marginTop: 4 }}>
+							<span>GPU</span>
+							<span>
+								{host.gpu
+									? `${host.gpu.name}${host.gpu.vramTotalBytes ? ` · ${formatBytes(host.gpu.vramUsedBytes ?? 0)} / ${formatBytes(host.gpu.vramTotalBytes)} VRAM` : ""}`
+									: "nicht detektierbar (Metal/Apple Silicon)"}
+							</span>
+						</div>
+						<div className="muted" style={{ fontSize: 11, marginTop: 8 }}>
+							{host.platform}/{host.arch} · Uptime {Math.round(host.uptimeSec / 3600)} h
+						</div>
+					</div>
+				)}
 			</div>
 
 			<div className="card">

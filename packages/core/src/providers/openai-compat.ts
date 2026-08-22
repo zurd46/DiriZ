@@ -33,15 +33,45 @@ interface CompatModel {
 	pricing?: { prompt?: string; completion?: string }
 }
 
+/** `delta.tool_calls`-Fragment eines Streaming-Chunks (OpenAI-Format). */
+interface CompatToolCallDelta {
+	index: number
+	id?: string
+	function?: { name?: string; arguments?: string }
+}
+
 interface CompatChunk {
-	choices?: { delta?: { content?: string } }[]
+	choices?: { delta?: { content?: string; tool_calls?: CompatToolCallDelta[] } }[]
 	usage?: { prompt_tokens?: number; completion_tokens?: number }
+}
+
+/** Gemeinsame ChatMessage → OpenAI-`messages` (inkl. Tool-Rollen, M8). */
+function toOpenAiMessages(messages: ChatRequest["messages"]): unknown[] {
+	return messages.map((m) => {
+		if (m.role === "tool") {
+			return { role: "tool", tool_call_id: m.toolCallId ?? "", content: m.content }
+		}
+		if (m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0) {
+			return {
+				role: "assistant",
+				content: m.content || null,
+				tool_calls: m.toolCalls.map((c) => ({
+					id: c.id,
+					type: "function",
+					function: { name: c.name, arguments: JSON.stringify(c.arguments ?? {}) },
+				})),
+			}
+		}
+		return { role: m.role, content: m.content }
+	})
 }
 
 export class OpenAiCompatProvider implements LLMProvider {
 	readonly id: string
 	readonly type: ProviderType
 	readonly label: string
+	/** M8 Agentik: OpenAI-`tools` wird von allen kompatiblen Servern verstanden. */
+	readonly supportsTools = true
 	private baseUrl: string
 	private apiKey?: string
 	private extraHeaders: Record<string, string>
@@ -93,29 +123,35 @@ export class OpenAiCompatProvider implements LLMProvider {
 		// Model-Settings (Provider/Modell/Task) in den OpenAI-`ody mappen;
 		// undefined-Felder werden von JSON.stringify automatisch verworfen.
 		const s = req.settings ?? {}
+		const body: Record<string, unknown> = {
+			model: req.model,
+			messages: toOpenAiMessages(req.messages),
+			stream: true,
+			stream_options: { include_usage: true },
+			temperature: s.temperature ?? req.temperature,
+			max_tokens: s.maxTokens ?? req.maxTokens,
+			top_p: s.topP,
+			top_k: s.topK,
+			presence_penalty: s.presencePenalty,
+			frequency_penalty: s.frequencyPenalty,
+			seed: s.seed,
+			stop: s.stop,
+		}
+		if (req.tools && req.tools.length > 0) {
+			body.tools = req.tools.map((t) => ({ type: "function", function: t }))
+		}
 		const res = await fetch(`${this.baseUrl}/chat/completions`, {
 			method: "POST",
 			headers: { "content-type": "application/json", ...this.headers() },
-			body: JSON.stringify({
-				model: req.model,
-				messages: req.messages,
-				stream: true,
-				stream_options: { include_usage: true },
-				temperature: s.temperature ?? req.temperature,
-				max_tokens: s.maxTokens ?? req.maxTokens,
-				top_p: s.topP,
-				top_k: s.topK,
-				presence_penalty: s.presencePenalty,
-				frequency_penalty: s.frequencyPenalty,
-				seed: s.seed,
-				stop: s.stop,
-			}),
+			body: JSON.stringify(body),
 			signal: req.signal,
 		})
 		if (!res.ok || !res.body) {
 			const text = await res.text().catch(() => "")
 			throw new ProviderHttpError(`HTTP ${res.status} ${res.statusText}: ${text.slice(0, 300)}`, res.status)
 		}
+		// Tool-Calls werden pro Index akkumuliert (Name + Argumente streamen in Fragmenten).
+		const pending = new Map<number, { id: string; name: string; argsBuf: string }>()
 		for await (const data of sseData(res)) {
 			if (data === "[DONE]") {
 				break
@@ -134,10 +170,34 @@ export class OpenAiCompatProvider implements LLMProvider {
 				}
 				continue
 			}
-			const text = obj.choices?.[0]?.delta?.content
-			if (text) {
-				yield { type: "delta", text }
+			const delta = obj.choices?.[0]?.delta
+			if (delta) {
+				if (delta.content) {
+					yield { type: "delta", text: delta.content }
+				}
+				for (const tc of delta.tool_calls ?? []) {
+					const acc = pending.get(tc.index) ?? { id: `call_${tc.index}`, name: "", argsBuf: "" }
+					if (tc.id) {
+						acc.id = tc.id
+					}
+					if (tc.function?.name) {
+						acc.name += tc.function.name
+					}
+					if (tc.function?.arguments) {
+						acc.argsBuf += tc.function.arguments
+					}
+					pending.set(tc.index, acc)
+				}
 			}
+		}
+		for (const [, acc] of [...pending.entries()].sort((a, b) => a[0] - b[0])) {
+			let args: Record<string, unknown> = {}
+			try {
+				args = JSON.parse(acc.argsBuf || "{}") as Record<string, unknown>
+			} catch {
+				args = { _raw: acc.argsBuf }
+			}
+			yield { type: "tool_call", call: { id: acc.id, name: acc.name, arguments: args } }
 		}
 		yield { type: "done" }
 	}

@@ -29,6 +29,7 @@ export const DEFAULT_WEIGHTS: ScoringWeights = {
 	loadScore: 0.08,
 	costScore: 0.07,
 	latencyScore: 0.05,
+	hostLoad: 0, // M8: aus — Host-RAM-Last wird erst aktiv, wenn der Nutzer sie gewichtet
 }
 
 /** Cost-Aware-Modus: cost-Gewicht ×3, Rest wird renormiert (§6.3). */
@@ -43,18 +44,21 @@ export function costAwareWeights(base: ScoringWeights = DEFAULT_WEIGHTS): Scorin
 		loadScore: scale(base.loadScore),
 		costScore: cost,
 		latencyScore: scale(base.latencyScore),
+		hostLoad: base.hostLoad === undefined ? 0 : scale(base.hostLoad),
 	}
 }
 
 /** Summiert die Gewichte und renormiert auf 1 (für benutzerdefinierte Gewichte). */
 export function normalizeWeights(weights: ScoringWeights): ScoringWeights {
+	const hostLoad = weights.hostLoad ?? 0
 	const sum =
 		weights.contextFit +
 		weights.capabilityMatch +
 		weights.qualityPrior +
 		weights.loadScore +
 		weights.costScore +
-		weights.latencyScore
+		weights.latencyScore +
+		hostLoad
 	if (sum <= 0) {
 		return { ...DEFAULT_WEIGHTS }
 	}
@@ -65,6 +69,7 @@ export function normalizeWeights(weights: ScoringWeights): ScoringWeights {
 		loadScore: weights.loadScore / sum,
 		costScore: weights.costScore / sum,
 		latencyScore: weights.latencyScore / sum,
+		hostLoad: hostLoad / sum,
 	}
 }
 

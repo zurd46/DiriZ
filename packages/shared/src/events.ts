@@ -58,6 +58,18 @@ export interface ExecutionFailoverEvent {
 	data: { executionId: string; from: string; to: string; reason: string }
 }
 
+/** M8 Agentik: eine Tool-Operation des Modells — volle Transparenz im Monitor. */
+export interface ToolCallEvent {
+	event: "tool.call"
+	data: {
+		executionId: string
+		name: string
+		argsSummary: string
+		ok: boolean
+		detail?: string
+	}
+}
+
 export interface ExecutionDoneEvent {
 	event: "execution.done"
 	data: { executionId: string; taskId: string }
@@ -87,6 +99,7 @@ export type CoreEvent =
 	| ExecutionDeltaEvent
 	| ExecutionUsageEvent
 	| ExecutionFailoverEvent
+	| ToolCallEvent
 	| ExecutionDoneEvent
 	| ExecutionFailedEvent
 	| ProviderStatusEvent
@@ -102,6 +115,7 @@ export const CORE_EVENT_NAMES = [
 	"execution.delta",
 	"execution.usage",
 	"execution.failover",
+	"tool.call",
 	"execution.done",
 	"execution.failed",
 	"provider.status",

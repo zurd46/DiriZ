@@ -31,6 +31,7 @@ export default function Tasks() {
 	const [privacy, setPrivacy] = useState<PrivacyMode>("local-only")
 	const [mode, setMode] = useState<RoutingMode>("auto")
 	const [budget, setBudget] = useState("")
+	const [agentMode, setAgentMode] = useState(false)
 	const [assignment, setAssignment] = useState<"auto" | "agent" | "swarm">("auto")
 	const [agentId, setAgentId] = useState("")
 	const [swarmId, setSwarmId] = useState("")
@@ -75,7 +76,7 @@ export default function Tasks() {
 			const task = await api.post<Task>("/api/tasks", {
 				title,
 				prompt,
-				metadata: { privacy, mode, budgetUsd: budget ? Number(budget) : undefined },
+				metadata: { privacy, mode, budgetUsd: budget ? Number(budget) : undefined, agentMode },
 				assignmentMode: assignment,
 				agentId: assignment === "agent" ? agentId || undefined : undefined,
 				swarmId: assignment === "swarm" ? swarmId || undefined : undefined,
@@ -84,6 +85,7 @@ export default function Tasks() {
 			setTitle("")
 			setPrompt("")
 			setBudget("")
+			setAgentMode(false)
 			setOvTemp("")
 			setOvMax("")
 			setOvSystem("")
@@ -225,6 +227,14 @@ export default function Tasks() {
 						<label className="field">
 							Budget USD (optional)
 							<input value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="0.50" />
+						</label>
+						<label
+							className="field"
+							style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+							title="Agentik-Modus (M8): Das Modell darf Dateien im Workspace lesen und schreiben (list_files, read_file, write_file). Jede Operation wird live angezeigt."
+						>
+							<input type="checkbox" checked={agentMode} onChange={(e) => setAgentMode(e.target.checked)} />
+							<span style={{ fontSize: 13 }}>Agentik</span>
 						</label>
 					</div>
 					<label className="field" style={{ marginTop: 8 }}>
@@ -496,6 +506,22 @@ export default function Tasks() {
 					{liveRuns.length > 0 && liveRuns.flatMap(([, r]) => r.failovers).length > 0 && (
 						<div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
 							{liveRuns.flatMap(([, r]) => r.failovers).map((f) => `↻ ${f}`)}
+						</div>
+					)}
+					{liveRuns.length > 0 && liveRuns.flatMap(([, r]) => r.toolOps ?? []).length > 0 && (
+						<div style={{ marginTop: 8, fontSize: 12 }}>
+							<strong>Agentik-Operationen</strong>
+							{liveRuns
+								.flatMap(([, r]) => r.toolOps ?? [])
+								.map((op) => (
+									<div
+										key={op.id}
+										className="mono"
+										style={{ color: op.ok ? "var(--ok)" : "var(--err)", marginTop: 2 }}
+									>
+										{op.ok ? "✓" : "✗"} {op.name}({op.argsSummary})
+									</div>
+								))}
 						</div>
 					)}
 

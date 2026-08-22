@@ -32,6 +32,9 @@ const WEIGHT_KEYS: (keyof ScoringWeights)[] = [
 	"latencyScore",
 ]
 
+/** M8: optionale 7. Achse — darf beim PUT fehlen (Backward-Kompatibilität). */
+const OPTIONAL_WEIGHT_KEYS: (keyof ScoringWeights)[] = ["hostLoad"]
+
 function parseWeights(body: unknown): ScoringWeights | undefined {
 	if (!body || typeof body !== "object") {
 		return undefined
@@ -39,6 +42,15 @@ function parseWeights(body: unknown): ScoringWeights | undefined {
 	const raw = body as Record<string, unknown>
 	for (const key of WEIGHT_KEYS) {
 		const v = raw[key]
+		if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 1) {
+			return undefined
+		}
+	}
+	for (const key of OPTIONAL_WEIGHT_KEYS) {
+		const v = raw[key]
+		if (v === undefined) {
+			continue
+		}
 		if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 1) {
 			return undefined
 		}
@@ -55,7 +67,7 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 	app.put<{ Body: { routingWeights?: ScoringWeights } }>("/api/settings", (req, reply) => {
 		const parsed = parseWeights(req.body?.routingWeights)
 		if (!parsed) {
-			return reply.code(400).send({ error: "routingWeights muss 6 Zahlen zwischen 0 und 1 sein" })
+			return reply.code(400).send({ error: "routingWeights muss Zahlen zwischen 0 und 1 sein" })
 		}
 		setSetting(ctx.db, "routing_weights", parsed)
 		return { routingWeights: parsed }

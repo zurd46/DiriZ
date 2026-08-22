@@ -12,6 +12,8 @@
       "!**/build",
       "!**/node_modules",
       "!**/coverage",
+      "!**/target",
+      "!apps/desktop/src-tauri/gen",
       "!**/*.generated.ts",
       "!**/*.tsx.snap"
     ]

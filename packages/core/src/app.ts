@@ -12,6 +12,7 @@ import type { ExecutionEngine } from "./execution/engine.js"
 import type { ProviderRegistry } from "./providers/registry.js"
 import { registerAgents } from "./routes/agents.js"
 import { registerHealth } from "./routes/health.js"
+import { registerHost } from "./routes/host.js"
 import { registerInstances } from "./routes/instances.js"
 import { registerLogs } from "./routes/logs.js"
 import { registerMetrics } from "./routes/metrics.js"
@@ -39,6 +40,7 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
 	await app.register(cors, { origin: WEB_ORIGIN, methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"] })
 
 	registerHealth(app, ctx)
+	registerHost(app, ctx)
 	registerProviders(app, ctx)
 	registerAgents(app, ctx)
 	registerInstances(app, ctx)

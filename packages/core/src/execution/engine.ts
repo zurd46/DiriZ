@@ -8,6 +8,8 @@
  * `routing.decided`-Event emittiert.
  */
 
+import fs from "node:fs"
+import path from "node:path"
 import {
 	type Agent,
 	type AgentProfile,
@@ -19,10 +21,12 @@ import {
 	DEFAULT_TIMEOUTS,
 	DEFAULT_WEIGHTS,
 	type Execution,
+	type HostMetrics,
 	MAX_FAILOVER_HOPS,
 	MIN_AGENT_SCORE,
 	type ModelSettings,
 	normalizeWeights,
+	type ProviderType,
 	type RoutePreview,
 	type RoutingDecision,
 	type ScoringWeights,
@@ -51,6 +55,7 @@ import {
 	updateExecution,
 } from "../db/repositories.js"
 import type { LogEntry } from "../logger.js"
+import { getHostMetrics } from "../monitoring/host.js"
 import type { ProviderRegistry } from "../providers/registry.js"
 import type { Feedback } from "../routing/feedback.js"
 import type { PolicyCandidate } from "../routing/policies.js"
@@ -58,6 +63,7 @@ import { applyPolicies } from "../routing/policies.js"
 import { extractProfile } from "../routing/profile.js"
 import type { CandidateInfo } from "../routing/scorer.js"
 import { scoreCandidate } from "../routing/scorer.js"
+import { runAgentLoop } from "./agent.js"
 import { parseFileBlocks, writeWorkspaceFiles } from "./files.js"
 
 type EmitFn = (event: CoreEvent) => void
@@ -183,8 +189,17 @@ export class ExecutionEngine {
 	/* ------------------------------- Kandidaten ------------------------------- */
 
 	/** Alle Instanzen aller Provider als Policy-Kandidaten. Sperrzeit prüfen (§12.1). */
-	private buildCandidates(): PolicyCandidate[] {
+	/** Lokale Provider-Typen — laufen auf diesem Rechner (hostLoad-Achse, M8). */
+	private static readonly LOCAL_TYPES: ProviderType[] = ["ollama", "lmstudio"]
+
+	private async buildCandidates(): Promise<PolicyCandidate[]> {
 		const { registry } = this.deps
+		let host: HostMetrics | null = null
+		try {
+			host = await getHostMetrics()
+		} catch {
+			// Routing darf an Host-Metriken nicht scheitern → Achse bleibt neutral.
+		}
 		const instances = registry.instances()
 		const result: PolicyCandidate[] = []
 		const now = new Date().toISOString()
@@ -204,6 +219,8 @@ export class ExecutionEngine {
 				loadFactor: registry.loadFactorOf(inst.providerId, inst.modelId),
 				providerLatencyMs: p50,
 				basisPrior: BASIS_PRIOR,
+				local: ExecutionEngine.LOCAL_TYPES.includes(type),
+				hostRamUsagePct: host?.ramUsagePct,
 			}
 			result.push({
 				...info,
@@ -348,7 +365,7 @@ export class ExecutionEngine {
 	 * Persistenz oder Failover. Liefert die Entscheidung inkl. Scores und
 	 * Ausschlüssen — oder `undefined`, wenn die Task nicht existiert.
 	 */
-	preview(taskId: string): RoutePreview | undefined {
+	async preview(taskId: string): Promise<RoutePreview | undefined> {
 		const task = getTask(this.deps.db, taskId)
 		if (!task) {
 			return undefined
@@ -356,7 +373,7 @@ export class ExecutionEngine {
 		const sel = this.selectAgent(task)
 		const agent = sel.ok ? sel.agent : undefined
 		const profile = this.applyAgentConstraints(extractProfile(task), agent)
-		const candidates = this.buildCandidates()
+		const candidates = await this.buildCandidates()
 		const { weights, excluded, allowed } = applyPolicies(candidates, profile, this.baseWeights())
 		const scored = allowed
 			.map((c) => scoreCandidate(c, profile, weights, this.deps.feedback))
@@ -433,7 +450,7 @@ export class ExecutionEngine {
 		// M1: Spezialisten-Zuordnung (auto/agent/swarm) vor dem Routing.
 		const agent = this.resolveAgent(task)
 		const profile = this.applyAgentConstraints(extractProfile(task), agent)
-		const candidates = this.buildCandidates()
+		const candidates = await this.buildCandidates()
 		const { weights, excluded, allowed } = applyPolicies(candidates, profile, this.baseWeights())
 
 		if (allowed.length === 0) {
@@ -628,27 +645,62 @@ export class ExecutionEngine {
 						{ role: "user", content: task.prompt },
 					]
 				: [{ role: "user", content: task.prompt }]
-			const stream = adapter.chat({
-				messages,
-				model: choice.instance.modelId,
-				settings: effective,
-				signal: controller.signal,
-			})
-			for await (const chunk of stream) {
-				if (controller.signal.aborted) {
-					throw controller.signal.reason instanceof Error ? controller.signal.reason : new Error("aborted")
-				}
-				if (chunk.type === "delta") {
-					resetChunkTimer()
-					fullText += chunk.text
-					appendChunk(db, execution.id, seq++, chunk.text)
-					emit({
-						event: "execution.delta",
-						data: { executionId: execution.id, delta: chunk.text, tokens: tokensOut },
-					})
-				} else if (chunk.type === "usage") {
-					tokensIn = chunk.tokensIn
-					tokensOut = chunk.tokensOut
+
+			if (task.metadata.agentMode === true && adapter.supportsTools) {
+				// M8 Agentik: Tool-Loop statt Einzelstream — das Modell arbeitet
+				// mit list_files/read_file/write_file in der Task-Sandbox.
+				const baseDir = path.join(workspaceDir, taskSlug(task))
+				fs.mkdirSync(baseDir, { recursive: true })
+				log("info", "agent", `Agentik-Modus aktiv für Task ${task.id} (${choice.instance.modelId})`)
+				const result = await runAgentLoop({
+					adapter,
+					model: choice.instance.modelId,
+					settings: effective,
+					systemPrompt: systemPrompt || undefined,
+					userPrompt: task.prompt,
+					baseDir,
+					executionId: execution.id,
+					signal: controller.signal,
+					onDelta: (text) => {
+						resetChunkTimer()
+						fullText += text
+						appendChunk(db, execution.id, seq++, text)
+						emit({
+							event: "execution.delta",
+							data: { executionId: execution.id, delta: text, tokens: tokensOut },
+						})
+					},
+					emitToolCall: (data) => {
+						resetChunkTimer()
+						emit({ event: "tool.call", data: { executionId: execution.id, ...data } })
+					},
+					log,
+				})
+				tokensIn = result.tokensIn
+				tokensOut = result.tokensOut
+			} else {
+				const stream = adapter.chat({
+					messages,
+					model: choice.instance.modelId,
+					settings: effective,
+					signal: controller.signal,
+				})
+				for await (const chunk of stream) {
+					if (controller.signal.aborted) {
+						throw controller.signal.reason instanceof Error ? controller.signal.reason : new Error("aborted")
+					}
+					if (chunk.type === "delta") {
+						resetChunkTimer()
+						fullText += chunk.text
+						appendChunk(db, execution.id, seq++, chunk.text)
+						emit({
+							event: "execution.delta",
+							data: { executionId: execution.id, delta: chunk.text, tokens: tokensOut },
+						})
+					} else if (chunk.type === "usage") {
+						tokensIn = chunk.tokensIn
+						tokensOut = chunk.tokensOut
+					}
 				}
 			}
 		} catch (e) {

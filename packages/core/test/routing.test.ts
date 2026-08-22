@@ -133,7 +133,7 @@ describe("routing: Scorer", () => {
 		expect(a.score).toBe(b.score)
 		expect(a.score).toBeGreaterThanOrEqual(0)
 		expect(a.score).toBeLessThanOrEqual(100)
-		expect(a.axes).toHaveLength(6)
+		expect(a.axes).toHaveLength(7) // M8: + hostLoad-Achse
 		for (const axis of a.axes) {
 			expect(axis.weighted).toBeCloseTo(axis.value * axis.weight, 3)
 		}

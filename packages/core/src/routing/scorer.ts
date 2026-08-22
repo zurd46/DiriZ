@@ -24,6 +24,10 @@ export interface CandidateInfo {
 	loadFactor: number
 	providerLatencyMs?: number
 	basisPrior: number
+	/** M8: läuft die Instanz auf diesem Rechner? (hostLoad-Achse) */
+	local?: boolean
+	/** M8: aktuelle RAM-Belegung des Hosts in % (0–100). */
+	hostRamUsagePct?: number
 }
 
 const AXIS_LABELS: Record<keyof ScoringWeights, string> = {
@@ -33,12 +37,21 @@ const AXIS_LABELS: Record<keyof ScoringWeights, string> = {
 	loadScore: "Last",
 	costScore: "Kosten",
 	latencyScore: "Latenz",
+	hostLoad: "Host-Last",
 }
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000
 
 function loadScoreValue(loadFactor: number): number {
 	return Math.max(0, 1 - Math.min(1, loadFactor))
+}
+
+/** M8: Hohe Host-RAM-Last bestraft lokale Instanzen (Swap/OOM-Risiko); Cloud bleibt neutral. */
+function hostLoadValue(local: boolean | undefined, ramUsagePct: number | undefined): number {
+	if (!local || ramUsagePct === undefined) {
+		return 1
+	}
+	return Math.max(0, 1 - Math.min(100, ramUsagePct) / 100)
 }
 
 function latencyScoreValue(latencyMs: number | undefined): number {
@@ -71,15 +84,19 @@ export function scoreCandidate(
 		loadScore: loadScoreValue(info.loadFactor),
 		costScore: costScore(info.instance.pricePerMTok, profile.budgetUsd),
 		latencyScore: latencyScoreValue(info.providerLatencyMs),
+		hostLoad: hostLoadValue(info.local, info.hostRamUsagePct),
 	}
 
-	const axes = (Object.keys(values) as (keyof ScoringWeights)[]).map((key) => ({
-		key,
-		label: AXIS_LABELS[key],
-		value: round3(values[key]),
-		weight: weights[key],
-		weighted: round3(values[key] * weights[key]),
-	}))
+	const axes = (Object.keys(values) as (keyof ScoringWeights)[]).map((key) => {
+		const weight = weights[key] ?? 0
+		return {
+			key,
+			label: AXIS_LABELS[key],
+			value: round3(values[key]),
+			weight,
+			weighted: round3(values[key] * weight),
+		}
+	})
 
 	return {
 		instanceId: info.instance.id,

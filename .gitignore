@@ -7,6 +7,10 @@ build/
 out/
 *.tsbuildinfo
 
+# Rust (Tauri-Desktop, M8) — Build-Artefakte ignorieren; Cargo.lock bleibt versioniert (App = reproduzierbar).
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+
 # Tests / Coverage
 coverage/
 .nyc_output/

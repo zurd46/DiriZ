@@ -75,6 +75,17 @@ describe("api: Health & Metriken", () => {
 		expect(res.statusCode).toBe(200)
 		expect(res.json().executions).toBeGreaterThanOrEqual(0)
 	})
+
+	it("GET /api/host/metrics → RAM/CPU (M8)", async () => {
+		const res = await app.inject({ method: "GET", url: "/api/host/metrics" })
+		expect(res.statusCode).toBe(200)
+		const body = res.json()
+		expect(body.ramTotalBytes).toBeGreaterThan(0)
+		expect(body.ramUsagePct).toBeGreaterThanOrEqual(0)
+		expect(body.ramUsagePct).toBeLessThanOrEqual(100)
+		expect(body.cpuCores).toBeGreaterThan(0)
+		expect(typeof body.uptimeSec).toBe("number")
+	})
 })
 
 describe("api: Provider CRUD", () => {

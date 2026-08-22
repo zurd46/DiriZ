@@ -14,6 +14,11 @@ const WEIGHT_META: { key: keyof ScoringWeights; label: string; hint: string }[] 
 	{ key: "loadScore", label: "Last", hint: "Aktuelle Auslastung des Providers" },
 	{ key: "costScore", label: "Kosten", hint: "Preis pro Token (lokal = 0 $)" },
 	{ key: "latencyScore", label: "Latenz", hint: "Antwortgeschwindigkeit" },
+	{
+		key: "hostLoad",
+		label: "Host-Last",
+		hint: "RAM-Belegung dieses Rechners — bestraft lokale Modelle bei hoher Last (0 = aus)",
+	},
 ]
 
 export default function Settings() {
@@ -93,9 +98,9 @@ export default function Settings() {
 						<div key={w.key} style={{ marginBottom: 14 }}>
 							<div className="row between" style={{ fontSize: 13 }}>
 								<span title={w.hint}>
-									{w.label} <span className="muted">· {Math.round(normalized[w.key] * 100)}%</span>
+									{w.label} <span className="muted">· {Math.round((normalized[w.key] ?? 0) * 100)}%</span>
 								</span>
-								<span className="mono muted">{draft[w.key].toFixed(2)}</span>
+								<span className="mono muted">{(draft[w.key] ?? 0).toFixed(2)}</span>
 							</div>
 							<input
 								type="range"

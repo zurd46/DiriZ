@@ -235,12 +235,12 @@ describe("engine: Cancel", () => {
 })
 
 describe("engine: Routing-Preview (Dry-Run)", () => {
-	it("liefert die Entscheidung ohne Execution & ohne Seiteneffekte", () => {
+	it("liefert die Entscheidung ohne Execution & ohne Seiteneffekte", async () => {
 		const task = createTask(db, { prompt: "Implementiere eine Funktion in TypeScript" })
 		expect(getTask(db, task.id)?.status).toBe("draft")
 
 		const decidedBefore = events.filter((e) => e.event === "routing.decided").length
-		const preview = engine.preview(task.id)
+		const preview = await engine.preview(task.id)
 		const decidedAfter = events.filter((e) => e.event === "routing.decided").length
 
 		expect(preview).toBeTruthy()
@@ -256,7 +256,83 @@ describe("engine: Routing-Preview (Dry-Run)", () => {
 		expect(decidedAfter).toBe(decidedBefore)
 	})
 
-	it("gibt undefined für unbekannte Task zurück", () => {
-		expect(engine.preview("keine-id")).toBeUndefined()
+	it("gibt undefined für unbekannte Task zurück", async () => {
+		expect(await engine.preview("keine-id")).toBeUndefined()
+	})
+})
+
+/** M8 Agentik: Fake-Adapter mit Tool-Support (write_file → finale Antwort). */
+class AgentFakeAdapter implements LLMProvider {
+	readonly label = "AgentFake"
+	readonly supportsTools = true
+	constructor(
+		readonly id: string,
+		readonly type: ProviderType,
+	) {}
+	async healthCheck(): Promise<HealthStatus> {
+		return { ok: true, latencyMs: 1 }
+	}
+	async listModels(): Promise<DiscoveredModel[]> {
+		return []
+	}
+	async *chat(req: ChatRequest): AsyncGenerator<ChatChunk> {
+		const hasToolResult = req.messages.some((m) => m.role === "tool")
+		if (!hasToolResult) {
+			yield { type: "delta", text: "Ich nutze das Tool. " }
+			yield {
+				type: "tool_call",
+				call: { id: "c1", name: "write_file", arguments: { path: "agent/out.txt", content: "via tool" } },
+			}
+		} else {
+			yield { type: "delta", text: "Fertig!" }
+		}
+		yield { type: "usage", tokensIn: 7, tokensOut: 9 }
+		yield { type: "done" }
+	}
+	async cancel(): Promise<void> {}
+}
+
+describe("engine: Agentik-Modus (M8)", () => {
+	let pAgentId: string
+
+	beforeAll(() => {
+		pAgentId = createProvider(db, { type: "ollama", label: "Agent", baseUrl: "http://agent" }).id
+		registry.registerAdapter(pAgentId, "ollama", "Agent", new AgentFakeAdapter(pAgentId, "ollama"))
+		upsertInstance(
+			db,
+			pAgentId,
+			{ modelId: "m-agent", displayName: "M Agent", contextWindow: 32_000, capabilities: ["code"] },
+			"manual",
+		)
+		registry.recordSuccess(pAgentId)
+	})
+
+	it("führt den Tool-Loop aus und emittiert tool.call (Transparenz)", async () => {
+		events.length = 0
+		const task = createTask(db, {
+			prompt: "Schreib eine Datei per Tool",
+			title: "Agentik Test",
+			metadata: { mode: "pinned", preferredProviderId: pAgentId, agentMode: true },
+		})
+		const result = await engine.runTask(task)
+
+		expect(result.status).toBe("done")
+		expect(getTask(db, task.id)?.status).toBe("done")
+
+		// Tool-Operation wurde live emittiert (M8 Transparenz-Anforderung).
+		const toolEvents = events.filter((e) => e.event === "tool.call")
+		expect(toolEvents.length).toBe(1)
+		const op = toolEvents[0]
+		if (op && op.event === "tool.call") {
+			expect(op.data.name).toBe("write_file")
+			expect(op.data.ok).toBe(true)
+		}
+
+		// Die Datei wurde per Tool in der Task-Sandbox geschrieben.
+		const fileAbs = path.join(workspaceDir, "agentik-test", "agent", "out.txt")
+		expect(fs.readFileSync(fileAbs, "utf8")).toBe("via tool")
+
+		// Finale Antwort im Replay sichtbar.
+		expect(replayOutput(db, result.id)).toContain("Fertig!")
 	})
 })

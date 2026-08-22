@@ -30,4 +30,6 @@ export interface ScoringWeights {
 	loadScore: number
 	costScore: number
 	latencyScore: number
+	/** M8: Host-RAM-Last bestraft lokale Instanzen (0 = aus, Default). */
+	hostLoad?: number
 }

@@ -30,6 +30,8 @@ export interface LiveRun {
 	status: "running" | "done" | "failed"
 	usage?: { tokensIn: number; tokensOut: number; tps: number; costUsd: number }
 	failovers: string[]
+	/** M8 Agentik: Tool-Operationen des Modells (live). */
+	toolOps?: { id: string; name: string; argsSummary: string; ok: boolean }[]
 }
 
 export interface TaskDetail {
@@ -256,6 +258,22 @@ export const useStore = create<State>((set, get) => ({
 						live: {
 							...s.live,
 							[executionId]: { ...run, failovers: [...run.failovers, `${from} → ${to} (${reason})`] },
+						},
+					}
+				})
+				break
+			}
+			case "tool.call": {
+				const { executionId, name, argsSummary, ok } = core.data
+				set((s) => {
+					const run = s.live[executionId] ?? { text: "", status: "running" as const, failovers: [] }
+					return {
+						live: {
+							...s.live,
+							[executionId]: {
+								...run,
+								toolOps: [...(run.toolOps ?? []), { id: crypto.randomUUID(), name, argsSummary, ok }],
+							},
 						},
 					}
 				})

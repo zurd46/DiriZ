@@ -235,8 +235,8 @@ export function upsertInstance(
 		db.prepare(
 			`INSERT INTO instances (id, provider_id, model_id, display_name, context_window,
 				capabilities_json, languages_json, quantization, price_in_per_mtok, price_out_per_mtok,
-				source, status, model_settings, last_seen_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline', ?, ?)`,
+				source, status, model_settings, locked_until, last_seen_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline', ?, NULL, ?)`,
 		).run(
 			id,
 			providerId,

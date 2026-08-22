@@ -186,6 +186,12 @@ describe("engine: keine Kandidatin", () => {
 		})
 		await expect(engine.runTask(task)).rejects.toBeInstanceOf(NoCandidateError)
 		expect(getTask(db, task.id)?.status).toBe("failed")
+
+		// Sichtbares Scheitern: eine fehlgeschlagene Execution mit Begründung existiert.
+		const executions = listExecutionsByTask(db, task.id)
+		expect(executions.length).toBe(1)
+		expect(executions[0].status).toBe("failed")
+		expect(executions[0].error).toContain("Keine Instanz verfügbar")
 	})
 })
 

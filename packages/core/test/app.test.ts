@@ -168,6 +168,71 @@ describe("api: Tasks", () => {
 	})
 })
 
+describe("api: Settings, Export & Import", () => {
+	it("GET /api/settings liefert renormierte Defaults (Summe 1)", async () => {
+		const res = await app.inject({ method: "GET", url: "/api/settings" })
+		expect(res.statusCode).toBe(200)
+		const w = res.json().routingWeights
+		const sum = Object.values(w).reduce((a: number, b) => a + (b as number), 0)
+		expect(sum).toBeCloseTo(1)
+	})
+
+	it("PUT /api/settings validiert und persistiert", async () => {
+		const bad = await app.inject({
+			method: "PUT",
+			url: "/api/settings",
+			payload: { routingWeights: { contextFit: 2 } },
+		})
+		expect(bad.statusCode).toBe(400)
+
+		const good = await app.inject({
+			method: "PUT",
+			url: "/api/settings",
+			payload: {
+				routingWeights: {
+					contextFit: 0.5,
+					capabilityMatch: 0.3,
+					qualityPrior: 0.1,
+					loadScore: 0.04,
+					costScore: 0.04,
+					latencyScore: 0.02,
+				},
+			},
+		})
+		expect(good.statusCode).toBe(200)
+
+		const after = await app.inject({ method: "GET", url: "/api/settings" })
+		expect(after.json().routingWeights.contextFit).toBeCloseTo(0.5)
+	})
+
+	it("Export liefert Dokument, Import upsertet Agenten per Name", async () => {
+		const exportRes = await app.inject({ method: "GET", url: "/api/export" })
+		expect(exportRes.statusCode).toBe(200)
+		const exp = exportRes.json()
+		expect(exp.format).toBe("diriz-export")
+		expect(Array.isArray(exp.tasks)).toBe(true)
+
+		const badImport = await app.inject({ method: "POST", url: "/api/import", payload: { format: "wrong" } })
+		expect(badImport.statusCode).toBe(400)
+
+		const importRes = await app.inject({
+			method: "POST",
+			url: "/api/import",
+			payload: {
+				format: "diriz-export",
+				agents: [{ name: "Test-Agent", description: "Import-Test" }],
+				swarms: [],
+				templates: [],
+			},
+		})
+		expect(importRes.statusCode).toBe(200)
+		expect(importRes.json().imported).toBeGreaterThanOrEqual(1)
+
+		const agents = await app.inject({ method: "GET", url: "/api/agents" })
+		expect(agents.json().some((a: { name: string }) => a.name === "Test-Agent")).toBe(true)
+	})
+})
+
 describe("api: SSE-Stream", () => {
 	it("liefert Events über den echten HTTP-Stream", async () => {
 		await app.listen({ port: 0, host: "127.0.0.1" })

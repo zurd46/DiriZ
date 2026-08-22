@@ -22,8 +22,10 @@ import {
 	MAX_FAILOVER_HOPS,
 	MIN_AGENT_SCORE,
 	type ModelSettings,
+	normalizeWeights,
 	type RoutePreview,
 	type RoutingDecision,
+	type ScoringWeights,
 	scoreAgents,
 	type Task,
 	type TaskProfile,
@@ -37,6 +39,7 @@ import {
 	getExecution,
 	getInstance,
 	getProvider,
+	getSetting,
 	getSwarm,
 	getTask,
 	listAgents,
@@ -116,6 +119,12 @@ export class ExecutionEngine {
 		return DEFAULT_CONCURRENCY.global
 	}
 
+	/** Routing-Gewichte aus den Settings (Fallback: Plan-Defaults, §6.2). */
+	private baseWeights(): ScoringWeights {
+		const stored = getSetting<ScoringWeights>(this.deps.db, "routing_weights")
+		return stored ? normalizeWeights(stored) : DEFAULT_WEIGHTS
+	}
+
 	isRunning(taskId: string): boolean {
 		for (const run of this.active.values()) {
 			if (run.taskId === taskId) {
@@ -173,12 +182,17 @@ export class ExecutionEngine {
 
 	/* ------------------------------- Kandidaten ------------------------------- */
 
-	/** Alle Instanzen aller Provider als Policy-Kandidaten. */
+	/** Alle Instanzen aller Provider als Policy-Kandidaten. Sperrzeit prüfen (§12.1). */
 	private buildCandidates(): PolicyCandidate[] {
 		const { registry } = this.deps
 		const instances = registry.instances()
 		const result: PolicyCandidate[] = []
+		const now = new Date().toISOString()
 		for (const inst of instances) {
+			// Gesperrte Instanzen überspringen (§12.1)
+			if (inst.lockedUntil && inst.lockedUntil > now) {
+				continue
+			}
 			const type = registry.providerType(inst.providerId)
 			if (!type) {
 				continue
@@ -343,7 +357,7 @@ export class ExecutionEngine {
 		const agent = sel.ok ? sel.agent : undefined
 		const profile = this.applyAgentConstraints(extractProfile(task), agent)
 		const candidates = this.buildCandidates()
-		const { weights, excluded, allowed } = applyPolicies(candidates, profile, DEFAULT_WEIGHTS)
+		const { weights, excluded, allowed } = applyPolicies(candidates, profile, this.baseWeights())
 		const scored = allowed
 			.map((c) => scoreCandidate(c, profile, weights, this.deps.feedback))
 			.sort((a, b) => b.score - a.score)
@@ -420,11 +434,20 @@ export class ExecutionEngine {
 		const agent = this.resolveAgent(task)
 		const profile = this.applyAgentConstraints(extractProfile(task), agent)
 		const candidates = this.buildCandidates()
-		const { weights, excluded, allowed } = applyPolicies(candidates, profile, DEFAULT_WEIGHTS)
+		const { weights, excluded, allowed } = applyPolicies(candidates, profile, this.baseWeights())
 
 		if (allowed.length === 0) {
-			log("warn", "routing", `Keine Instanz für Task ${task.id}: ${excluded.length} ausgeschlossen`)
+			const reason = `Keine Instanz verfügbar (${excluded.length} ausgeschlossen)`
+			log("warn", "routing", `${reason} für Task ${task.id}`)
+			// Sichtbares Scheitern: Execution-Record, damit die UI den Fehler zeigt und bewerten kann.
+			const execution = createExecution(db, { taskId: task.id })
+			updateExecution(db, execution.id, {
+				status: "failed",
+				error: reason,
+				finishedAt: new Date().toISOString(),
+			})
 			setTaskStatus(db, task.id, "failed")
+			emit({ event: "execution.failed", data: { executionId: execution.id, taskId: task.id, error: reason } })
 			throw new NoCandidateError()
 		}
 

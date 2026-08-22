@@ -16,9 +16,10 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+	const hasBody = init?.body !== undefined && init.body !== null
 	const res = await fetch(`${BASE}${path}`, {
 		...init,
-		headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+		headers: { ...(hasBody ? { "content-type": "application/json" } : {}), ...(init?.headers ?? {}) },
 	})
 	if (!res.ok) {
 		let message = `HTTP ${res.status}`
@@ -44,5 +45,6 @@ export const api = {
 		request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) }),
 	patch: <T>(path: string, body?: unknown) =>
 		request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
+	put: <T>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
 	del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 }

@@ -16,6 +16,7 @@ import { registerInstances } from "./routes/instances.js"
 import { registerLogs } from "./routes/logs.js"
 import { registerMetrics } from "./routes/metrics.js"
 import { registerProviders } from "./routes/providers.js"
+import { registerSettings } from "./routes/settings.js"
 import { registerStream } from "./routes/stream.js"
 import { registerTasks } from "./routes/tasks.js"
 import { registerTemplates } from "./routes/templates.js"
@@ -45,6 +46,7 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
 	registerTemplates(app, ctx)
 	registerLogs(app, ctx)
 	registerMetrics(app, ctx)
+	registerSettings(app, ctx)
 	registerWorkspace(app, ctx)
 	registerStream(app, ctx)
 

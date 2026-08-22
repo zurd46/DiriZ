@@ -84,6 +84,17 @@ export function registerProviders(app: FastifyInstance, ctx: AppContext): void {
 		return { ...provider, instanceCount: instances.length, instances }
 	})
 
+	app.get<{ Params: { id: string } }>("/api/providers/:id/load", (req, reply) => {
+		const adapter = ctx.registry.adapter(req.params.id)
+		if (!adapter?.loadInfo) {
+			return reply.code(404).send({ error: "Provider unterstützt keine Load-Info" })
+		}
+		return adapter
+			.loadInfo()
+			.then((info) => ({ providerId: req.params.id, ...info }))
+			.catch(() => reply.code(502).send({ error: "Load-Info nicht verfügbar" }))
+	})
+
 	app.patch<{ Params: { id: string }; Body: PatchBody }>("/api/providers/:id", (req, reply) => {
 		const body = req.body ?? {}
 		const provider = updateProvider(ctx.db, req.params.id, {

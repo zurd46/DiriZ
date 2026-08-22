@@ -1,50 +1,87 @@
 # DiriZ
 
-Visuelles Orchestrierungssystem ("Dirigent") für lokale LLM-Systeme: Ollama, LM Studio, OpenAI-kompatible Server und Cloud-APIs (OpenRouter, OpenAI).
-
-- **Eine Eingabe** → automatische Zuweisung der besten Instanz → automatische Ausführung
-- Volle Transparenz: Live-Streaming, Routing-Explainability, Metriken, Logs, Datei-Workspace
-- Local-first: Cloud nur auf Wunsch (Privacy-Modus `local-only` als Default)
-
-## Dokumentation
-
-- [01 – Gesamter Plan, Architektur & Roadmap](docs/01-plan.md)
-- [STATUS – Aktueller Entwicklungsstand](docs/STATUS.md)
-- [CHANGELOG – Versionsgeschichte](#changelog)
-
-## Instanz-Dokumentations-System
-
-Jede lokale KI-Instanz (egal ob Ollama, LM Studio via NGrok oder Cloud-Anbieter) erhält automatisch drei Markdown-Dateien als Teil ihres System-Prompts:
-
-### 1. `plan.md`
-Enthält die aktuelle Aufgabe, Modell-Konfiguration, Ausführungsparameter, Routing-Entscheidung, Status und Workspace-Verzeichnis. Wird bei Task-Start und bei Änderungen automatisch aktualisiert.
-
-### 2. `changelog.md`
-Dokumentiert alle bemerkenswerten Änderungen an der Instanz (Format: Keep a Changelog). Wird automatisch aktualisiert bei jeder Task-Ausführung, Modell-Wechsel, Parameter-Anpassungen sowie Fehlern und Failover-Ereignissen.
-
-### 3. `README.md`
-Instanz-spezifische Dokumentation mit Übersicht, Fähigkeiten/Kapazitäten, Konfiguration, Monitoring-Metriken, Workspace-Informationen, Routing-Details, Fehlerbehandlung und Feedback-Möglichkeiten. Wird bei jeder relevanten Änderung aktualisiert.
-
-### Instanz-Verzeichnis-Struktur
+**Der Dirigent für deine LLM-Orchester.** DiriZ ist ein lokales Orchestrierungssystem, das jede Task automatisch dem besten Modell zuweist — lokal (Ollama, LM Studio) oder Cloud (OpenRouter, OpenAI) — mit vollem Live-Monitoring, Explainability und lernendem Routing.
 
 ```
-instances/
-  ollama-local/          # Lokale Instanz (z.B. Ollama auf localhost)
-    plan.md
-    changelog.md
-    README.md
-  lmstudio-ngrok/        # LM Studio via NGrok tunnelbar
-    plan.md
-    changelog.md
-    README.md
-  openrouter-cloud/      # Cloud-Anbieter (OpenRouter, OpenAI etc.)
-    plan.md
-    changelog.md
-    README.md
+┌─────────────┐     ┌──────────────────────────┐     ┌─────────────────────┐
+│  React-UI   │ SSE │      DiriZ Core          │ HTTP│  Ollama · LM Studio │
+│  :5173      │◄────►│  Fastify · SQLite :8787  │◄───►│  OpenRouter · OpenAI│
+└─────────────┘     │  Routing-Engine + Failover│     └─────────────────────┘
+                    └──────────────────────────┘
 ```
 
-Jede Instanz kann ihre drei MD-Dateien im System bearbeiten und aktualisieren. Die Dateien bilden die gesamte Arbeit der Instanz ab und gewährleisten volle Transparenz darüber, wo wie was ausgeführt wurde.
+## ✨ Features
 
-## Status
+| Bereich | Was es kann |
+|---------|------------|
+| **Routing** | Mehrachsen-Scoring (Context-Fit, Capability-Match, Qualitäts-Prior, Last, Kosten, Latenz) mit harten Policies: Privacy `local-only`, Budget-Gate, Context-Gate, Pinned-Mode — jede Entscheidung nachvollziehbar erklärt |
+| **Ausführung** | Streaming-Live-View, Failover-Kette bei Provider-Ausfall, Abbruch, Concurrent-Limits, Token-/Kosten-Tracking |
+| **Monitoring** | Dashboard mit Metriken-Karten, 24 h/7-Tage-Charts (Tokens, Requests, Kosten), Ollama-VRAM-Load, Live-Logs, Statusleiste |
+| **Workspace** | Versionierte Task-Dateien: Baum-Ansicht, Vorschau mit Zeilennummern, farbiger Diff zwischen beliebigen zwei Versionen |
+| **Feedback** | 1–5-Sterne-Ratings pro Execution → exponentiell glättender Qualitäts-Prior — DiriZ wird mit jedem Feedback besser |
+| **Spezialisten** | Agenten (System-Prompt + Capability-Anforderungen) und Swarms; Auto-Zuordnung per Prompt-Match oder feste Zuweisung |
+| **Sicherheit** | Local-first: Cloud nur auf Wunsch. API-Keys AES-256-GCM-verschlüsselt in der DB, nie im Klartext zurückgegeben |
 
-Plan-Phase (Entwurf v0.1). Die Implementierung startet mit Meilenstein M0 (Setup) – siehe Plan, §15.
+## 🚀 Quickstart
+
+**Voraussetzungen:** Node.js ≥ 22 · ein lokeller LLM-Server (z. B. [Ollama](https://ollama.com)) oder Cloud-API-Key
+
+```bash
+# 1) Abhängigkeiten installieren
+npm install
+
+# 2) Entwicklung starten (Core :8787 + Web :5173, mit HMR)
+npm run dev
+
+# 3) Browser öffnen → http://localhost:5173
+```
+
+**Erste Task:**
+1. Tab **Provider** → Ollama hinzufügen (`http://localhost:11434`) — Modelle werden automatisch entdeckt
+2. Tab **Tasks** → „+ Neue Task“ → Prompt eingeben → anlegen & starten
+3. Ergebnis im Live-Stream verfolgen, in der Detail-Karte mit Sternen bewerten
+
+**Produktions-Build:**
+```bash
+npm run build   # Core (tsc) + Web (Vite)
+npm start       # Core aus dist/ starten
+```
+
+## 📁 Projektstruktur
+
+```
+DiriZ/
+├── apps/web/                  # React-UI (Vite, Zustand, SSE-Live-Events)
+│   └── src/views/             # Dashboard · Provider · Agenten · Tasks · Workspace · Logs · Einstellungen
+├── packages/core/             # Fastify-Core: API, Engine, Routing, DB
+│   ├── db/migrations/         # SQLite-Migrationen (0001–0004)
+│   └── src/
+│       ├── execution/         # ExecutionEngine, Failover, Event-Bus
+│       ├── providers/         # Adapter: Ollama · LM Studio · OpenAI(-Compat) · OpenRouter
+│       ├── routing/           # Profil-Extraktion · Policies · Scoring · Feedback-Prior
+│       └── routes/            # REST-API (tasks, providers, agents, metrics, workspace, settings, …)
+├── packages/shared/           # Gemeinsame Typen, Event-Kontrakte, Scoring-Formeln (UI ≡ Core)
+├── docs/                      # 01-plan.md (Architektur & Roadmap) · STATUS.md (aktueller Stand)
+└── playwright.config.ts       # E2E-Smoke-Tests
+```
+
+**Designprinzip:** Die Scoring-Formeln und Event-Typen leben in `@diriz/shared` — UI und Core können nie auseinanderdriften. Was die Explainability-Ansicht zeigt, ist exakt das, was der Engine berechnet hat.
+
+## 🛠️ Befehle
+
+| Befehl | Wirkung |
+|--------|---------|
+| `npm run dev` | Core + Web parallel (tsx watch + Vite HMR) |
+| `npm run check` | **Lint + Typecheck + Tests** — der tägliche Qualitäts-Gate |
+| `npm test` | Vitest: shared + core (64 Tests) |
+| `npx playwright test` | E2E-Smoke gegen laufende Dev-Server |
+| `npm run build` / `npm start` | Produktions-Build bzw. Core starten |
+
+## 📚 Dokumentation
+
+- [**STATUS.md**](docs/STATUS.md) — aktueller Stand, abgeschlossene Meilensteine, offene Phase-2-Items
+- [**01-plan.md**](docs/01-plan.md) — vollständiger Architekturplan: Routing-Achsen, Policies, Datenmodell, Roadmap M0–M8
+
+## 📄 Lizenz
+
+Privates Projekt. Alle Rechte vorbehalten.

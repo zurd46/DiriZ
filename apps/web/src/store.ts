@@ -10,6 +10,7 @@ import type {
 	LogEvent,
 	Provider,
 	RoutingDecision,
+	ScoringWeights,
 	Swarm,
 	Task,
 } from "@diriz/shared"
@@ -62,6 +63,8 @@ export interface MetricsView {
 	tokensIn24h: number
 	tokensOut24h: number
 	costUsd24h: number
+	vramTotal?: number
+	vramUsed?: number
 	schemaVersion: number
 }
 
@@ -74,6 +77,7 @@ interface State {
 	logs: LogLine[]
 	metrics: MetricsView | null
 	timeseries: { bucket: string; requests: number; tokens: number; costUsd: number; errors: number }[]
+	settings: { routingWeights: ScoringWeights } | null
 	live: Record<string, LiveRun>
 	taskDetails: Record<string, TaskDetail>
 	lastError?: string
@@ -86,6 +90,8 @@ interface State {
 	refreshTasks(): Promise<void>
 	refreshLogs(): Promise<void>
 	refreshMetrics(): Promise<void>
+	refreshSettings(): Promise<void>
+	saveSettings(weights: ScoringWeights): Promise<boolean>
 	loadTaskDetail(taskId: string): Promise<void>
 	handleStreamEvent(event: StreamEvent): void
 }
@@ -101,6 +107,7 @@ export const useStore = create<State>((set, get) => ({
 	logs: [],
 	metrics: null,
 	timeseries: [],
+	settings: null,
 	live: {},
 	taskDetails: {},
 	lastError: undefined,
@@ -162,6 +169,26 @@ export const useStore = create<State>((set, get) => ({
 			set({ metrics, timeseries })
 		} catch (e) {
 			set({ lastError: e instanceof Error ? e.message : String(e) })
+		}
+	},
+
+	refreshSettings: async () => {
+		try {
+			const settings = await api.get<State["settings"]>("/api/settings")
+			set({ settings })
+		} catch (e) {
+			set({ lastError: e instanceof Error ? e.message : String(e) })
+		}
+	},
+
+	saveSettings: async (weights) => {
+		try {
+			const saved = await api.put<State["settings"]>("/api/settings", { routingWeights: weights })
+			set({ settings: saved, lastError: undefined })
+			return true
+		} catch (e) {
+			set({ lastError: e instanceof Error ? e.message : String(e) })
+			return false
 		}
 	},
 

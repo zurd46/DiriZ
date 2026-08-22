@@ -23,7 +23,7 @@ export default function Tasks() {
 
 	const [selected, setSelected] = useState<string | undefined>(undefined)
 	const [showForm, setShowForm] = useState(false)
-\tconst [showQueue, setShowQueue] = useState(false)
+	const [showQueue, setShowQueue] = useState(false)
 	const queueCount = tasks.filter((t) => t.status === "queued").length
 	const activeCount = tasks.filter((t) => t.status === "running").length
 	const [title, setTitle] = useState("")
@@ -156,17 +156,48 @@ export default function Tasks() {
 			<div className="row between">
 				<h1>Tasks</h1>
 				<button type="button" className="btn primary" onClick={() => setShowForm((v) => !v)}>
+					+ Neue Task
+				</button>
+			</div>
 
-			<div className="row between"
-				style={{ marginBottom: 8, gap: 4 }}>
+			<div className="row between" style={{ marginBottom: 8, gap: 4 }}>
 				<button type="button" className="btn secondary small" onClick={() => setShowQueue((v) => !v)}>
 					Queue ({queueCount})
 				</button>
 				<span className="muted">{activeCount} aktiv</span>
 			</div>
-					+ Neue Task
-				</button>
-			</div>
+
+			{showQueue && (
+				<div className="card">
+					<strong>Warteschlange</strong>
+					{tasks.filter((t) => t.status === "queued").length === 0 ? (
+						<p className="muted" style={{ marginTop: 8 }}>
+							Keine Tasks in der Warteschlange.
+						</p>
+					) : (
+						<table className="table" style={{ marginTop: 8 }}>
+							<thead>
+								<tr>
+									<th>Titel</th>
+									<th>Status</th>
+									<th>Erstellt</th>
+								</tr>
+							</thead>
+							<tbody>
+								{tasks
+									.filter((t) => t.status === "queued")
+									.map((t) => (
+										<tr key={t.id} onClick={() => setSelected(t.id)} style={{ cursor: "pointer" }}>
+											<td>{t.title || t.prompt.slice(0, 48)}</td>
+											<td>{t.status}</td>
+											<td className="muted">{new Date(t.createdAt).toLocaleTimeString()}</td>
+										</tr>
+									))}
+							</tbody>
+						</table>
+					)}
+				</div>
+			)}
 
 			{showForm && (
 				<div className="card">
@@ -496,6 +527,9 @@ export default function Tasks() {
 										<td>{e.tpsAvg ?? "–"}</td>
 										<td>{e.costUsd !== undefined ? `${e.costUsd.toFixed(4)} $` : "–"}</td>
 										<td className="muted">{e.error ?? ""}</td>
+										<td>
+											<StarRating executionId={e.id} value={e.rating} disabled={e.status === "running"} />
+										</td>
 									</tr>
 								))}
 							</tbody>
@@ -618,5 +652,51 @@ function DecisionView({ decision }: { decision: RoutingDecision }) {
 					` · Pflicht: ${decision.profile.requiredCapabilities.join(", ")}`}
 			</div>
 		</div>
+	)
+}
+
+/** Sterne-Bewertung (M7): 1–5, persistiert via Core → Qualitäts-Prior. */
+function StarRating({
+	executionId,
+	value,
+	disabled,
+}: {
+	executionId: string
+	value?: number
+	disabled?: boolean
+}) {
+	const [hover, setHover] = useState(0)
+	const [savedVal, setSavedVal] = useState(value ?? 0)
+
+	useEffect(() => {
+		setSavedVal(value ?? 0)
+	}, [value])
+
+	const rate = async (n: number) => {
+		try {
+			await api.post(`/api/executions/${executionId}/rating`, { rating: n })
+			setSavedVal(n)
+		} catch {
+			/* Fehler erscheint im Store */
+		}
+	}
+
+	return (
+		<span className="stars">
+			{[1, 2, 3, 4, 5].map((n) => (
+				<button
+					key={n}
+					type="button"
+					className={`star-btn ${n <= Math.max(hover, savedVal) ? "filled" : ""}`}
+					disabled={disabled}
+					onClick={() => void rate(n)}
+					onMouseEnter={() => setHover(n)}
+					onMouseLeave={() => setHover(0)}
+					aria-label={`${n} Sterne`}
+				>
+					★
+				</button>
+			))}
+		</span>
 	)
 }

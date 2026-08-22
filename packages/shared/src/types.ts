@@ -57,6 +57,7 @@ export interface InstanceModel {
 	/** Modell-spezifische Overrides — schlagen die Provider-Defaults. */
 	modelSettings?: ModelSettings | null
 	lastSeenAt: string
+	lockedUntil?: string | null
 }
 
 /** Ein angebundener LLM-Server (Ollama, LM Studio, OpenRouter, …). */

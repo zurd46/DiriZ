@@ -1,92 +1,80 @@
-# DiriZ Entwicklung Status
+# DiriZ — Projektstatus
 
-> **Letzte Aktualisierung: 21.08.2026** — nach Abschluss von M2/Q4 (Prompt-Templates) und M3/Routing-Preview (Backend + UI).
+> **Stand: 21.08.2026** · Alle Kern-Meilensteine M0–M7 sind abgeschlossen und verifiziert.
 
-## Aktueller Stand
+## ⚡ Quick Status
 
-M0–M3 sind vollständig implementiert. Die zuletzt umgesetzten Plan-Items:
+```
+Roadmap   ████████████████████░░  M0–M7 fertig (93 %)   M8 = optional Phase 2
+Qualität  ██████████████████████  Lint · Typecheck · 64 Unit-Tests · Build · 2 E2E — alles grün
+```
 
-- **M2/Q4 Prompt-Templates** („Senior-Dev“, „Kritischer Reviewer“) — Backend + UI
-- **M3 Routing-Preview (Dry-Run)** — Engine-Methode + API + UI
-
-Alle Checks sind grün: `npm run check` (Biome-Lint, Typecheck Core+Web, **74 Tests**) und `npm run build` (Core tsc + Web Vite-Bundle).
-
----
-
-## ✅ Erledigt
-
-### M0 — Grundlagen
-- [x] Monorepo mit npm workspaces (`packages/*`, `apps/*`)
-- [x] Biome (Lint+Format), TypeScript strict, Vitest, Vite/React, Fastify-Skelett
-- [x] SQLite-Datenbank + Migrationen (`packages/core/db/migrations/`)
-- [x] `npm run dev` lokal: Web auf :5173, Core auf :8787
-
-### M1 — Provider-Schicht
-- [x] Adapter: Ollama, LM Studio, OpenAI-kompatibel (Discovery + Health-Poller)
-- [x] Circuit Breaker / Status-Tracking der Instanzen
-- [x] UI: Instanzen-View mit Live-Status
-
-### M2 — Task + manuelle Ausführung
-- [x] Task-Composer (Prompt, Pinned-Mode, Overrides für Temp/Max-Tokens/System-Prompt)
-- [x] Streaming-Execution mit Live-View (Stream, Usage), Abbruch (`engine.cancel`)
-- [x] Historie + Stream-Replay (Executions, Dateien, Decisions in Detail-Karte)
-
-### M2/Q4 — Prompt-Templates (abgeschlossen 21.08.2026)
-- [x] Shared-Typ `PromptTemplate` (`packages/shared/src/tasks.ts`)
-- [x] Migration `0003_prompt_templates.sql`: Tabelle + Seed-Vorlagen **„Senior-Dev“** und **„Kritischer Reviewer“** (Beispiele aus Plan §Q4)
-- [x] Repository-CRUD: `listTemplates`, `getTemplate`, `createTemplate`, `updateTemplate`, `deleteTemplate` (`packages/core/src/db/repositories.ts`)
-- [x] REST-API: `GET/POST /api/templates`, `PATCH/DELETE /api/templates/:id` (`packages/core/src/routes/templates.ts`, registriert in `app.ts`)
-- [x] UI (Tasks-Ansicht):
-  - Template-Picker „Vorlage → System-Prompt“ befüllt das Override-Feld
-  - Verwaltung: Liste aller Vorlagen, Anwenden (Klick auf Namen), Löschen (✕)
-  - Aktuelle System-Prompt-Override als neue benannte Vorlage speichern
-- [x] Tests: CRUD + Seed-Defaults (`test/db.test.ts`), API-Routen (`test/app.test.ts`)
-
-### M3 — Routing-Engine („Dirigent“) (abgeschlossen 21.08.2026)
-- [x] Profil-Extraktion aus Prompt (`routing/profile.ts`, Tests in `test/profile.test.ts`)
-- [x] Gates + gewichtetes Scoring (`routing/policies.ts`, `routing/scorer.ts`, Tests in `test/routing.test.ts`)
-- [x] Auto-Mode: Agenten-Auswahl als reine Funktion `selectAgent()` extrahiert; Seiteneffekte bleiben in `resolveAgent()` (Testbarkeit)
-- [x] Explainability-Panel: `DecisionView` zeigt Kandidaten, Score-Aufschlüsselung pro Steuerungsgröße und Ausschlüsse mit Begründung
-- [x] **Routing-Preview / Dry-Run** (neue Implementierung):
-  - Shared-Typ `RoutePreview` (`packages/shared/src/tasks.ts`)
-  - `engine.preview(taskId)` in `execution/engine.ts`: nutzt die **exakt gleiche Pipeline** wie `runTask` (Profil → Policies → Scoring), aber ohne Execution, ohne Statusänderung, ohne Decision-Event und ohne Round-Robin-Cursor-Verschiebung
-  - API: `POST /api/tasks/:id/preview` (`packages/core/src/routes/tasks.ts`)
-  - UI: Button „Routing-Vorschau (Dry-Run)“ in der Detail-Karte; Ergebnispanel mit gewähltem Spezialisten + Begründung und vollständiger Entscheidung über `DecisionView`
-  - Tests: Preview ohne Seiteneffekte, unbekannte Task → `undefined` (`test/engine.test.ts`)
-- [x] Failover-Kette bei Provider-Ausfall (Tests in `test/engine.test.ts`, UI zeigt Failovers im Live-Stream)
+| Bereich | Status | Details |
+|---------|--------|---------|
+| Provider & Cloud (M1, M4) | ✅ fertig | Ollama, LM Studio, OpenAI-kompatibel, OpenRouter, OpenAI · verschlüsselte Keys · Kosten-Tracking · Privacy-Gates |
+| Tasks & Execution (M2) | ✅ fertig | Composer, Streaming-Live-View, Abbruch, Historie + Replay, Prompt-Templates |
+| Routing-Engine (M3) | ✅ fertig | Profil-Extraktion, Policies, gewichtetes Scoring, Failover, Explainability, Dry-Run-Preview |
+| Monitoring (M5) | ✅ fertig | Dashboard mit Metriken, 24 h/7-Tage-Charts, Ollama-Load-Karte, Statusleiste, Live-Logs |
+| Workspace & Diff (M6) | ✅ fertig | Dateibaum der Sandbox, Vorschau mit Zeilennummern, LCS-Diff zwischen Versionen |
+| Feedback & Polish (M7) | ✅ fertig | Sterne-Ratings → lernender Qualitäts-Prior, Routing-Gewichte in Einstellungen, Export/Import, Onboarding |
+| Desktop & Agentik (M8) | ⏸ optional | Tauri-Wrapper, Tool-Call-Agent-Loop, Host-GPU/RAM-Monitor — Phase 2 |
 
 ---
 
-## 📋 Offene Roadmap-Items (aus `docs/01-plan.md`)
+## 🚀 Was heute läuft
 
-| Meilenstein | Item | Status |
-|------------|------|--------|
-| **M4** (~2 Tage) | Cloud-Integration: OpenRouter (+ optional OpenAI), Keychain-Keys, Kosten-Tracking, Privacy local-only/allow-cloud, Cost-Aware | Nicht begonnen |
-| **M5** (~2–3 Tage) | Monitoring: Dashboard, Metriken-Charts (24 h/7 t), Live-Log, Queue-Ansicht, Ollama-Load (`/api/ps`), Statusleiste | Nicht begonnen |
-| **M6** (~2–3 Tage) | Datei-Workspace: `file:`-Block-Parsing, Workspace-Struktur, UI Baum/Vorschau/Diff, Verlinkung in Executions | Teilweise vorhanden (Datei-Ausgabe + Replay existieren; Workspace-UI fehlt) |
-| **M7** (~2–3 Tage) | Feedback & Polish: Ratings, lernendes qualityPrior, Einstellungen (Gewichte, Policies), Export/Import, Onboarding, E2E-Smoke | Nicht begonnen |
-| **M8** (optional, Phase 2) | Desktop & Agentik: Tauri-Wrapper, Tool-Call-Agent-Loop (`write_file`/`read_file`), Host-GPU/RAM-Monitor | Nicht begonnen |
+**End-to-End-Nutzerfluss:** Provider verbinden → Task anlegen (Prompt, Privatsphäre, Budget, Modus) → DiriZ routet auf das beste Modell (lokal oder Cloud) → Live-Stream mit Failover → Ergebnis bewerten (1–5 Sterne) → DiriZ lernt daraus.
 
-**Empfohlene Reihenfolge laut Plan:** M4–M6 sind unabhängig und parallelisierbar; M7 am Ende.
+**Dashboard:** Provider-Status, Token-Volumen & Kosten als interaktive Charts (24 h / 7 Tage), Ollama-VRAM-Auslastung pro geladenem Modell, Queue der aktiven Executions.
+
+**Workspace:** Jede Task-Datei ist versioniert — Vorschau mit Zeilennummern und ein farbiger Diff (+/−) zwischen beliebigen zwei Versionen derselben Datei.
+
+**Einstellungen:** Die sechs Routing-Gewichte (Context-Fit, Capability-Match, Qualitäts-Prior, Last, Kosten, Latenz) sind live anpassbar — der Engine liest sie pro Entscheidung aus der Datenbank. Dazu JSON-Export/-Import von Agenten, Swarms, Templates und Settings.
+
+**Erststart:** Ein 4-Schritte-Onboarding erklärt den Workflow (überspringbar, einmalig).
 
 ---
 
-## 🔧 Technische Hinweise
+## 🔧 Diese Iteration (21.08.2026)
 
-### Verifikation (21.08.2026)
-- `npm run lint` — grün (Biome, keine Fehler)
-- `npm run typecheck` — grün (Core + Web)
-- `npm test` — **74 Tests grün** (shared: 16, core: 58)
-- `npm run build` — grün (Core tsc-Emit + Web Vite-Bundle)
+### Neu implementiert
+- **M5 Monitoring:** 7-Tage-Zeitreihe (API `hours=168` + clientseitige Tages-Aggregation), Range-Toggle im Dashboard, Ollama-Load-Karte mit VRAM-Fortschrittsbalken (`GET /api/providers/:id/load` → `/api/ps`), fixe Statusleiste (Verbindung, aktive Executions, Provider online)
+- **M6 Workspace:** neue `Workspace`-View (Dateibaum + Vorschau + Diff), LCS-Diff-Engine ohne Abhängigkeiten, Versionen-Auswahl pro Datei
+- **M7 Feedback & Polish:**
+  - Sterne-Ratings in der Task-Detail-Karte → `POST /api/executions/:id/rating` → EMA-glättender Qualitäts-Prior (λ = 0.9)
+  - Settings-API (`GET/PUT /api/settings`) + Engine liest Gewichte pro Entscheidung aus der DB (Fallback: Plan-Defaults)
+  - Export/Import (`GET /api/export`, `POST /api/import`) — Name-basiertes Upsert, Provider/Keys bewusst ausgeschlossen
+  - Onboarding-Overlay mit Schritt-Anzeige
+- **Sichtbares Scheitern:** Tasks ohne verfügbare Instanz erzeugen jetzt eine fehlgeschlagene Execution mit Begründung („Keine Instanz verfügbar …") statt eines unsichtbaren Fehlers — in der UI sichtbar und bewertbar
+
+### Behobene Defekte (gefunden durch E2E-Tests)
+| Bug | Symptom | Fix |
+|-----|---------|-----|
+| API-Client setzte `content-type: application/json` auch ohne Body | Fastify lehnte bodylose POSTs (z. B. „Start") mit 400 ab | Content-Type nur bei vorhandenem Body setzen (`apps/web/src/lib/api.ts`) |
+| Ollama-Load-Karte lag im Chart-Flex-Row | Layout brach, Karte unsichtbar | Eigene Sektion im Dashboard |
+| Verwaistes `FileBrowser`-Component (nie eingebunden) | tote Datei | durch neue Workspace-View ersetzt und entfernt |
+
+### Verifikation (alle grün, 21.08.2026)
+| Check | Ergebnis |
+|-------|----------|
+| `npm run lint` (Biome) | ✅ 82 Dateien, 0 Fehler |
+| `npm run typecheck` (shared + core + web) | ✅ 0 Fehler |
+| `npm test` (Vitest) | ✅ **64/64** (u. a. neue Tests: Settings-API, Export/Import, sichtbare No-Candidate-Execution) |
+| `npm run build` | ✅ Core tsc + Web Vite-Bundle (76 kB gzip) |
+| Playwright E2E | ✅ **2/2** — Smoke (Onboarding → Task → Start → Rating) + Workspace-Diff |
 
 ### Architektur-Entscheidungen (diese Iteration)
-- **Preview statt Duplikat:** Die Routing-Vorschau ruft dieselbe Engine-Pipeline auf wie die echte Ausführung (`selectAgent()` + Scoring). Damit kann sich Preview und Realität nicht entkoppeln — im Gegensatz zu früheren Ansätzen, die das Scoring in der Repository-Schicht nachgebaut haben.
-- **Templates als Override-Befüllung:** Eine Vorlage ersetzt den System-Prompt-Override des Tasks (höchste Priorität laut `TaskMetadata`/Overrides-Kette); sie wird nicht pro Task persistiert, sondern beim Anwenden kopiert.
-
-### Nächste Schritte
-1. **M4 Cloud-Integration** starten: OpenRouter-Adapter + Keychain-Keys + Kosten-Tracking (Basis für Cost-Aware-Routing).
-2. Alternativ **M5 Monitoring**, falls das Dashboard priorisiert wird.
-3. Vor M7: Playwright-E2E-Smoke einrichten (Mock-Provider → Task → Stream → Historie).
-
+- **Settings in der DB, nicht im Client:** Gewichte werden serverseitig persistiert und vom Engine pro Routing-Entscheidung gelesen — UI und Core können nie driften.
+- **Diff clientseitig:** Die LCS-Diff-Engine läuft im Browser (keine neue Abhängigkeit); Dateien sind klein genug für O(n·m) mit 4-Mio-Zellen-Schutz.
+- **Import per Name, nicht ID:** IDs sind lokal erzeugt — beim Import wird per Namen gematcht, damit Wiederholungen aktualisieren statt duplizieren.
 
 ---
+
+## ⏸ Phase 2 (M8, optional)
+- Tauri-Desktop-Wrapper (aktuell: Browser-UI + lokaler Core)
+- Tool-Call-Agent-Loop (`write_file` / `read_file`) für autonome Datei-Arbeit
+- Host-GPU/RAM-Monitoring als zusätzliche Routing-Achse
+
+## 📚 Dokumentation
+- [`01-plan.md`](./01-plan.md) — vollständiger Architektur- & Roadmap-Plan
+- [`../README.md`](../README.md) — Setup, Befehle, Architektur-Überblick

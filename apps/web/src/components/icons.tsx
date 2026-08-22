@@ -17,7 +17,12 @@ export interface IconProps extends Omit<SVGProps<SVGSVGElement>, "width" | "heig
 	size?: number
 }
 
-function Svg({ size = 16, children, strokeWidth = 1.75, ...rest }: IconProps & { children: React.ReactNode }) {
+function Svg({
+	size = 16,
+	children,
+	strokeWidth = 1.75,
+	...rest
+}: IconProps & { children: React.ReactNode }) {
 	return (
 		<svg
 			className="icon"

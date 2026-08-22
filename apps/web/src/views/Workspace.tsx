@@ -3,7 +3,15 @@
  * Alle Pfade stammen aus der DB — kein Freiform-Nutzerinput.
  */
 
-import { useCallback, useEffect, useState } from "react"
+import { type CSSProperties, useCallback, useEffect, useState } from "react"
+import {
+	IconAlert,
+	IconArrowRight,
+	IconDiff,
+	IconEye,
+	IconFile,
+	IconWorkspace,
+} from "../components/icons.js"
 import { api } from "../lib/api.js"
 
 interface WsFile {
@@ -154,78 +162,116 @@ export default function Workspace() {
 	const removed = diff?.filter((d) => d.type === "del").length ?? 0
 
 	return (
-		<div>
-			<h1>Workspace</h1>
-			{error && <div className="error-banner">{error}</div>}
-			<p className="muted">Dateien aus Task-Executions — Vorschau und Diff zwischen Versionen.</p>
+		<div className="fade-in">
+			<div className="page-head">
+				<div>
+					<h1>Workspace</h1>
+					<p className="page-sub">
+						Dateien aus Task-Executions — Vorschau und Zeilen-Diff zwischen zwei Versionen.
+					</p>
+				</div>
+				{files.length > 0 && (
+					<span className="pill no-dot">
+						{files.length} {files.length === 1 ? "Datei" : "Dateien"}
+					</span>
+				)}
+			</div>
 
-			<div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 320px) 1fr", gap: 16 }}>
-				<div className="card" style={{ maxHeight: "72vh", overflow: "auto" }}>
-					<strong>Dateien</strong>
-					{files.length === 0 && (
-						<p className="muted" style={{ margin: "8px 0 0" }}>
-							Noch keine Dateien — führe eine Task aus.
-						</p>
+			{error && (
+				<div className="banner error" role="alert">
+					<IconAlert size={17} />
+					<span className="banner-text">{error}</span>
+				</div>
+			)}
+
+			<div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 300px) minmax(0, 1fr)", gap: 16 }}>
+				<div className="card" style={{ maxHeight: "72vh", overflow: "auto", marginBottom: 0 }}>
+					<div className="card-title">
+						<IconWorkspace size={16} />
+						Dateien
+					</div>
+					{files.length === 0 ? (
+						<div className="empty">
+							<span className="icon-chip lg" style={{ "--mc": "var(--muted)" } as CSSProperties}>
+								<IconFile size={20} />
+							</span>
+							<p>Noch keine Dateien — führe eine Task im Agentik-Modus aus.</p>
+						</div>
+					) : (
+						<ul className="file-list">
+							{files.map((f) => (
+								<li key={f.relPath}>
+									<button
+										type="button"
+										className={`file-btn ${selected === f.relPath ? "active" : ""}`}
+										onClick={() => setSelected(f.relPath)}
+										title={f.relPath}
+									>
+										<IconFile size={14} />
+										<span className="file-name">{f.relPath}</span>
+										<span className="faint text-xs">{formatBytes(f.size)}</span>
+									</button>
+								</li>
+							))}
+						</ul>
 					)}
-					<ul style={{ listStyle: "none", padding: 0, margin: "10px 0 0" }}>
-						{files.map((f) => (
-							<li key={f.relPath}>
-								<button
-									type="button"
-									className={`nav-btn ${selected === f.relPath ? "active" : ""}`}
-									style={{ width: "100%", textAlign: "left", marginBottom: 2 }}
-									onClick={() => setSelected(f.relPath)}
-								>
-									<span className="mono">{f.relPath}</span>{" "}
-									<span className="muted">({formatBytes(f.size)})</span>
-								</button>
-							</li>
-						))}
-					</ul>
 				</div>
 
-				<div className="card" style={{ maxHeight: "72vh", overflow: "auto" }}>
-					{!selected && <p className="muted">Datei links auswählen.</p>}
+				<div className="card" style={{ maxHeight: "72vh", overflow: "auto", marginBottom: 0 }}>
+					{!selected && (
+						<div className="empty">
+							<span className="icon-chip lg" style={{ "--mc": "var(--accent)" } as CSSProperties}>
+								<IconEye size={20} />
+							</span>
+							<span className="empty-title">Keine Datei gewählt</span>
+							<p>Wähle links eine Datei, um Inhalt und Änderungsverlauf zu sehen.</p>
+						</div>
+					)}
 					{selected && (
 						<>
-							<div className="row between" style={{ alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+							<div className="card-head">
 								<span className="mono" style={{ fontSize: 13, wordBreak: "break-all" }}>
 									{selected}
 								</span>
-								<div className="row" style={{ gap: 4 }}>
+								<div className="seg">
 									<button
 										type="button"
-										className={`btn ${tab === "preview" ? "primary" : ""}`}
+										className={tab === "preview" ? "active" : ""}
 										onClick={() => setTab("preview")}
 									>
+										<IconEye size={13} />
 										Vorschau
 									</button>
 									<button
 										type="button"
-										className={`btn ${tab === "diff" ? "primary" : ""}`}
+										className={tab === "diff" ? "active" : ""}
 										disabled={versions.length < 2}
+										title={versions.length < 2 ? "Mindestens zwei Versionen nötig" : undefined}
 										onClick={() => setTab("diff")}
 									>
-										Diff {versions.length > 1 && `(${versions.length})`}
+										<IconDiff size={13} />
+										Diff {versions.length > 1 ? `(${versions.length})` : ""}
 									</button>
 								</div>
 							</div>
 
 							{tab === "preview" && (
-								<div style={{ marginTop: 12 }}>
-									<select
-										className="input"
-										value={previewId}
-										onChange={(e) => setPreviewId(e.target.value)}
-										aria-label="Version"
-									>
-										{versions.map((v) => (
-											<option key={v.executionId} value={v.executionId}>
-												{versionLabel(v)}
-											</option>
-										))}
-									</select>
-									<pre className="code" style={{ marginTop: 10, maxHeight: "52vh", overflow: "auto" }}>
+								<div style={{ marginTop: 14 }}>
+									<label className="field" style={{ maxWidth: 320 }}>
+										Version
+										<select
+											value={previewId}
+											onChange={(e) => setPreviewId(e.target.value)}
+											aria-label="Version"
+										>
+											{versions.map((v) => (
+												<option key={v.executionId} value={v.executionId}>
+													{versionLabel(v)}
+												</option>
+											))}
+										</select>
+									</label>
+									<pre className="code" style={{ marginTop: 12, maxHeight: "52vh", overflow: "auto" }}>
 										{(previewContent ?? "").split("\n").map((line, i) => (
 											// biome-ignore lint/suspicious/noArrayIndexKey: statische Zeilenliste ohne Reorder — Index ist stabil.
 											<div key={i} className="diff-line diff-ctx">
@@ -238,67 +284,59 @@ export default function Workspace() {
 							)}
 
 							{tab === "diff" && (
-								<div style={{ marginTop: 12 }}>
-									<div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-										<span className="muted">Von:</span>
-										<select
-											className="input"
-											value={diffA}
-											onChange={(e) => setDiffA(e.target.value)}
-											aria-label="Version A"
-										>
-											{versions.map((v) => (
-												<option key={v.executionId} value={v.executionId}>
-													{versionLabel(v)}
-												</option>
-											))}
-										</select>
-										<span className="muted">→ Nach:</span>
-										<select
-											className="input"
-											value={diffB}
-											onChange={(e) => setDiffB(e.target.value)}
-											aria-label="Version B"
-										>
-											{versions.map((v) => (
-												<option key={v.executionId} value={v.executionId}>
-													{versionLabel(v)}
-												</option>
-											))}
-										</select>
+								<div style={{ marginTop: 14 }}>
+									<div className="row" style={{ alignItems: "flex-end" }}>
+										<label className="field">
+											Von
+											<select value={diffA} onChange={(e) => setDiffA(e.target.value)} aria-label="Version A">
+												{versions.map((v) => (
+													<option key={v.executionId} value={v.executionId}>
+														{versionLabel(v)}
+													</option>
+												))}
+											</select>
+										</label>
+										<span className="faint" style={{ paddingBottom: 8 }}>
+											<IconArrowRight size={16} />
+										</span>
+										<label className="field">
+											Nach
+											<select value={diffB} onChange={(e) => setDiffB(e.target.value)} aria-label="Version B">
+												{versions.map((v) => (
+													<option key={v.executionId} value={v.executionId}>
+														{versionLabel(v)}
+													</option>
+												))}
+											</select>
+										</label>
+										{diff !== null && (
+											<span className="row tight text-sm" style={{ paddingBottom: 8 }}>
+												<span className="text-ok">+{added}</span>
+												<span className="text-err">−{removed}</span>
+												<span className="faint">Zeilen</span>
+											</span>
+										)}
 									</div>
 									{diffA === diffB && (
-										<p className="muted" style={{ marginTop: 10 }}>
+										<p className="hint" style={{ marginTop: 12 }}>
+											<IconAlert size={14} />
 											Zwei verschiedene Versionen wählen, um den Diff zu sehen.
 										</p>
 									)}
 									{diff !== null && (
-										<>
-											<p style={{ margin: "10px 0 6px", fontSize: 12 }}>
-												<span style={{ color: "var(--ok)" }}>+{added} Zeilen</span> ·{" "}
-												<span style={{ color: "var(--err)" }}>−{removed} Zeilen</span>
-											</p>
-											<div
-												style={{
-													maxHeight: "52vh",
-													overflow: "auto",
-													border: "1px solid var(--border)",
-													borderRadius: 8,
-												}}
-											>
-												{diff.map((d) => (
-													<div
-														key={`${d.type}-${d.lnA ?? d.lnB}`}
-														className={`diff-line diff-${d.type === "add" ? "add" : d.type === "del" ? "del" : "ctx"}`}
-													>
-														<span className="ln">{d.lnA ?? ""}</span>
-														<span>
-															{(d.type === "add" ? "+" : d.type === "del" ? "-" : " ") + d.text || " "}
-														</span>
-													</div>
-												))}
-											</div>
-										</>
+										<div className="diff-box" style={{ marginTop: 12 }}>
+											{diff.map((d) => (
+												<div
+													key={`${d.type}-${d.lnA ?? d.lnB}`}
+													className={`diff-line diff-${d.type === "add" ? "add" : d.type === "del" ? "del" : "ctx"}`}
+												>
+													<span className="ln">{d.lnA ?? ""}</span>
+													<span>
+														{(d.type === "add" ? "+" : d.type === "del" ? "-" : " ") + d.text || " "}
+													</span>
+												</div>
+											))}
+										</div>
 									)}
 								</div>
 							)}

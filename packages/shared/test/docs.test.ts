@@ -7,9 +7,13 @@ import { describe, expect, it } from "vitest"
 import {
 	AGENT_DOC_FILES,
 	appendChangelogEntry,
+	composeSystemPrompt,
 	defaultAgentDoc,
+	defaultDoc,
+	extractDirective,
 	isAgentDocKind,
 	parseInitDoc,
+	renderDocTemplate,
 	renderInitDoc,
 } from "../src/docs.js"
 
@@ -100,5 +104,107 @@ describe("Dokument-Typen", () => {
 		expect(AGENT_DOC_FILES).toEqual({ plan: "plan.md", changelog: "changelog.md", init: "init.md" })
 		expect(isAgentDocKind("init")).toBe(true)
 		expect(isAgentDocKind("readme")).toBe(false)
+	})
+})
+
+describe("extractDirective", () => {
+	it("liefert nichts für eine unbearbeitete Vorlage", () => {
+		expect(extractDirective(defaultDoc("plan", "agent", "Code-Dev", "2026-08-23"))).toBeUndefined()
+		expect(extractDirective(defaultDoc("plan", "instance", "qwen3:8b", "2026-08-23"))).toBeUndefined()
+		expect(extractDirective("")).toBeUndefined()
+	})
+
+	it("entfernt Titel, Datum und Platzhalter, behält den echten Inhalt", () => {
+		const md = [
+			"# plan.md — Code-Dev",
+			"",
+			"**Erstellt am:** 2026-08-23",
+			"",
+			"## 1. Auftrag",
+			"",
+			"Du reviewst TypeScript-Diffs.",
+			"",
+			"## 2. Vorgehen",
+			"",
+			"- Schritt 1",
+			"- Schritt 2",
+			"",
+			"## 3. Leitplanken",
+			"",
+			"- Niemals Dateien löschen.",
+		].join("\n")
+		const directive = extractDirective(md)
+		expect(directive).toContain("Du reviewst TypeScript-Diffs.")
+		expect(directive).toContain("Niemals Dateien löschen.")
+		// Titel/Datum und die reine Platzhalter-Sektion fallen weg.
+		expect(directive).not.toContain("plan.md — Code-Dev")
+		expect(directive).not.toContain("Erstellt am")
+		expect(directive).not.toContain("Schritt 1")
+		expect(directive).not.toContain("2. Vorgehen")
+		// Überschriften mit Inhalt bleiben stehen.
+		expect(directive).toContain("## 1. Auftrag")
+	})
+})
+
+describe("composeSystemPrompt", () => {
+	it("ohne Deklaration bleibt es beim reinen System-Prompt", () => {
+		expect(composeSystemPrompt([{ label: "Agent", systemPrompt: "Du bist knapp." }])).toBe("Du bist knapp.")
+		expect(composeSystemPrompt([{ label: "Agent" }])).toBe("")
+	})
+
+	it("der zuletzt gesetzte System-Prompt gewinnt", () => {
+		const out = composeSystemPrompt([
+			{ label: "Rechner", systemPrompt: "Provider-Rolle" },
+			{ label: "Modell", systemPrompt: "Modell-Rolle" },
+			{ label: "Task" },
+		])
+		expect(out).toBe("Modell-Rolle")
+	})
+
+	it("hängt jede ausgefüllte plan.md als verbindliche Anweisung an", () => {
+		const out = composeSystemPrompt([
+			{ label: "Modell qwen3", plan: "## Leitplanken\n\n- Antworte auf Deutsch." },
+			{ label: "Spezialist Code-Dev", plan: "## Auftrag\n\nDu reviewst Diffs.", systemPrompt: "Rolle" },
+		])
+		expect(out.startsWith("Rolle")).toBe(true)
+		expect(out).toContain("Verbindliche Arbeitsanweisung")
+		// Reihenfolge: allgemein (Modell) vor spezifisch (Spezialist).
+		expect(out.indexOf("Modell qwen3")).toBeLessThan(out.indexOf("Spezialist Code-Dev"))
+		expect(out).toContain("Antworte auf Deutsch.")
+		expect(out).toContain("Du reviewst Diffs.")
+	})
+
+	it("unausgefüllte Vorlagen erzeugen keinen Anweisungs-Block", () => {
+		const out = composeSystemPrompt([
+			{ label: "Spezialist X", plan: defaultDoc("plan", "agent", "X", "2026-08-23"), systemPrompt: "Rolle" },
+		])
+		expect(out).toBe("Rolle")
+	})
+})
+
+describe("Dokument-Vorlagen", () => {
+	it("füllt {{name}}, {{datum}} und {{datei}}", () => {
+		const out = renderDocTemplate(
+			"{{datei}} für {{name}} am {{datum}}",
+			"Code-Dev",
+			"2026-08-23T10:00:00Z",
+			"plan",
+		)
+		expect(out).toBe("plan.md für Code-Dev am 2026-08-23")
+	})
+
+	it("eine eingestellte Vorlage schlägt die eingebaute", () => {
+		const custom = defaultDoc("plan", "agent", "Code-Dev", "2026-08-23", {
+			agent: { plan: "# {{name}}\n\nImmer testen." },
+		})
+		expect(custom).toBe("# Code-Dev\n\nImmer testen.")
+		// Andere Besitzer-Art bleibt bei der eingebauten Vorlage.
+		expect(defaultDoc("plan", "instance", "qwen3", "2026-08-23", { agent: { plan: "x" } })).toContain(
+			"## 1. Auftrag",
+		)
+	})
+
+	it("defaultAgentDoc bleibt der Kurzweg für Spezialisten", () => {
+		expect(defaultAgentDoc("changelog", "Code-Dev", "2026-08-23")).toContain("Spezialist angelegt")
 	})
 })

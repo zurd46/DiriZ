@@ -3,21 +3,27 @@
  * Fähigkeiten, Privacy, Rechner-/Modell-Pin, Model-Voreinstellungen) sowie
  * ihre Dokumente pflegen — `plan.md`, `changelog.md` und `init.md`.
  *
- * `init.md` ist dabei wirksam: Daraus liest der Core die Model-Voreinstellungen
- * (Provider ← Modell ← **Agent** ← Task). Die Zuordnung pro Prompt übernimmt
- * die Engine — hier wird nur verwaltet.
+ * Beide Dokumente wirken: aus `init.md` liest der Core die Model-Voreinstellungen
+ * (Provider ← Modell ← **Agent** ← Task), `plan.md` wird zur verbindlichen
+ * Arbeitsanweisung im System-Prompt. Die Zuordnung pro Prompt übernimmt die
+ * Engine — hier wird nur verwaltet.
  */
 
-import type {
-	Agent,
-	AgentPrivacy,
-	Capability,
-	InstanceModel,
-	ModelSettings,
-	Swarm,
-} from "@diriz/shared"
-import { useEffect, useState } from "react"
+import type { Agent, AgentPrivacy, Capability, InstanceModel, ModelSettings, Swarm } from "@diriz/shared"
+import { type CSSProperties, useEffect, useState } from "react"
 import DocsEditor from "../components/DocsEditor.js"
+import {
+	IconAgents,
+	IconClose,
+	IconDoc,
+	IconEdit,
+	IconPin,
+	IconPlus,
+	IconPower,
+	IconSettings,
+	IconSwarm,
+	IconTrash,
+} from "../components/icons.js"
 import SettingsEditor from "../components/SettingsEditor.js"
 import { api } from "../lib/api.js"
 import { useStore } from "../store.js"
@@ -242,19 +248,31 @@ export default function Agents() {
 		/>
 	)
 
+	const activeAgents = agents.filter((a) => a.enabled).length
+
 	return (
-		<div>
-			<div className="row between">
-				<h1>Spezialisten</h1>
-				<button type="button" className="btn primary" onClick={startCreate}>
-					+ Spezialist anlegen
-				</button>
+		<div className="fade-in">
+			<div className="page-head">
+				<div>
+					<h1>Spezialisten</h1>
+					<p className="page-sub">
+						Jeder Spezialist hat eine Rolle (System-Prompt), Fähigkeiten, Routing-Vorgaben und drei Dokumente:{" "}
+						<code>plan.md</code>, <code>changelog.md</code> und <code>init.md</code>. Alles ist jederzeit
+						bearbeitbar.
+					</p>
+				</div>
+				<div className="page-actions">
+					{agents.length > 0 && (
+						<span className="pill ok no-dot">
+							{activeAgents}/{agents.length} aktiv
+						</span>
+					)}
+					<button type="button" className="btn primary" onClick={startCreate} aria-expanded={editing === ""}>
+						{editing === "" ? <IconClose size={15} /> : <IconPlus size={15} />}
+						{editing === "" ? "Abbrechen" : "Spezialist anlegen"}
+					</button>
+				</div>
 			</div>
-			<p className="muted" style={{ marginTop: -8 }}>
-				Jeder Spezialist hat eine Rolle (System-Prompt), Fähigkeiten, Routing-Vorgaben und drei Dokumente:{" "}
-				<code>plan.md</code>, <code>changelog.md</code> und <code>init.md</code> (setzt die Voreinstellungen
-				des LLM-Modells). Alles ist jederzeit bearbeitbar.
-			</p>
 
 			{editing === "" && form}
 
@@ -269,17 +287,26 @@ export default function Agents() {
 				providerLabel={providerLabel}
 				instanceLabel={instanceLabel}
 				onSettingsChanged={refreshAgents}
+				onCreate={startCreate}
 			/>
 
-			<div className="row between" style={{ marginTop: 18 }}>
-				<h1 style={{ margin: 0 }}>Swarms</h1>
-				<button type="button" className="btn primary" onClick={startCreateSwarm}>
-					+ Swarm anlegen
+			<div className="section-head">
+				<div>
+					<h2>Swarms</h2>
+					<p className="page-sub">
+						Ein Swarm bündelt Spezialisten — pro Prompt wird das beste Mitglied automatisch gewählt.
+					</p>
+				</div>
+				<button
+					type="button"
+					className="btn primary"
+					onClick={startCreateSwarm}
+					aria-expanded={swarmEditing === ""}
+				>
+					{swarmEditing === "" ? <IconClose size={15} /> : <IconPlus size={15} />}
+					{swarmEditing === "" ? "Abbrechen" : "Swarm anlegen"}
 				</button>
 			</div>
-			<p className="muted" style={{ marginTop: -8 }}>
-				Ein Swarm bündelt Spezialisten — pro Prompt wird das beste Mitglied automatisch gewählt.
-			</p>
 
 			{swarmEditing === "" && (
 				<SwarmForm
@@ -341,8 +368,17 @@ function AgentForm(props: {
 
 	return (
 		<div className="card">
-			<strong>{props.mode === "edit" ? "✏️ Spezialist bearbeiten" : "Neuer Spezialist"}</strong>
-			<div className="row" style={{ marginTop: 8 }}>
+			<div className="card-head">
+				<div className="card-title">
+					{props.mode === "edit" ? <IconEdit size={16} /> : <IconPlus size={16} />}
+					{props.mode === "edit" ? "Spezialist bearbeiten" : "Neuer Spezialist"}
+				</div>
+				<button type="button" className="icon-btn" aria-label="Formular schließen" onClick={props.onCancel}>
+					<IconClose size={16} />
+				</button>
+			</div>
+
+			<div className="row" style={{ marginTop: 14, alignItems: "flex-end" }}>
 				<label className="field" style={{ minWidth: 180 }}>
 					Name *
 					<input
@@ -351,13 +387,14 @@ function AgentForm(props: {
 						placeholder="z. B. Code-Dev"
 					/>
 				</label>
-				<label className="field" style={{ flex: 1, minWidth: 220 }}>
-					Beschreibung (Keywords für die Auto-Zuordnung)
+				<label className="field grow">
+					Beschreibung
 					<input
 						value={draft.description}
 						onChange={(e) => patch({ description: e.target.value })}
 						placeholder="z. B. React TypeScript Bug Refactoring"
 					/>
+					<span className="field-hint">Keywords für die automatische Zuordnung</span>
 				</label>
 				<label className="field">
 					Privacy
@@ -400,7 +437,7 @@ function AgentForm(props: {
 				</label>
 			</div>
 
-			<label className="field" style={{ marginTop: 8 }}>
+			<label className="field" style={{ marginTop: 14 }}>
 				System-Prompt (Rolle des Spezialisten)
 				<textarea
 					value={draft.systemPrompt}
@@ -409,14 +446,14 @@ function AgentForm(props: {
 				/>
 			</label>
 
-			<div className="row" style={{ marginTop: 8, gap: 24 }}>
+			<div className="row top" style={{ marginTop: 14, gap: 28 }}>
 				<div>
-					<div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+					<div className="field-hint" style={{ marginBottom: 6 }}>
 						Pflicht-Fähigkeiten (hartes Gate)
 					</div>
-					<div className="row">
+					<div className="chip-group">
 						{CAPABILITIES.map((c) => (
-							<label key={c} className="muted" style={{ fontSize: 13 }}>
+							<label key={c} className="check-chip">
 								<input
 									type="checkbox"
 									checked={draft.required.includes(c)}
@@ -428,12 +465,12 @@ function AgentForm(props: {
 					</div>
 				</div>
 				<div>
-					<div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+					<div className="field-hint" style={{ marginBottom: 6 }}>
 						Wunsch-Fähigkeiten (Bonus)
 					</div>
-					<div className="row">
+					<div className="chip-group">
 						{CAPABILITIES.map((c) => (
-							<label key={c} className="muted" style={{ fontSize: 13 }}>
+							<label key={c} className="check-chip">
 								<input
 									type="checkbox"
 									checked={draft.preferred.includes(c)}
@@ -446,25 +483,30 @@ function AgentForm(props: {
 				</div>
 			</div>
 
+			<div className="divider" />
+
+			<div className="card-title">
+				<IconSettings size={16} />
+				Model-Voreinstellungen
+			</div>
+			<div className="card-sub">
+				Gilt für jede Ausführung dieses Spezialisten. Reihenfolge: Provider → Modell → <strong>Agent</strong>{" "}
+				→ Task. Beim Speichern wird daraus sein <code>init.md</code> geschrieben.
+			</div>
 			<div style={{ marginTop: 12 }}>
-				<strong style={{ fontSize: 13 }}>Model-Voreinstellungen (→ init.md)</strong>
-				<div className="muted" style={{ fontSize: 12, margin: "2px 0 6px" }}>
-					Gilt für jede Ausführung dieses Spezialisten. Reihenfolge: Provider ← Modell ←{" "}
-					<strong>Agent</strong> ← Task. Beim Speichern wird daraus sein <code>init.md</code> geschrieben.
-				</div>
 				<SettingsEditor value={draft.modelSettings} onChange={(modelSettings) => patch({ modelSettings })} />
 			</div>
 
-			<div className="row" style={{ marginTop: 10 }}>
+			<div className="row" style={{ marginTop: 16 }}>
 				<button
 					type="button"
 					className="btn primary"
 					onClick={() => void props.onSave()}
 					disabled={props.busy || draft.name.trim().length === 0}
 				>
-					{props.busy ? "…" : "Speichern"}
+					{props.busy ? "Speichere …" : "Speichern"}
 				</button>
-				<button type="button" className="btn" onClick={props.onCancel}>
+				<button type="button" className="btn ghost" onClick={props.onCancel}>
 					Abbrechen
 				</button>
 			</div>
@@ -483,102 +525,135 @@ function AgentList(props: {
 	providerLabel: (id?: string | null) => string
 	instanceLabel: (id?: string | null) => string
 	onSettingsChanged: () => Promise<void>
+	onCreate: () => void
 }) {
 	const [docsFor, setDocsFor] = useState<string | null>(null)
 
+	if (props.agents.length === 0) {
+		return (
+			<div className="card">
+				<div className="empty">
+					<span className="icon-chip lg" style={{ "--mc": "var(--accent)" } as CSSProperties}>
+						<IconAgents size={20} />
+					</span>
+					<span className="empty-title">Noch keine Spezialisten</span>
+					<p>
+						Lege einen an — z. B. „Code-Dev“ mit den Keywords deines Fachgebiets. DiriZ ordnet Tasks dann
+						automatisch dem passenden Spezialisten zu.
+					</p>
+					<button type="button" className="btn primary" onClick={props.onCreate}>
+						<IconPlus size={15} />
+						Spezialist anlegen
+					</button>
+				</div>
+			</div>
+		)
+	}
+
 	return (
 		<div>
-			{props.agents.length === 0 && (
-				<div className="card">
-					<p className="muted" style={{ margin: 0 }}>
-						Noch keine Spezialisten. Lege einen an — z. B. „Code-Dev“ mit den Keywords deines Fachgebiets.
-					</p>
-				</div>
-			)}
 			{props.agents.map((a) => {
 				const memberSwarms = props.swarms.filter((sw) => sw.enabled && sw.agentIds.includes(a.id))
 				const settingsCount = Object.keys(a.modelSettings ?? {}).length
 				return (
-					<div key={a.id} className="card">
-						<div className="row between">
-							<div>
-								<div className="row" style={{ gap: 8 }}>
-									<strong>{a.name}</strong>
-									{!a.enabled && (
-										<span className="badge" style={{ opacity: 0.7 }}>
-											inaktiv
-										</span>
-									)}
+					<div key={a.id} className="card" style={{ opacity: a.enabled ? 1 : 0.62 }}>
+						<div className="row between top">
+							<div className="grow">
+								<div className="row tight">
+									<strong style={{ fontSize: 15 }}>{a.name}</strong>
+									{!a.enabled && <span className="badge subtle">inaktiv</span>}
 									{a.privacy !== "any" && <span className="badge">{a.privacy}</span>}
 									{a.pinnedProviderId && (
-										<span className="badge">
-											⚓ {props.providerLabel(a.pinnedProviderId)}
+										<span className="badge accent" title="Fest an Rechner/Modell gebunden">
+											<IconPin size={11} />
+											{props.providerLabel(a.pinnedProviderId)}
 											{a.pinnedInstanceId ? ` / ${props.instanceLabel(a.pinnedInstanceId)}` : ""}
 										</span>
 									)}
 									{settingsCount > 0 && (
 										<span className="badge" title="Voreinstellungen aus init.md">
+											<IconSettings size={11} />
 											init.md · {settingsCount}
 										</span>
 									)}
 								</div>
+
 								{a.description && (
-									<div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+									<div className="muted text-sm" style={{ marginTop: 4 }}>
 										{a.description}
 									</div>
 								)}
-								<div className="row" style={{ marginTop: 6, gap: 4 }}>
-									{a.requiredCapabilities.map((c) => (
-										<span key={c} className="badge">
-											{c}
-										</span>
-									))}
-									{a.preferredCapabilities.map((c) => (
-										<span key={c} className="badge" style={{ opacity: 0.65 }}>
-											{c}+
-										</span>
-									))}
-								</div>
-								{a.systemPrompt && (
-									<div className="muted mono" style={{ fontSize: 11, marginTop: 6 }}>
-										„{a.systemPrompt.length > 100 ? `${a.systemPrompt.slice(0, 100)}…` : a.systemPrompt}"
+
+								{(a.requiredCapabilities.length > 0 || a.preferredCapabilities.length > 0) && (
+									<div className="chip-group" style={{ marginTop: 8 }}>
+										{a.requiredCapabilities.map((c) => (
+											<span key={c} className="badge accent" title="Pflicht-Fähigkeit">
+												{c}
+											</span>
+										))}
+										{a.preferredCapabilities.map((c) => (
+											<span key={c} className="badge" title="Wunsch-Fähigkeit">
+												{c} +
+											</span>
+										))}
 									</div>
 								)}
+
+								{a.systemPrompt && (
+									<div className="faint mono text-xs" style={{ marginTop: 8 }}>
+										„{a.systemPrompt.length > 120 ? `${a.systemPrompt.slice(0, 120)}…` : a.systemPrompt}“
+									</div>
+								)}
+
 								{memberSwarms.length > 0 && (
-									<div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+									<div className="faint text-sm row tight" style={{ marginTop: 6 }}>
+										<IconSwarm size={13} />
 										In Swarms: {memberSwarms.map((sw) => sw.name).join(", ")}
 									</div>
 								)}
 							</div>
-							<div className="row">
+
+							<div className="actions">
 								<button
 									type="button"
-									className={`btn ${props.editing === a.id ? "primary" : ""}`}
+									className={`icon-btn ${props.editing === a.id ? "active" : ""}`}
+									aria-label={`${a.name} bearbeiten`}
+									title="Bearbeiten"
 									onClick={() => props.onEdit(a)}
 								>
-									✏️ Bearbeiten
+									<IconEdit size={16} />
 								</button>
 								<button
 									type="button"
-									className={`btn ${docsFor === a.id ? "primary" : ""}`}
+									className={`icon-btn ${docsFor === a.id ? "active" : ""}`}
+									aria-label={`Dokumente von ${a.name}`}
+									title="plan.md, changelog.md und init.md"
 									onClick={() => setDocsFor(docsFor === a.id ? null : a.id)}
 								>
-									📄 Dokumente
+									<IconDoc size={16} />
 								</button>
 								<button
 									type="button"
-									className="btn"
+									className="icon-btn"
+									aria-label={a.enabled ? `${a.name} deaktivieren` : `${a.name} aktivieren`}
+									title={a.enabled ? "Deaktivieren" : "Aktivieren"}
 									onClick={() => void props.onAct(a.id, { enabled: !a.enabled })}
 								>
-									{a.enabled ? "Deaktivieren" : "Aktivieren"}
+									<IconPower size={16} />
 								</button>
-								<button type="button" className="btn danger" onClick={() => void props.onDel(a.id)}>
-									Löschen
+								<button
+									type="button"
+									className="icon-btn danger"
+									aria-label={`${a.name} löschen`}
+									title="Löschen"
+									onClick={() => void props.onDel(a.id)}
+								>
+									<IconTrash size={16} />
 								</button>
 							</div>
 						</div>
 
-						{props.editing === a.id && <div style={{ marginTop: 10 }}>{props.editForm}</div>}
+						{props.editing === a.id && <div style={{ marginTop: 12 }}>{props.editForm}</div>}
 
 						{docsFor === a.id && (
 							<DocsEditor
@@ -610,8 +685,16 @@ function SwarmForm(props: {
 }) {
 	return (
 		<div className="card">
-			<strong>{props.mode === "edit" ? "✏️ Swarm bearbeiten" : "Neuer Swarm"}</strong>
-			<div className="row" style={{ marginTop: 8 }}>
+			<div className="card-head">
+				<div className="card-title">
+					{props.mode === "edit" ? <IconEdit size={16} /> : <IconPlus size={16} />}
+					{props.mode === "edit" ? "Swarm bearbeiten" : "Neuer Swarm"}
+				</div>
+				<button type="button" className="icon-btn" aria-label="Formular schließen" onClick={props.onCancel}>
+					<IconClose size={16} />
+				</button>
+			</div>
+			<div className="row" style={{ marginTop: 14, alignItems: "flex-end" }}>
 				<label className="field" style={{ minWidth: 180 }}>
 					Name *
 					<input
@@ -620,7 +703,7 @@ function SwarmForm(props: {
 						placeholder="z. B. Frontend"
 					/>
 				</label>
-				<label className="field" style={{ flex: 1, minWidth: 220 }}>
+				<label className="field grow">
 					Beschreibung
 					<input
 						value={props.swarmDesc}
@@ -629,37 +712,43 @@ function SwarmForm(props: {
 					/>
 				</label>
 			</div>
-			<div className="row" style={{ marginTop: 8 }}>
-				{props.agents.length === 0 && (
-					<span className="muted">Zuerst mindestens einen Spezialisten anlegen.</span>
+			<div style={{ marginTop: 14 }}>
+				<div className="field-hint" style={{ marginBottom: 6 }}>
+					Mitglieder
+				</div>
+				{props.agents.length === 0 ? (
+					<span className="muted text-sm">Zuerst mindestens einen Spezialisten anlegen.</span>
+				) : (
+					<div className="chip-group">
+						{props.agents.map((a) => (
+							<label key={a.id} className="check-chip">
+								<input
+									type="checkbox"
+									checked={props.swarmMembers.includes(a.id)}
+									onChange={() =>
+										props.setSwarmMembers(
+											props.swarmMembers.includes(a.id)
+												? props.swarmMembers.filter((x) => x !== a.id)
+												: [...props.swarmMembers, a.id],
+										)
+									}
+								/>
+								{a.name}
+							</label>
+						))}
+					</div>
 				)}
-				{props.agents.map((a) => (
-					<label key={a.id} className="muted" style={{ fontSize: 13 }}>
-						<input
-							type="checkbox"
-							checked={props.swarmMembers.includes(a.id)}
-							onChange={() =>
-								props.setSwarmMembers(
-									props.swarmMembers.includes(a.id)
-										? props.swarmMembers.filter((x) => x !== a.id)
-										: [...props.swarmMembers, a.id],
-								)
-							}
-						/>
-						{a.name}
-					</label>
-				))}
 			</div>
-			<div className="row" style={{ marginTop: 10 }}>
+			<div className="row" style={{ marginTop: 16 }}>
 				<button
 					type="button"
 					className="btn primary"
 					onClick={() => void props.onSave()}
 					disabled={props.busy || props.swarmName.trim().length === 0}
 				>
-					{props.busy ? "…" : "Speichern"}
+					{props.busy ? "Speichere …" : "Speichern"}
 				</button>
-				<button type="button" className="btn" onClick={props.onCancel}>
+				<button type="button" className="btn ghost" onClick={props.onCancel}>
 					Abbrechen
 				</button>
 			</div>
@@ -676,58 +765,84 @@ function SwarmList(props: {
 	onAct: (id: string, body: Record<string, unknown>) => Promise<void>
 	onDel: (id: string) => Promise<void>
 }) {
+	if (props.swarms.length === 0) {
+		return (
+			<div className="card">
+				<div className="empty">
+					<span className="icon-chip lg" style={{ "--mc": "var(--accent-2)" } as CSSProperties}>
+						<IconSwarm size={20} />
+					</span>
+					<span className="empty-title">Noch keine Swarms</span>
+					<p>Bündle mehrere Spezialisten zu einem Team — DiriZ wählt pro Prompt das beste Mitglied.</p>
+				</div>
+			</div>
+		)
+	}
+
 	return (
 		<div>
-			{props.swarms.length === 0 && (
-				<div className="card">
-					<p className="muted" style={{ margin: 0 }}>
-						Noch keine Swarms.
-					</p>
-				</div>
-			)}
 			{props.swarms.map((sw) => (
-				<div key={sw.id} className="card">
-					<div className="row between">
-						<div>
-							<div className="row" style={{ gap: 8 }}>
-								<strong>🐝 {sw.name}</strong>
-								{!sw.enabled && (
-									<span className="badge" style={{ opacity: 0.7 }}>
-										inaktiv
-									</span>
-								)}
+				<div key={sw.id} className="card" style={{ opacity: sw.enabled ? 1 : 0.62 }}>
+					<div className="row between top">
+						<div className="grow">
+							<div className="row tight">
+								<span className="icon-chip" style={{ "--mc": "var(--accent-2)" } as CSSProperties}>
+									<IconSwarm size={16} />
+								</span>
+								<strong style={{ fontSize: 15 }}>{sw.name}</strong>
+								{!sw.enabled && <span className="badge subtle">inaktiv</span>}
+								<span className="badge">
+									{sw.agentIds.length} {sw.agentIds.length === 1 ? "Mitglied" : "Mitglieder"}
+								</span>
 							</div>
 							{sw.description && (
-								<div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+								<div className="muted text-sm" style={{ marginTop: 4 }}>
 									{sw.description}
 								</div>
 							)}
-							<div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-								Mitglieder:{" "}
-								{sw.agentIds.length > 0 ? sw.agentIds.map((id) => props.agentName(id)).join(", ") : "—"}
+							<div className="chip-group" style={{ marginTop: 8 }}>
+								{sw.agentIds.length > 0 ? (
+									sw.agentIds.map((id) => (
+										<span key={id} className="badge">
+											{props.agentName(id)}
+										</span>
+									))
+								) : (
+									<span className="faint text-sm">keine Mitglieder</span>
+								)}
 							</div>
 						</div>
-						<div className="row">
+						<div className="actions">
 							<button
 								type="button"
-								className={`btn ${props.editing === sw.id ? "primary" : ""}`}
+								className={`icon-btn ${props.editing === sw.id ? "active" : ""}`}
+								aria-label={`${sw.name} bearbeiten`}
+								title="Bearbeiten"
 								onClick={() => props.onEdit(sw)}
 							>
-								✏️ Bearbeiten
+								<IconEdit size={16} />
 							</button>
 							<button
 								type="button"
-								className="btn"
+								className="icon-btn"
+								aria-label={sw.enabled ? `${sw.name} deaktivieren` : `${sw.name} aktivieren`}
+								title={sw.enabled ? "Deaktivieren" : "Aktivieren"}
 								onClick={() => void props.onAct(sw.id, { enabled: !sw.enabled })}
 							>
-								{sw.enabled ? "Deaktivieren" : "Aktivieren"}
+								<IconPower size={16} />
 							</button>
-							<button type="button" className="btn danger" onClick={() => void props.onDel(sw.id)}>
-								Löschen
+							<button
+								type="button"
+								className="icon-btn danger"
+								aria-label={`${sw.name} löschen`}
+								title="Löschen"
+								onClick={() => void props.onDel(sw.id)}
+							>
+								<IconTrash size={16} />
 							</button>
 						</div>
 					</div>
-					{props.editing === sw.id && <div style={{ marginTop: 10 }}>{props.editForm}</div>}
+					{props.editing === sw.id && <div style={{ marginTop: 12 }}>{props.editForm}</div>}
 				</div>
 			))}
 		</div>

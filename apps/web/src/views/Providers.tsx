@@ -1,6 +1,19 @@
 import type { Capability, InstanceModel, ModelSettings, ProviderType } from "@diriz/shared"
-import { useState } from "react"
+import { type CSSProperties, useState } from "react"
 import DocsEditor from "../components/DocsEditor.js"
+import {
+	IconAlert,
+	IconClose,
+	IconDoc,
+	IconEdit,
+	IconHeart,
+	IconKey,
+	IconPlus,
+	IconRadar,
+	IconServer,
+	IconSettings,
+	IconTrash,
+} from "../components/icons.js"
 import SettingsEditor from "../components/SettingsEditor.js"
 import { api } from "../lib/api.js"
 import { useStore } from "../store.js"
@@ -253,18 +266,50 @@ export default function Providers() {
 		}
 	}
 
+	const onlineCount = providers.filter((p) => p.status === "online").length
+
 	return (
-		<div>
-			<div className="row between">
-				<h1>Provider</h1>
-				<button type="button" className="btn primary" onClick={() => setShowForm((v) => !v)}>
-					+ Provider verbinden
-				</button>
+		<div className="fade-in">
+			<div className="page-head">
+				<div>
+					<h1>Provider</h1>
+					<p className="page-sub">
+						Rechner und Endpunkte, auf denen Modelle laufen — lokal (Ollama, LM Studio) oder in der Cloud.
+					</p>
+				</div>
+				<div className="page-actions">
+					{providers.length > 0 && (
+						<span className="pill ok no-dot">
+							{onlineCount}/{providers.length} online
+						</span>
+					)}
+					<button
+						type="button"
+						className="btn primary"
+						onClick={() => setShowForm((v) => !v)}
+						aria-expanded={showForm}
+					>
+						{showForm ? <IconClose size={15} /> : <IconPlus size={15} />}
+						{showForm ? "Abbrechen" : "Provider verbinden"}
+					</button>
+				</div>
 			</div>
 
 			{showForm && (
 				<div className="card">
-					<div className="row">
+					<div className="card-head">
+						<div>
+							<div className="card-title">
+								<IconPlus size={16} />
+								Neuer Provider
+							</div>
+							<div className="card-sub">
+								Nach dem Speichern prüft DiriZ die Erreichbarkeit und entdeckt die verfügbaren Modelle
+								automatisch.
+							</div>
+						</div>
+					</div>
+					<div className="row" style={{ marginTop: 14, alignItems: "flex-end" }}>
 						<label className="field">
 							Typ
 							<select value={type} onChange={(e) => setType(e.target.value as ProviderType)}>
@@ -279,7 +324,7 @@ export default function Providers() {
 							Name
 							<input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={type} />
 						</label>
-						<label className="field">
+						<label className="field grow">
 							Base URL
 							<input
 								value={baseUrl}
@@ -289,7 +334,7 @@ export default function Providers() {
 							/>
 						</label>
 						<label className="field">
-							API-Key {requiresKey ? "" : "(optional)"}
+							API-Key {requiresKey ? "*" : "(optional)"}
 							<input
 								type="password"
 								value={apiKey}
@@ -298,109 +343,156 @@ export default function Providers() {
 							/>
 						</label>
 						<button type="button" className="btn primary" onClick={() => void addProvider()} disabled={busy}>
-							{busy ? "…" : "Speichern"}
+							{busy ? "Speichere …" : "Speichern"}
 						</button>
 					</div>
-					<p className="muted" style={{ marginBottom: 0 }}>
-						API-Key wird als Bearer-Token gesendet (<code>Authorization: Bearer …</code>) und verschlüsselt in{" "}
-						<code>~/.diriz</code> gespeichert — nie zurückgegeben.
+					<p className="hint" style={{ marginTop: 12 }}>
+						<IconKey size={14} />
+						<span>
+							Der API-Key wird als Bearer-Token gesendet (<code>Authorization: Bearer …</code>) und
+							verschlüsselt in <code>~/.diriz</code> gespeichert — er wird nie wieder ausgegeben.
+						</span>
 					</p>
 				</div>
 			)}
 
 			<div className="card">
-				<table className="table">
-					<thead>
-						<tr>
-							<th>Name</th>
-							<th>Typ / URL</th>
-							<th>Status</th>
-							<th>Modelle</th>
-							<th>Latenz p50/p95</th>
-							<th>Aktionen</th>
-						</tr>
-					</thead>
-					<tbody>
-						{providers.map((p) => (
-							<tr key={p.id}>
-								<td>
-									<strong>{p.label}</strong>
-									{p.hasApiKey && (
-										<span className="badge" style={{ marginLeft: 6 }}>
-											Key
-										</span>
-									)}
-								</td>
-								<td className="muted">
-									{p.type}
-									<br />
-									<span className="mono">{p.baseUrl}</span>
-								</td>
-								<td>
-									<span className={`dot ${p.status}`} /> {p.status}
-								</td>
-								<td>{p.instanceCount ?? 0}</td>
-								<td>{p.latencyP50 !== undefined ? `${p.latencyP50} / ${p.latencyP95 ?? "–"} ms` : "–"}</td>
-								<td className="row">
-									<button
-										type="button"
-										className={`btn ${editProvider === p.id ? "primary" : ""}`}
-										onClick={() => startEditProvider(p)}
-									>
-										✏️ Bearbeiten
-									</button>
-									<button
-										type="button"
-										className="btn"
-										onClick={() => void act(`/api/providers/${p.id}/health`)}
-									>
-										Health
-									</button>
-									<button
-										type="button"
-										className="btn"
-										onClick={() => void act(`/api/providers/${p.id}/discover`)}
-									>
-										Entdecken
-									</button>
-									<button
-										type="button"
-										className={`btn ${expanded === p.id ? "primary" : ""}`}
-										onClick={() => void openSettings(p)}
-									>
-										⚙ Settings
-									</button>
-									<button type="button" className="btn danger" onClick={() => void remove(p.id)}>
-										Entfernen
-									</button>
-								</td>
-							</tr>
-						))}
-						{providers.length === 0 && (
+				<div className="table-wrap">
+					<table className="table">
+						<thead>
 							<tr>
-								<td colSpan={6} className="muted">
-									Noch keine Provider verbunden.
-								</td>
+								<th>Name</th>
+								<th>Typ / URL</th>
+								<th>Status</th>
+								<th className="num">Modelle</th>
+								<th className="num">Latenz p50/p95</th>
+								<th className="actions-cell">Aktionen</th>
 							</tr>
-						)}
-					</tbody>
-				</table>
+						</thead>
+						<tbody>
+							{providers.map((p) => (
+								<tr key={p.id} className={expanded === p.id || editProvider === p.id ? "selected" : ""}>
+									<td>
+										<div className="cell-title">
+											<strong>{p.label}</strong>
+											{p.hasApiKey && (
+												<span className="badge" title="API-Key hinterlegt">
+													<IconKey size={11} />
+													Key
+												</span>
+											)}
+											{!p.enabled && <span className="badge subtle">inaktiv</span>}
+										</div>
+									</td>
+									<td>
+										<span className="muted">{p.type}</span>
+										<div className="cell-meta mono">{p.baseUrl}</div>
+									</td>
+									<td>
+										<span className={`pill ${p.status}`}>{p.status}</span>
+									</td>
+									<td className="num">{p.instanceCount ?? 0}</td>
+									<td className="num">
+										{p.latencyP50 !== undefined ? `${p.latencyP50} / ${p.latencyP95 ?? "–"} ms` : "–"}
+									</td>
+									<td className="actions-cell">
+										<div className="actions">
+											<button
+												type="button"
+												className={`icon-btn ${editProvider === p.id ? "active" : ""}`}
+												aria-label={`${p.label} bearbeiten`}
+												title="Bearbeiten"
+												onClick={() => startEditProvider(p)}
+											>
+												<IconEdit size={16} />
+											</button>
+											<button
+												type="button"
+												className="icon-btn"
+												aria-label={`Health-Check für ${p.label}`}
+												title="Health-Check ausführen"
+												onClick={() => void act(`/api/providers/${p.id}/health`)}
+											>
+												<IconHeart size={16} />
+											</button>
+											<button
+												type="button"
+												className="icon-btn"
+												aria-label={`Modelle von ${p.label} entdecken`}
+												title="Modelle entdecken"
+												onClick={() => void act(`/api/providers/${p.id}/discover`)}
+											>
+												<IconRadar size={16} />
+											</button>
+											<button
+												type="button"
+												className={`icon-btn ${expanded === p.id ? "active" : ""}`}
+												aria-label={`Model-Settings von ${p.label}`}
+												title="Model-Settings & Modelle"
+												onClick={() => void openSettings(p)}
+											>
+												<IconSettings size={16} />
+											</button>
+											<button
+												type="button"
+												className="icon-btn danger"
+												aria-label={`${p.label} entfernen`}
+												title="Entfernen"
+												onClick={() => void remove(p.id)}
+											>
+												<IconTrash size={16} />
+											</button>
+										</div>
+									</td>
+								</tr>
+							))}
+							{providers.length === 0 && (
+								<tr>
+									<td colSpan={6}>
+										<div className="empty">
+											<span className="icon-chip lg" style={{ "--mc": "var(--accent)" } as CSSProperties}>
+												<IconServer size={20} />
+											</span>
+											<span className="empty-title">Noch kein Provider verbunden</span>
+											<p>
+												Verbinde deinen ersten Rechner — z. B. ein lokales Ollama unter{" "}
+												<code>http://localhost:11434</code>.
+											</p>
+											<button type="button" className="btn primary" onClick={() => setShowForm(true)}>
+												<IconPlus size={15} />
+												Provider verbinden
+											</button>
+										</div>
+									</td>
+								</tr>
+							)}
+						</tbody>
+					</table>
+				</div>
 			</div>
 
 			{editProvider && pDraft && (
 				<div className="card">
-					<div className="row between">
-						<strong>✏️ Rechner bearbeiten: {providers.find((x) => x.id === editProvider)?.label}</strong>
-						<button type="button" className="btn" onClick={() => setEditProvider(null)}>
-							Schließen
+					<div className="card-head">
+						<div className="card-title">
+							<IconEdit size={16} />
+							Rechner bearbeiten: {providers.find((x) => x.id === editProvider)?.label}
+						</div>
+						<button
+							type="button"
+							className="icon-btn"
+							aria-label="Bearbeiten schließen"
+							onClick={() => setEditProvider(null)}
+						>
+							<IconClose size={16} />
 						</button>
 					</div>
-					<div className="row" style={{ marginTop: 8 }}>
-						<label className="field" style={{ minWidth: 160 }}>
+					<div className="row" style={{ marginTop: 14, alignItems: "flex-end" }}>
+						<label className="field" style={{ minWidth: 170 }}>
 							Name
 							<input value={pDraft.label} onChange={(e) => setPDraft({ ...pDraft, label: e.target.value })} />
 						</label>
-						<label className="field" style={{ flex: 1, minWidth: 240 }}>
+						<label className="field grow">
 							Base URL
 							<input
 								value={pDraft.baseUrl}
@@ -408,16 +500,16 @@ export default function Providers() {
 								placeholder="http://localhost:11434"
 							/>
 						</label>
-						<label className="field" style={{ minWidth: 200 }}>
-							API-Key ersetzen (leer = unverändert)
+						<label className="field" style={{ minWidth: 210 }}>
+							API-Key ersetzen
 							<input
 								type="password"
 								value={pDraft.apiKey}
 								onChange={(e) => setPDraft({ ...pDraft, apiKey: e.target.value, clearApiKey: false })}
-								placeholder="sk-… / Bearer-Token"
+								placeholder="leer = unverändert"
 							/>
 						</label>
-						<label className="muted" style={{ fontSize: 13 }}>
+						<label className="check">
 							<input
 								type="checkbox"
 								checked={pDraft.clearApiKey}
@@ -425,7 +517,7 @@ export default function Providers() {
 							/>
 							Key entfernen
 						</label>
-						<label className="muted" style={{ fontSize: 13 }}>
+						<label className="check">
 							<input
 								type="checkbox"
 								checked={pDraft.enabled}
@@ -434,240 +526,285 @@ export default function Providers() {
 							aktiv
 						</label>
 					</div>
-					<div className="row" style={{ marginTop: 10 }}>
+					<div className="row" style={{ marginTop: 14 }}>
 						<button
 							type="button"
 							className="btn primary"
 							onClick={() => void saveProvider()}
 							disabled={busySettings || pDraft.label.trim().length === 0}
 						>
-							{busySettings ? "…" : "Speichern"}
+							{busySettings ? "Speichere …" : "Speichern"}
 						</button>
-						<button type="button" className="btn" onClick={() => setEditProvider(null)}>
+						<button type="button" className="btn ghost" onClick={() => setEditProvider(null)}>
 							Abbrechen
 						</button>
+						<span className="hint">
+							<IconAlert size={14} />
+							Nach dem Speichern werden Adapter, Health-Check und Discovery neu aufgesetzt.
+						</span>
 					</div>
-					<p className="muted" style={{ marginBottom: 0, fontSize: 12 }}>
-						Nach dem Speichern werden Adapter, Health-Check und Discovery neu aufgesetzt.
-					</p>
 				</div>
 			)}
 
 			{expanded && (
 				<div className="card">
-					<div className="row between">
-						<strong>⚙ Model-Settings: {providers.find((x) => x.id === expanded)?.label}</strong>
-						<button type="button" className="btn" onClick={() => setExpanded(null)}>
-							Schließen
+					<div className="card-head">
+						<div>
+							<div className="card-title">
+								<IconSettings size={16} />
+								Model-Settings: {providers.find((x) => x.id === expanded)?.label}
+							</div>
+							<div className="card-sub">
+								Gilt für alle Modelle auf diesem Rechner. Reihenfolge: <strong>Provider-Default</strong> →
+								Modell-Override → Task-Override (der spätere gewinnt).
+							</div>
+						</div>
+						<button
+							type="button"
+							className="icon-btn"
+							aria-label="Model-Settings schließen"
+							onClick={() => setExpanded(null)}
+						>
+							<IconClose size={16} />
 						</button>
 					</div>
-					<p className="muted" style={{ marginTop: 4 }}>
-						Gilt für alle Modelle auf diesem Rechner. Reihenfolge: <strong>Provider-Default</strong> ←
-						Modell-Override ← Task-Override.
-					</p>
-					<SettingsEditor value={settings} onChange={setSettings} />
-					<div className="row" style={{ marginTop: 10 }}>
+
+					<div style={{ marginTop: 14 }}>
+						<SettingsEditor value={settings} onChange={setSettings} />
+					</div>
+					<div className="row" style={{ marginTop: 14 }}>
 						<button
 							type="button"
 							className="btn primary"
 							onClick={() => void saveSettings()}
 							disabled={busySettings}
 						>
-							{busySettings ? "…" : "Speichern"}
+							{busySettings ? "Speichere …" : "Speichern"}
 						</button>
-						<button type="button" className="btn" onClick={() => setSettings({})}>
+						<button type="button" className="btn ghost" onClick={() => setSettings({})}>
 							Zurücksetzen
 						</button>
 					</div>
 
 					{instances.length > 0 && (
-						<div style={{ marginTop: 14 }}>
-							<strong>Modelle (pro Rechner)</strong>
-							<div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
-								Modelle aktivieren/deaktivieren und pro Modell einzelne Werte überschreiben (z. B. Kontext-
-								oder Temperatur-Anpassung). Deaktivierte Modelle nutzt das Routing nicht.
+						<>
+							<div className="divider" />
+							<div className="card-title">Modelle auf diesem Rechner</div>
+							<div className="card-sub">
+								Modelle aktivieren/deaktivieren, einzelne Werte überschreiben und die Dokumente (
+								<code>plan.md</code>, <code>init.md</code>) pflegen. Deaktivierte Modelle nutzt das Routing
+								nicht.
 							</div>
-							<div style={{ marginTop: 8 }}>
-								{instances.map((inst) => (
-									<div key={inst.id} style={{ marginTop: 8, opacity: isActive(inst) ? 1 : 0.55 }}>
-										<div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-											<label
-												style={{
-													display: "inline-flex",
-													alignItems: "center",
-													gap: 6,
-													cursor: "pointer",
-													fontSize: 13,
-												}}
-												title={
-													isActive(inst)
-														? "Modell ist aktiv — das Routing darf es nutzen."
-														: "Modell deaktiviert — das Routing nutzt es nicht."
-												}
-											>
-												<input
-													type="checkbox"
-													checked={isActive(inst)}
-													onChange={(e) => void toggleEnabled(inst, e.target.checked)}
-												/>
-												aktiv
-											</label>
-											<button type="button" className="btn" onClick={() => startEditInstance(inst)}>
-												✏️ Bearbeiten
-											</button>
-											<button
-												type="button"
-												className="btn"
-												title="plan.md, changelog.md und init.md dieser LLM-Instanz"
-												onClick={() => setInstDocs(instDocs === inst.id ? null : inst.id)}
-											>
-												📄 Dokumente
-											</button>
-											<button
-												type="button"
-												className="linklike"
-												onClick={() => {
-													if (instExpanded === inst.id) {
-														setInstExpanded(null)
-													} else {
-														setInstExpanded(inst.id)
-														setInstSettings({ ...inst.modelSettings })
+							<div className="stack" style={{ marginTop: 12 }}>
+								{instances.map((inst) => {
+									const overrides = Object.keys(inst.modelSettings ?? {}).length
+									return (
+										<div key={inst.id} style={{ opacity: isActive(inst) ? 1 : 0.55 }}>
+											<div className="row" style={{ gap: 10 }}>
+												<label
+													className="check"
+													title={
+														isActive(inst)
+															? "Modell ist aktiv — das Routing darf es nutzen."
+															: "Modell deaktiviert — das Routing nutzt es nicht."
 													}
-												}}
-											>
-												<strong>{inst.displayName}</strong>
-												{!isActive(inst)
-													? " — deaktiviert"
-													: inst.modelSettings && Object.keys(inst.modelSettings).length > 0
-														? " — Overrides ✓"
-														: " — ohne Overrides"}
-											</button>
-										</div>
-										{editInstance === inst.id && iDraft && (
-											<div style={{ marginTop: 6, paddingLeft: 10, borderLeft: "2px solid var(--border)" }}>
-												<div className="row">
-													<label className="field" style={{ minWidth: 180 }}>
-														Anzeigename
-														<input
-															value={iDraft.displayName}
-															onChange={(e) => setIDraft({ ...iDraft, displayName: e.target.value })}
-														/>
-													</label>
-													<label className="field">
-														Kontext-Fenster (Tokens)
-														<input
-															type="number"
-															min={1}
-															value={iDraft.contextWindow}
-															onChange={(e) => setIDraft({ ...iDraft, contextWindow: e.target.value })}
-														/>
-													</label>
-													<label className="field" style={{ minWidth: 160 }}>
-														Sprachen (kommagetrennt)
-														<input
-															value={iDraft.languages}
-															onChange={(e) => setIDraft({ ...iDraft, languages: e.target.value })}
-															placeholder="de, en"
-														/>
-													</label>
-													<label className="field">
-														Preis in $/M Tok
-														<input
-															type="number"
-															step="0.01"
-															min={0}
-															value={iDraft.priceIn}
-															onChange={(e) => setIDraft({ ...iDraft, priceIn: e.target.value })}
-															placeholder="—"
-														/>
-													</label>
-													<label className="field">
-														Preis out $/M Tok
-														<input
-															type="number"
-															step="0.01"
-															min={0}
-															value={iDraft.priceOut}
-															onChange={(e) => setIDraft({ ...iDraft, priceOut: e.target.value })}
-															placeholder="—"
-														/>
-													</label>
-												</div>
-												<div className="row" style={{ marginTop: 6 }}>
-													<span className="muted" style={{ fontSize: 12 }}>
-														Fähigkeiten:
-													</span>
-													{CAPABILITIES.map((c) => (
-														<label key={c} className="muted" style={{ fontSize: 13 }}>
-															<input
-																type="checkbox"
-																checked={iDraft.capabilities.includes(c)}
-																onChange={() =>
-																	setIDraft({
-																		...iDraft,
-																		capabilities: iDraft.capabilities.includes(c)
-																			? iDraft.capabilities.filter((x) => x !== c)
-																			: [...iDraft.capabilities, c],
-																	})
-																}
-															/>
-															{c}
-														</label>
-													))}
-												</div>
-												<div className="row" style={{ marginTop: 8 }}>
-													<button
-														type="button"
-														className="btn primary"
-														onClick={() => void saveInstance(inst.id)}
-														disabled={busySettings}
-													>
-														Speichern
-													</button>
-													<button type="button" className="btn" onClick={() => setEditInstance(null)}>
-														Abbrechen
-													</button>
-												</div>
-											</div>
-										)}
-										{instExpanded === inst.id && (
-											<div style={{ marginTop: 6, paddingLeft: 10, borderLeft: "2px solid var(--border)" }}>
-												<SettingsEditor value={instSettings} onChange={setInstSettings} />
-												<div className="row" style={{ marginTop: 8 }}>
-													<button
-														type="button"
-														className="btn primary"
-														onClick={() => void saveInstSettings(inst.id)}
-														disabled={busySettings}
-													>
-														Speichern
-													</button>
-													<button
-														type="button"
-														onClick={() => void clearInstSettings(inst.id)}
-														disabled={busySettings}
-													>
-														Overrides löschen
-													</button>
-												</div>
-											</div>
-										)}
-										{instDocs === inst.id && (
-											<div style={{ paddingLeft: 10, borderLeft: "2px solid var(--border)" }}>
-												<DocsEditor
-													basePath={`/api/instances/${inst.id}`}
-													ownerName={inst.displayName}
-													onInitSaved={async () => {
-														if (expanded) await reloadInstances(expanded)
+												>
+													<input
+														type="checkbox"
+														checked={isActive(inst)}
+														onChange={(e) => void toggleEnabled(inst, e.target.checked)}
+													/>
+													aktiv
+												</label>
+												<button
+													type="button"
+													className="linklike grow"
+													onClick={() => {
+														if (instExpanded === inst.id) {
+															setInstExpanded(null)
+														} else {
+															setInstExpanded(inst.id)
+															setInstSettings({ ...inst.modelSettings })
+														}
 													}}
-													onClose={() => setInstDocs(null)}
-												/>
+												>
+													<strong>{inst.displayName}</strong>{" "}
+													{overrides > 0 ? (
+														<span className="badge accent">{overrides} Overrides</span>
+													) : (
+														<span className="badge subtle">ohne Overrides</span>
+													)}
+												</button>
+												<div className="actions">
+													<button
+														type="button"
+														className={`icon-btn ${editInstance === inst.id ? "active" : ""}`}
+														aria-label={`${inst.displayName} bearbeiten`}
+														title="Modell bearbeiten"
+														onClick={() => startEditInstance(inst)}
+													>
+														<IconEdit size={16} />
+													</button>
+													<button
+														type="button"
+														className={`icon-btn ${instDocs === inst.id ? "active" : ""}`}
+														aria-label={`Dokumente von ${inst.displayName}`}
+														title="plan.md, changelog.md und init.md dieser LLM-Instanz"
+														onClick={() => setInstDocs(instDocs === inst.id ? null : inst.id)}
+													>
+														<IconDoc size={16} />
+													</button>
+													<button
+														type="button"
+														className={`icon-btn ${instExpanded === inst.id ? "active" : ""}`}
+														aria-label={`Overrides für ${inst.displayName}`}
+														title="Model-Settings dieses Modells"
+														onClick={() => {
+															if (instExpanded === inst.id) {
+																setInstExpanded(null)
+															} else {
+																setInstExpanded(inst.id)
+																setInstSettings({ ...inst.modelSettings })
+															}
+														}}
+													>
+														<IconSettings size={16} />
+													</button>
+												</div>
 											</div>
-										)}
-									</div>
-								))}
+
+											{editInstance === inst.id && iDraft && (
+												<div className="subpanel">
+													<div className="row" style={{ alignItems: "flex-end" }}>
+														<label className="field" style={{ minWidth: 180 }}>
+															Anzeigename
+															<input
+																value={iDraft.displayName}
+																onChange={(e) => setIDraft({ ...iDraft, displayName: e.target.value })}
+															/>
+														</label>
+														<label className="field">
+															Kontext-Fenster (Tokens)
+															<input
+																type="number"
+																min={1}
+																value={iDraft.contextWindow}
+																onChange={(e) => setIDraft({ ...iDraft, contextWindow: e.target.value })}
+															/>
+														</label>
+														<label className="field" style={{ minWidth: 160 }}>
+															Sprachen (kommagetrennt)
+															<input
+																value={iDraft.languages}
+																onChange={(e) => setIDraft({ ...iDraft, languages: e.target.value })}
+																placeholder="de, en"
+															/>
+														</label>
+														<label className="field">
+															Preis in $/M Tok
+															<input
+																type="number"
+																step="0.01"
+																min={0}
+																value={iDraft.priceIn}
+																onChange={(e) => setIDraft({ ...iDraft, priceIn: e.target.value })}
+																placeholder="—"
+															/>
+														</label>
+														<label className="field">
+															Preis out $/M Tok
+															<input
+																type="number"
+																step="0.01"
+																min={0}
+																value={iDraft.priceOut}
+																onChange={(e) => setIDraft({ ...iDraft, priceOut: e.target.value })}
+																placeholder="—"
+															/>
+														</label>
+													</div>
+													<div style={{ marginTop: 12 }}>
+														<div className="field-hint" style={{ marginBottom: 6 }}>
+															Fähigkeiten
+														</div>
+														<div className="chip-group">
+															{CAPABILITIES.map((c) => (
+																<label key={c} className="check-chip">
+																	<input
+																		type="checkbox"
+																		checked={iDraft.capabilities.includes(c)}
+																		onChange={() =>
+																			setIDraft({
+																				...iDraft,
+																				capabilities: iDraft.capabilities.includes(c)
+																					? iDraft.capabilities.filter((x) => x !== c)
+																					: [...iDraft.capabilities, c],
+																			})
+																		}
+																	/>
+																	{c}
+																</label>
+															))}
+														</div>
+													</div>
+													<div className="row" style={{ marginTop: 12 }}>
+														<button
+															type="button"
+															className="btn primary"
+															onClick={() => void saveInstance(inst.id)}
+															disabled={busySettings}
+														>
+															Speichern
+														</button>
+														<button type="button" className="btn ghost" onClick={() => setEditInstance(null)}>
+															Abbrechen
+														</button>
+													</div>
+												</div>
+											)}
+
+											{instExpanded === inst.id && (
+												<div className="subpanel">
+													<SettingsEditor value={instSettings} onChange={setInstSettings} />
+													<div className="row" style={{ marginTop: 12 }}>
+														<button
+															type="button"
+															className="btn primary"
+															onClick={() => void saveInstSettings(inst.id)}
+															disabled={busySettings}
+														>
+															Speichern
+														</button>
+														<button
+															type="button"
+															className="btn danger"
+															onClick={() => void clearInstSettings(inst.id)}
+															disabled={busySettings}
+														>
+															<IconTrash size={15} />
+															Overrides löschen
+														</button>
+													</div>
+												</div>
+											)}
+
+											{instDocs === inst.id && (
+												<div className="subpanel">
+													<DocsEditor
+														basePath={`/api/instances/${inst.id}`}
+														ownerName={inst.displayName}
+														onInitSaved={async () => {
+															if (expanded) await reloadInstances(expanded)
+														}}
+														onClose={() => setInstDocs(null)}
+													/>
+												</div>
+											)}
+										</div>
+									)
+								})}
 							</div>
-						</div>
+						</>
 					)}
 				</div>
 			)}

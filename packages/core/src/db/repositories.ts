@@ -30,7 +30,7 @@ import type {
 	TaskMetadata,
 	TaskStatus,
 } from "@diriz/shared"
-import { AGENT_DOC_KINDS, defaultDoc, parseInitDoc } from "@diriz/shared"
+import { AGENT_DOC_KINDS, defaultDoc, parseInitDoc, renderInitDoc } from "@diriz/shared"
 import type { LogEntry } from "../logger.js"
 import type { Db } from "./connection.js"
 
@@ -414,7 +414,13 @@ function mapInstanceDoc(row: InstanceDocRow): InstanceDoc {
 	}
 }
 
-function writeInstanceDoc(db: Db, instanceId: string, kind: AgentDocKind, content: string, now: string): void {
+function writeInstanceDoc(
+	db: Db,
+	instanceId: string,
+	kind: AgentDocKind,
+	content: string,
+	now: string,
+): void {
 	db.prepare(
 		`INSERT INTO instance_docs (instance_id, kind, content, updated_at) VALUES (?, ?, ?, ?)
 		 ON CONFLICT(instance_id, kind) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
@@ -438,7 +444,11 @@ export function listInstanceDocs(db: Db, instanceId: string): InstanceDoc[] {
 			return existing
 		}
 		// Instanzen aus der Zeit vor M9 bekommen ihre Dokumente beim ersten Zugriff.
-		const content = templatedDoc(db, kind, "instance", instance.displayName, instance.lastSeenAt || now)
+		// Vorhandene Overrides wandern ins `init.md` — sie gehen nicht verloren.
+		const content =
+			kind === "init" && instance.modelSettings && Object.keys(instance.modelSettings).length > 0
+				? renderInitDoc(instance.modelSettings, instance.displayName)
+				: templatedDoc(db, kind, "instance", instance.displayName, instance.lastSeenAt || now)
 		writeInstanceDoc(db, instanceId, kind, content, now)
 		return { instanceId, kind, content, updatedAt: now }
 	})
@@ -1202,8 +1212,13 @@ export function listAgentDocs(db: Db, agentId: string): AgentDoc[] {
 		if (existing) {
 			return existing
 		}
-		// Alt-Agenten (vor M9) bekommen ihre Dokumente beim ersten Zugriff.
-		const content = templatedDoc(db, kind, "agent", agent.name, agent.createdAt || now)
+		// Alt-Agenten (vor M9) bekommen ihre Dokumente beim ersten Zugriff. Ein
+		// bereits gesetztes `model_settings` wandert dabei ins `init.md`, sonst
+		// würde das erste Speichern die vorhandenen Overrides löschen.
+		const content =
+			kind === "init" && agent.modelSettings && Object.keys(agent.modelSettings).length > 0
+				? renderInitDoc(agent.modelSettings, agent.name)
+				: templatedDoc(db, kind, "agent", agent.name, agent.createdAt || now)
 		writeAgentDoc(db, agentId, kind, content, now)
 		return { agentId, kind, content, updatedAt: now }
 	})

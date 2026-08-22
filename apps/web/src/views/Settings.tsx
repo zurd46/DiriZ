@@ -1,9 +1,33 @@
 /**
- * Einstellungen (M7): Routing-Gewichte, Daten-Export/-Import, Info.
+ * Einstellungen (M7/M9): Routing-Gewichte, **Dokument-Vorlagen** für
+ * `plan.md`/`changelog.md`/`init.md`, Daten-Export/-Import, Info.
  */
 
-import { DEFAULT_WEIGHTS, normalizeWeights, type ScoringWeights } from "@diriz/shared"
+import {
+	AGENT_DOC_FILES,
+	AGENT_DOC_KINDS,
+	type AgentDocKind,
+	DEFAULT_WEIGHTS,
+	type DocOwnerKind,
+	type DocTemplateSettings,
+	defaultDoc,
+	normalizeWeights,
+	type ScoringWeights,
+} from "@diriz/shared"
 import { useEffect, useRef, useState } from "react"
+import {
+	IconAlert,
+	IconCheck,
+	IconCheckCircle,
+	IconDoc,
+	IconDownload,
+	IconInfo,
+	IconRefresh,
+	IconRoute,
+	IconSliders,
+	IconTemplate,
+	IconUpload,
+} from "../components/icons.js"
 import { api } from "../lib/api.js"
 import { useStore } from "../store.js"
 
@@ -21,6 +45,11 @@ const WEIGHT_META: { key: keyof ScoringWeights; label: string; hint: string }[] 
 	},
 ]
 
+const OWNERS: { id: DocOwnerKind; label: string; hint: string }[] = [
+	{ id: "agent", label: "Spezialisten", hint: "Gilt für jeden neu angelegten Spezialisten." },
+	{ id: "instance", label: "LLM-Instanzen", hint: "Gilt für jedes neu entdeckte Modell auf einem Rechner." },
+]
+
 export default function Settings() {
 	const settings = useStore((s) => s.settings)
 	const lastError = useStore((s) => s.lastError)
@@ -30,11 +59,62 @@ export default function Settings() {
 	const [importMsg, setImportMsg] = useState<string | undefined>()
 	const fileRef = useRef<HTMLInputElement>(null)
 
+	// Dokument-Vorlagen (M9): je Besitzer-Art und Dokumenttyp.
+	const [tplOwner, setTplOwner] = useState<DocOwnerKind>("agent")
+	const [tplKind, setTplKind] = useState<AgentDocKind>("plan")
+	const [templates, setTemplates] = useState<DocTemplateSettings | null>(null)
+	const [tplBusy, setTplBusy] = useState(false)
+	const [tplSaved, setTplSaved] = useState(false)
+
 	useEffect(() => {
 		if (settings && draft === null) {
 			setDraft(settings.routingWeights)
 		}
 	}, [settings, draft])
+
+	useEffect(() => {
+		if (settings && templates === null) {
+			setTemplates(settings.docTemplates ?? {})
+		}
+	}, [settings, templates])
+
+	const tplValue = templates?.[tplOwner]?.[tplKind] ?? ""
+	const tplDirty =
+		templates !== null && JSON.stringify(templates) !== JSON.stringify(settings?.docTemplates ?? {})
+
+	/** Leere Vorlage = Schlüssel löschen, damit die eingebaute Vorlage gilt. */
+	const setTemplate = (value: string) => {
+		setTemplates((prev) => {
+			const next: DocTemplateSettings = { ...(prev ?? {}) }
+			const group = { ...(next[tplOwner] ?? {}) }
+			if (value.trim().length === 0) {
+				delete group[tplKind]
+			} else {
+				group[tplKind] = value
+			}
+			if (Object.keys(group).length === 0) {
+				delete next[tplOwner]
+			} else {
+				next[tplOwner] = group
+			}
+			return next
+		})
+	}
+
+	const saveTemplates = async () => {
+		if (!templates) return
+		setTplBusy(true)
+		try {
+			await api.put("/api/settings", { docTemplates: templates })
+			await useStore.getState().refreshSettings()
+			setTplSaved(true)
+			setTimeout(() => setTplSaved(false), 2500)
+		} catch (e) {
+			setImportMsg(e instanceof Error ? e.message : String(e))
+		} finally {
+			setTplBusy(false)
+		}
+	}
 
 	const normalized = draft ? normalizeWeights(draft) : null
 	const dirty =
@@ -83,61 +163,193 @@ export default function Settings() {
 	}
 
 	return (
-		<div>
-			<h1>Einstellungen</h1>
-			{lastError && <div className="error-banner">{lastError}</div>}
+		<div className="fade-in">
+			<div className="page-head">
+				<div>
+					<h1>Einstellungen</h1>
+					<p className="page-sub">
+						Routing-Verhalten, Dokument-Vorlagen und Datenhaltung dieser DiriZ-Installation.
+					</p>
+				</div>
+			</div>
+
+			{lastError && (
+				<div className="banner error" role="alert">
+					<IconAlert size={17} />
+					<span className="banner-text">{lastError}</span>
+				</div>
+			)}
 
 			<div className="card">
-				<strong>Routing-Gewichte</strong>
-				<p className="muted" style={{ margin: "6px 0 14px", fontSize: 13 }}>
-					Steuert, wie DiriZ das beste Modell auswählt. Gewichte werden automatisch renormiert (Summe = 1).
-				</p>
-				{draft &&
-					normalized &&
-					WEIGHT_META.map((w) => (
-						<div key={w.key} style={{ marginBottom: 14 }}>
-							<div className="row between" style={{ fontSize: 13 }}>
-								<span title={w.hint}>
-									{w.label} <span className="muted">· {Math.round((normalized[w.key] ?? 0) * 100)}%</span>
-								</span>
-								<span className="mono muted">{(draft[w.key] ?? 0).toFixed(2)}</span>
-							</div>
-							<input
-								type="range"
-								min={0}
-								max={1}
-								step={0.01}
-								value={draft[w.key]}
-								onChange={(e) => setDraft({ ...draft, [w.key]: Number(e.target.value) })}
-								style={{ width: "100%", accentColor: "var(--accent)" }}
-								aria-label={w.label}
-							/>
+				<div className="card-head">
+					<div>
+						<div className="card-title">
+							<IconSliders size={16} />
+							Routing-Gewichte
 						</div>
-					))}
-				<div className="row" style={{ gap: 8 }}>
+						<div className="card-sub">
+							Steuert, wie DiriZ das beste Modell auswählt. Die Gewichte werden automatisch renormiert (Summe
+							= 100 %).
+						</div>
+					</div>
+					{dirty && <span className="pill warn">ungespeichert</span>}
+				</div>
+
+				<div className="stack" style={{ marginTop: 16 }}>
+					{draft &&
+						normalized &&
+						WEIGHT_META.map((w) => (
+							<div key={w.key}>
+								<div className="kv">
+									<span title={w.hint}>
+										{w.label}
+										<span className="badge accent">{Math.round((normalized[w.key] ?? 0) * 100)} %</span>
+									</span>
+									<span className="mono faint">{(draft[w.key] ?? 0).toFixed(2)}</span>
+								</div>
+								<input
+									type="range"
+									min={0}
+									max={1}
+									step={0.01}
+									value={draft[w.key]}
+									onChange={(e) => setDraft({ ...draft, [w.key]: Number(e.target.value) })}
+									style={{ marginTop: 6 }}
+									aria-label={w.label}
+								/>
+								<div className="field-hint" style={{ marginTop: 3 }}>
+									{w.hint}
+								</div>
+							</div>
+						))}
+				</div>
+
+				<div className="row" style={{ marginTop: 18 }}>
 					<button type="button" className="btn primary" disabled={!dirty || busy} onClick={() => void save()}>
-						Speichern
+						{busy ? "Speichere …" : "Speichern"}
 					</button>
 					<button type="button" className="btn" onClick={() => setDraft({ ...DEFAULT_WEIGHTS })}>
+						<IconRefresh size={15} />
 						Defaults wiederherstellen
 					</button>
 					{saved && (
-						<span style={{ color: "var(--ok)", fontSize: 13 }}>
-							✓ Gespeichert — gilt ab der nächsten Task.
+						<span className="text-ok row tight text-sm">
+							<IconCheckCircle size={15} />
+							Gespeichert — gilt ab der nächsten Task.
 						</span>
 					)}
 				</div>
 			</div>
 
 			<div className="card">
-				<strong>Daten</strong>
-				<p className="muted" style={{ margin: "6px 0 14px", fontSize: 13 }}>
-					Export/Import von Agenten, Swarms, Templates und Settings. Provider &amp; API-Keys werden bewusst
-					nicht exportiert.
+				<div className="card-head">
+					<div>
+						<div className="card-title">
+							<IconTemplate size={16} />
+							Dokument-Vorlagen
+						</div>
+						<div className="card-sub">
+							Startinhalt von <code>plan.md</code>, <code>changelog.md</code> und <code>init.md</code>. Jeder
+							Spezialist und jede LLM-Instanz bekommt diese drei Dokumente automatisch — hier steht, was beim
+							Anlegen darin steht.
+						</div>
+					</div>
+					{tplDirty && <span className="pill warn">ungespeichert</span>}
+				</div>
+
+				<p className="hint" style={{ marginTop: 12 }}>
+					<IconInfo size={14} />
+					<span>
+						Platzhalter: <code>{"{{name}}"}</code>, <code>{"{{datum}}"}</code>, <code>{"{{datei}}"}</code> ·
+						Leeres Feld = eingebaute Vorlage.
+					</span>
 				</p>
-				<div className="row" style={{ gap: 8 }}>
+
+				<div className="row" style={{ marginTop: 14 }}>
+					<div className="seg">
+						{OWNERS.map((o) => (
+							<button
+								key={o.id}
+								type="button"
+								className={tplOwner === o.id ? "active" : ""}
+								title={o.hint}
+								onClick={() => setTplOwner(o.id)}
+							>
+								{o.label}
+							</button>
+						))}
+					</div>
+					<div className="seg">
+						{AGENT_DOC_KINDS.map((k) => (
+							<button
+								key={k}
+								type="button"
+								className={tplKind === k ? "active" : ""}
+								onClick={() => setTplKind(k)}
+							>
+								<IconDoc size={13} />
+								{AGENT_DOC_FILES[k]}
+								{templates?.[tplOwner]?.[k] ? <IconCheck size={12} /> : null}
+							</button>
+						))}
+					</div>
+				</div>
+
+				<textarea
+					className="mono"
+					style={{ minHeight: 220, marginTop: 12 }}
+					value={tplValue}
+					onChange={(e) => setTemplate(e.target.value)}
+					placeholder={defaultDoc(tplKind, tplOwner, "{{name}}", "{{datum}}")}
+					aria-label={`Vorlage ${AGENT_DOC_FILES[tplKind]}`}
+				/>
+
+				<div className="row" style={{ marginTop: 12 }}>
+					<button
+						type="button"
+						className="btn primary"
+						disabled={!tplDirty || tplBusy}
+						onClick={() => void saveTemplates()}
+					>
+						{tplBusy ? "Speichere …" : "Speichern"}
+					</button>
+					<button
+						type="button"
+						className="btn"
+						onClick={() => setTemplate(defaultDoc(tplKind, tplOwner, "{{name}}", "{{datum}}"))}
+					>
+						Eingebaute Vorlage übernehmen
+					</button>
+					<button type="button" className="btn ghost" disabled={!tplValue} onClick={() => setTemplate("")}>
+						<IconRefresh size={15} />
+						Zurücksetzen
+					</button>
+					{tplSaved && (
+						<span className="text-ok row tight text-sm">
+							<IconCheckCircle size={15} />
+							Gespeichert — gilt für neu angelegte Einträge.
+						</span>
+					)}
+				</div>
+			</div>
+
+			<div className="card">
+				<div className="card-head">
+					<div>
+						<div className="card-title">
+							<IconDownload size={16} />
+							Daten
+						</div>
+						<div className="card-sub">
+							Export/Import von Agenten, Swarms, Templates und Settings. Provider &amp; API-Keys werden
+							bewusst nicht exportiert.
+						</div>
+					</div>
+				</div>
+				<div className="row" style={{ marginTop: 14 }}>
 					<button type="button" className="btn" onClick={() => void exportData()}>
-						⬇ Export (JSON)
+						<IconDownload size={15} />
+						Export (JSON)
 					</button>
 					<input
 						ref={fileRef}
@@ -147,30 +359,37 @@ export default function Settings() {
 						onChange={(e) => e.target.files?.[0] && importData(e.target.files[0])}
 					/>
 					<button type="button" className="btn" onClick={() => fileRef.current?.click()}>
-						⬆ Import (JSON)
+						<IconUpload size={15} />
+						Import (JSON)
 					</button>
 				</div>
-				{importMsg && <p style={{ marginTop: 10, fontSize: 13 }}>{importMsg}</p>}
+				{importMsg && (
+					<div className="banner info" style={{ marginTop: 12, marginBottom: 0 }}>
+						<IconInfo size={16} />
+						<span className="banner-text">{importMsg}</span>
+					</div>
+				)}
 			</div>
 
 			<div className="card">
-				<strong>Über DiriZ</strong>
-				<table className="table" style={{ marginTop: 8 }}>
-					<tbody>
-						<tr>
-							<td className="muted">Version</td>
-							<td>v1.0 (M5–M7 vollständig)</td>
-						</tr>
-						<tr>
-							<td className="muted">Architektur</td>
-							<td>Fastify-Core + React-UI, SQLite, SSE-Live-Events</td>
-						</tr>
-						<tr>
-							<td className="muted">Routing</td>
-							<td>Mehrachsen-Scoring mit Policies, Failover &amp; Explainability</td>
-						</tr>
-					</tbody>
-				</table>
+				<div className="card-title">
+					<IconRoute size={16} />
+					Über DiriZ
+				</div>
+				<div className="stack" style={{ marginTop: 12, gap: 0 }}>
+					<div className="kv">
+						<span>Version</span>
+						<span>v1.0 (M5–M9)</span>
+					</div>
+					<div className="kv">
+						<span>Architektur</span>
+						<span>Fastify-Core + React-UI, SQLite, SSE-Live-Events</span>
+					</div>
+					<div className="kv">
+						<span>Routing</span>
+						<span>Mehrachsen-Scoring mit Policies, Failover &amp; Explainability</span>
+					</div>
+				</div>
 			</div>
 		</div>
 	)

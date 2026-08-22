@@ -6,6 +6,7 @@
 import type {
 	Agent,
 	CoreEvent,
+	DocTemplateSettings,
 	Execution,
 	LogEvent,
 	Provider,
@@ -79,7 +80,7 @@ interface State {
 	logs: LogLine[]
 	metrics: MetricsView | null
 	timeseries: { bucket: string; requests: number; tokens: number; costUsd: number; errors: number }[]
-	settings: { routingWeights: ScoringWeights } | null
+	settings: { routingWeights: ScoringWeights; docTemplates?: DocTemplateSettings } | null
 	live: Record<string, LiveRun>
 	taskDetails: Record<string, TaskDetail>
 	lastError?: string

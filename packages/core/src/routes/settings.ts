@@ -71,15 +71,15 @@ function parseWeights(body: unknown): ScoringWeights | undefined {
 
 /**
  * Vorlagen für `plan.md`/`changelog.md`/`init.md` — je Besitzer-Art
- * (`agent`, `instance`). Leere Strings bedeuten „eingebaute Vorlage nutzen“
- * und werden verworfen. Gibt `undefined` bei ungültiger Struktur zurück.
+ * (`provider`, `instance`, `agent`). Leere Strings bedeuten „eingebaute
+ * Vorlage nutzen“ und werden verworfen. `undefined` bei ungültiger Struktur.
  */
 function parseDocTemplates(body: unknown): DocTemplateSettings | undefined {
 	if (!body || typeof body !== "object" || Array.isArray(body)) {
 		return undefined
 	}
 	const result: DocTemplateSettings = {}
-	for (const owner of ["agent", "instance"] as const) {
+	for (const owner of ["provider", "instance", "agent"] as const) {
 		const group = (body as Record<string, unknown>)[owner]
 		if (group === undefined || group === null) {
 			continue

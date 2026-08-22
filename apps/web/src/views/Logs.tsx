@@ -46,12 +46,7 @@ export default function Logs() {
 						Alle
 					</button>
 					{LEVELS.map((l) => (
-						<button
-							type="button"
-							key={l}
-							className={level === l ? "active" : ""}
-							onClick={() => setLevel(l)}
-						>
+						<button type="button" key={l} className={level === l ? "active" : ""} onClick={() => setLevel(l)}>
 							{l}
 							{counts[l] ? ` · ${counts[l]}` : ""}
 						</button>

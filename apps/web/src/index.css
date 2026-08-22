@@ -2253,8 +2253,10 @@ pre.code {
 	*,
 	*::before,
 	*::after {
+		/* biome-ignore-start lint/complexity/noImportantStyles: Nutzerpräferenz muss jede Komponenten-Transition überschreiben. */
 		animation-duration: 0.01ms !important;
 		animation-iteration-count: 1 !important;
 		transition-duration: 0.01ms !important;
+		/* biome-ignore-end lint/complexity/noImportantStyles: Nutzerpräferenz muss jede Komponenten-Transition überschreiben. */
 	}
 }

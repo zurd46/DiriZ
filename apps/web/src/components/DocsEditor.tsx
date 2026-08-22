@@ -19,6 +19,7 @@ import {
 import { useEffect, useState } from "react"
 import { api } from "../lib/api.js"
 import { useStore } from "../store.js"
+import { IconCheckCircle, IconClose, IconDoc, IconInfo, IconRefresh, IconSparkles } from "./icons.js"
 
 interface DocResponse {
 	docs: { kind: AgentDocKind; content: string }[]
@@ -71,7 +72,7 @@ export default function DocsEditor(props: {
 		try {
 			await api.put(`${basePath}/docs/${kind}`, { content })
 			setDocs((prev) => ({ ...(prev ?? {}), [kind]: content }))
-			setSavedAt(new Date().toLocaleTimeString())
+			setSavedAt(new Date().toLocaleTimeString("de-DE"))
 			if (kind === "init") {
 				await props.onInitSaved?.()
 			}
@@ -92,107 +93,116 @@ export default function DocsEditor(props: {
 	const directive = kind === "plan" ? extractDirective(content) : undefined
 
 	return (
-		<div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
-			<div className="row between">
-				<div className="row" style={{ gap: 6 }}>
+		<div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+			<div className="card-head">
+				<div className="tabs" style={{ marginBottom: 0, border: "none" }}>
 					{AGENT_DOC_KINDS.map((k) => (
 						<button
 							key={k}
 							type="button"
-							className={`btn ${kind === k ? "primary" : ""}`}
+							className={`tab ${kind === k ? "active" : ""}`}
 							onClick={() => setKind(k)}
 						>
+							<IconDoc size={14} />
 							{AGENT_DOC_FILES[k]}
-							{docs && (drafts[k] ?? "") !== (docs[k] ?? "") ? " •" : ""}
+							{docs && (drafts[k] ?? "") !== (docs[k] ?? "") ? (
+								<span className="dirty" title="ungespeicherte Änderungen" />
+							) : null}
 						</button>
 					))}
 				</div>
-				<button type="button" className="btn" onClick={props.onClose}>
-					Schließen
+				<button type="button" className="icon-btn" aria-label="Dokumente schließen" onClick={props.onClose}>
+					<IconClose size={16} />
 				</button>
 			</div>
 
-			<p className="muted" style={{ fontSize: 12, margin: "8px 0 4px" }}>
-				{HINTS[kind]}
+			<p className="hint" style={{ margin: "10px 0 0" }}>
+				<IconInfo size={14} />
+				<span>{HINTS[kind]}</span>
 			</p>
 
 			{docs === null ? (
-				<p className="muted">Lade Dokumente …</p>
+				<div style={{ marginTop: 12 }}>
+					<div className="skeleton" />
+					<div className="skeleton" style={{ width: "80%" }} />
+					<div className="skeleton" style={{ width: "55%" }} />
+				</div>
 			) : (
 				<>
 					<textarea
 						className="mono"
-						style={{ minHeight: 240 }}
+						style={{ minHeight: 240, marginTop: 12 }}
 						value={content}
 						onChange={(e) => setDrafts((prev) => ({ ...prev, [kind]: e.target.value }))}
 						placeholder={`# ${AGENT_DOC_FILES[kind]}`}
+						aria-label={AGENT_DOC_FILES[kind]}
 					/>
+
 					{kind === "plan" && (
-						<div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+						<div style={{ marginTop: 10 }}>
 							{directive ? (
 								<>
-									<div>Das Modell erhält daraus:</div>
-									<pre
-										className="mono"
-										style={{
-											margin: "4px 0 0",
-											padding: 8,
-											background: "var(--bg-soft, rgba(127,127,127,0.08))",
-											borderRadius: 6,
-											whiteSpace: "pre-wrap",
-											maxHeight: 160,
-											overflow: "auto",
-										}}
-									>
+									<div className="field-hint">Das Modell erhält daraus:</div>
+									<pre className="output" style={{ maxHeight: 170 }}>
 										{directive}
 									</pre>
 								</>
 							) : (
-								<em>
-									Noch nichts deklariert — solange nur Vorlagen-Platzhalter dastehen, wird nichts an das
-									Modell übergeben.
-								</em>
+								<p className="hint">
+									<IconInfo size={14} />
+									<span>
+										Noch nichts deklariert — solange nur Vorlagen-Platzhalter dastehen, wird nichts an das
+										Modell übergeben.
+									</span>
+								</p>
 							)}
 						</div>
 					)}
+
 					{kind === "init" && (
-						<div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-							Erkannte Voreinstellungen:{" "}
+						<div className="row tight" style={{ marginTop: 10 }}>
+							<span className="field-hint">Erkannte Voreinstellungen:</span>
 							{parsedEntries.length === 0 ? (
-								<em>keine</em>
+								<span className="faint text-sm">keine</span>
 							) : (
 								parsedEntries.map(([k, v]) => (
-									<span key={k} className="badge" style={{ marginRight: 4 }}>
+									<span key={k} className="badge accent">
 										{k}: {Array.isArray(v) ? v.join(" | ") : String(v).slice(0, 40)}
 									</span>
 								))
 							)}
 						</div>
 					)}
-					<div className="row" style={{ marginTop: 10 }}>
+
+					<div className="row" style={{ marginTop: 14 }}>
 						<button
 							type="button"
 							className="btn primary"
 							onClick={() => void save()}
 							disabled={busy || !dirty}
 						>
-							{busy ? "…" : "Speichern"}
+							{busy ? "Speichere …" : "Speichern"}
 						</button>
 						<button
 							type="button"
-							className="btn"
+							className="btn ghost"
 							onClick={() => setDrafts((prev) => ({ ...prev, [kind]: docs[kind] ?? "" }))}
 							disabled={!dirty}
 						>
+							<IconRefresh size={15} />
 							Zurücksetzen
 						</button>
 						{kind === "init" && (
-							<button type="button" className="btn" onClick={normalizeInit}>
-								Aufräumen (Format vereinheitlichen)
+							<button type="button" className="btn" onClick={normalizeInit} title="Format vereinheitlichen">
+								<IconSparkles size={15} />
+								Aufräumen
 							</button>
 						)}
 						{savedAt && !dirty && (
-							<span style={{ color: "var(--ok)", fontSize: 13 }}>✓ Gespeichert {savedAt}</span>
+							<span className="text-ok row tight text-sm">
+								<IconCheckCircle size={15} />
+								Gespeichert {savedAt}
+							</span>
 						)}
 					</div>
 				</>

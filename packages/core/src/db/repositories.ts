@@ -22,6 +22,7 @@ import type {
 	ModelSource,
 	PromptTemplate,
 	Provider,
+	ProviderDoc,
 	ProviderStatus,
 	ProviderType,
 	RoutingDecision,
@@ -123,6 +124,8 @@ export function createProvider(db: Db, input: ProviderInput): Provider {
 		input.apiKeyEnc ?? null,
 		input.modelSettings ? JSON.stringify(input.modelSettings) : null,
 	)
+	// Dokumente (plan/changelog/init) sofort anlegen — jeder Rechner hat sie.
+	createDocs(db, "provider", id, input.label, new Date().toISOString())
 	const created = getProvider(db, id)
 	if (!created) {
 		throw new Error("provider create failed")
@@ -188,6 +191,7 @@ export function updateProvider(db: Db, id: string, patch: ProviderPatch): Provid
 }
 
 export function deleteProvider(db: Db, id: string): boolean {
+	deleteDocs(db, "provider", id)
 	return db.prepare("DELETE FROM providers WHERE id = ?").run(id).changes > 0
 }
 
@@ -282,9 +286,7 @@ export function upsertInstance(
 			now,
 		)
 		// Dokumente (plan/changelog/init) sofort anlegen — jede LLM-Instanz hat sie.
-		for (const kind of AGENT_DOC_KINDS) {
-			writeInstanceDoc(db, id, kind, templatedDoc(db, kind, "instance", model.displayName, now), now)
-		}
+		createDocs(db, "instance", id, model.displayName, now)
 		const created = getInstance(db, id)
 		if (!created) {
 			throw new Error("instance create failed")
@@ -388,7 +390,7 @@ export function updateInstance(db: Db, id: string, patch: InstancePatch): Instan
 }
 
 export function deleteInstance(db: Db, id: string): boolean {
-	db.prepare("DELETE FROM instance_docs WHERE instance_id = ?").run(id)
+	deleteDocs(db, "instance", id)
 	return db.prepare("DELETE FROM instances WHERE id = ?").run(id).changes > 0
 }
 
@@ -396,102 +398,228 @@ export function setInstanceStatus(db: Db, id: string, status: ProviderStatus): v
 	db.prepare("UPDATE instances SET status = ? WHERE id = ?").run(status, id)
 }
 
-/* ---------------------- Dokumente je LLM-Instanz (M9) ------------------------ */
+/* ------------- Deklarations-Dokumente (Rechner/Modell/Spezialist) ------------- */
 
-interface InstanceDocRow {
-	instance_id: string
+/**
+ * Die drei Dokumente (`plan.md`, `changelog.md`, `init.md`) hängen an allen
+ * drei Ebenen der Auflösungskette. Der Zugriff ist überall derselbe — nur
+ * Tabelle, Spalte und Besitzer-Metadaten unterscheiden sich, deshalb liegt die
+ * Mechanik genau einmal hier und nicht dreimal.
+ */
+interface DocScope {
+	owner: DocOwnerKind
+	/** Tabelle der Dokumente, z. B. `agent_docs`. */
+	docTable: string
+	/** Fremdschlüssel-Spalte darin, z. B. `agent_id`. */
+	docColumn: string
+	/** Tabelle des Besitzers — dorthin wird `init.md` gespiegelt. */
+	ownerTable: string
+	/** Anzeigename, Anlagedatum und bereits gesetzte Settings des Besitzers. */
+	load(db: Db, id: string): { name: string; createdAt: string; settings?: ModelSettings | null } | undefined
+}
+
+const DOC_SCOPES: Record<DocOwnerKind, DocScope> = {
+	provider: {
+		owner: "provider",
+		docTable: "provider_docs",
+		docColumn: "provider_id",
+		ownerTable: "providers",
+		load: (db, id) => {
+			const p = getProvider(db, id)
+			return p ? { name: p.label, createdAt: "", settings: p.modelSettings } : undefined
+		},
+	},
+	instance: {
+		owner: "instance",
+		docTable: "instance_docs",
+		docColumn: "instance_id",
+		ownerTable: "instances",
+		load: (db, id) => {
+			const i = getInstance(db, id)
+			return i ? { name: i.displayName, createdAt: i.lastSeenAt, settings: i.modelSettings } : undefined
+		},
+	},
+	agent: {
+		owner: "agent",
+		docTable: "agent_docs",
+		docColumn: "agent_id",
+		ownerTable: "agents",
+		load: (db, id) => {
+			const a = getAgent(db, id)
+			return a ? { name: a.name, createdAt: a.createdAt, settings: a.modelSettings } : undefined
+		},
+	},
+}
+
+interface DocRow {
 	kind: string
 	content: string
 	updated_at: string
 }
 
-function mapInstanceDoc(row: InstanceDocRow): InstanceDoc {
-	return {
-		instanceId: row.instance_id,
-		kind: row.kind as AgentDocKind,
-		content: row.content,
-		updatedAt: row.updated_at,
-	}
+/** Ein Dokument ohne Besitzer-Feld — die Wrapper setzen es passend. */
+interface PlainDoc {
+	kind: AgentDocKind
+	content: string
+	updatedAt: string
 }
 
-function writeInstanceDoc(
-	db: Db,
-	instanceId: string,
-	kind: AgentDocKind,
-	content: string,
-	now: string,
-): void {
+function writeDoc(db: Db, scope: DocScope, ownerId: string, kind: AgentDocKind, content: string, now: string): void {
 	db.prepare(
-		`INSERT INTO instance_docs (instance_id, kind, content, updated_at) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(instance_id, kind) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
-	).run(instanceId, kind, content, now)
+		`INSERT INTO ${scope.docTable} (${scope.docColumn}, kind, content, updated_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(${scope.docColumn}, kind) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
+	).run(ownerId, kind, content, now)
 }
 
-/** Alle drei Dokumente einer LLM-Instanz — fehlende werden aus Vorlagen ergänzt. */
-export function listInstanceDocs(db: Db, instanceId: string): InstanceDoc[] {
-	const instance = getInstance(db, instanceId)
-	if (!instance) {
+/**
+ * Alle drei Dokumente eines Besitzers — fehlende werden aus den Vorlagen
+ * ergänzt. Ein bereits gesetztes `model_settings` (Bestände aus der Zeit vor
+ * den Dokumenten) wandert dabei ins `init.md`, sonst würde das erste Speichern
+ * die vorhandenen Overrides löschen.
+ */
+function listDocs(db: Db, scope: DocScope, ownerId: string): PlainDoc[] {
+	const owner = scope.load(db, ownerId)
+	if (!owner) {
 		return []
 	}
 	const rows = db
-		.prepare("SELECT * FROM instance_docs WHERE instance_id = ?")
-		.all(instanceId) as unknown as InstanceDocRow[]
-	const byKind = new Map(rows.map((r) => [r.kind, mapInstanceDoc(r)]))
+		.prepare(`SELECT kind, content, updated_at FROM ${scope.docTable} WHERE ${scope.docColumn} = ?`)
+		.all(ownerId) as unknown as DocRow[]
+	const byKind = new Map(rows.map((r) => [r.kind, r]))
 	const now = new Date().toISOString()
 	return AGENT_DOC_KINDS.map((kind) => {
 		const existing = byKind.get(kind)
 		if (existing) {
-			return existing
+			return { kind, content: existing.content, updatedAt: existing.updated_at }
 		}
-		// Instanzen aus der Zeit vor M9 bekommen ihre Dokumente beim ersten Zugriff.
-		// Vorhandene Overrides wandern ins `init.md` — sie gehen nicht verloren.
 		const content =
-			kind === "init" && instance.modelSettings && Object.keys(instance.modelSettings).length > 0
-				? renderInitDoc(instance.modelSettings, instance.displayName)
-				: templatedDoc(db, kind, "instance", instance.displayName, instance.lastSeenAt || now)
-		writeInstanceDoc(db, instanceId, kind, content, now)
-		return { instanceId, kind, content, updatedAt: now }
+			kind === "init" && owner.settings && Object.keys(owner.settings).length > 0
+				? renderInitDoc(owner.settings, owner.name)
+				: templatedDoc(db, kind, scope.owner, owner.name, owner.createdAt || now)
+		writeDoc(db, scope, ownerId, kind, content, now)
+		return { kind, content, updatedAt: now }
 	})
+}
+
+/** Speichert ein Dokument; `init.md` wird in die Besitzer-Tabelle gespiegelt. */
+function saveDoc(
+	db: Db,
+	scope: DocScope,
+	ownerId: string,
+	kind: AgentDocKind,
+	content: string,
+): PlainDoc | undefined {
+	if (!scope.load(db, ownerId)) {
+		return undefined
+	}
+	const now = new Date().toISOString()
+	writeDoc(db, scope, ownerId, kind, content, now)
+	if (kind === "init") {
+		syncSettingsFromInit(db, scope, ownerId)
+	}
+	return { kind, content, updatedAt: now }
+}
+
+/** Liest `init.md` und schreibt die abgeleiteten Settings an den Besitzer. */
+function syncSettingsFromInit(db: Db, scope: DocScope, ownerId: string): ModelSettings {
+	const row = db
+		.prepare(`SELECT content FROM ${scope.docTable} WHERE ${scope.docColumn} = ? AND kind = 'init'`)
+		.get(ownerId) as { content: string } | undefined
+	const settings = parseInitDoc(row?.content ?? "")
+	const empty = Object.keys(settings).length === 0
+	db.prepare(`UPDATE ${scope.ownerTable} SET model_settings = ? WHERE id = ?`).run(
+		empty ? null : JSON.stringify(settings),
+		ownerId,
+	)
+	return settings
+}
+
+/** Legt die drei Dokumente an — beim Anlegen eines Besitzers. */
+function createDocs(
+	db: Db,
+	owner: DocOwnerKind,
+	ownerId: string,
+	name: string,
+	now: string,
+	preset?: Partial<Record<AgentDocKind, string>>,
+): void {
+	const scope = DOC_SCOPES[owner]
+	for (const kind of AGENT_DOC_KINDS) {
+		writeDoc(db, scope, ownerId, kind, preset?.[kind] ?? templatedDoc(db, kind, owner, name, now), now)
+	}
+}
+
+function deleteDocs(db: Db, owner: DocOwnerKind, ownerId: string): void {
+	const scope = DOC_SCOPES[owner]
+	db.prepare(`DELETE FROM ${scope.docTable} WHERE ${scope.docColumn} = ?`).run(ownerId)
+}
+
+/* ------------------------------ Öffentliche API ------------------------------ */
+
+export function listAgentDocs(db: Db, agentId: string): AgentDoc[] {
+	return listDocs(db, DOC_SCOPES.agent, agentId).map((d) => ({ agentId, ...d }))
+}
+
+export function getAgentDoc(db: Db, agentId: string, kind: AgentDocKind): AgentDoc | undefined {
+	return listAgentDocs(db, agentId).find((d) => d.kind === kind)
+}
+
+export function saveAgentDoc(
+	db: Db,
+	agentId: string,
+	kind: AgentDocKind,
+	content: string,
+): AgentDoc | undefined {
+	const doc = saveDoc(db, DOC_SCOPES.agent, agentId, kind, content)
+	return doc && { agentId, ...doc }
+}
+
+export function syncAgentSettingsFromInit(db: Db, agentId: string): ModelSettings {
+	return syncSettingsFromInit(db, DOC_SCOPES.agent, agentId)
+}
+
+export function listInstanceDocs(db: Db, instanceId: string): InstanceDoc[] {
+	return listDocs(db, DOC_SCOPES.instance, instanceId).map((d) => ({ instanceId, ...d }))
 }
 
 export function getInstanceDoc(db: Db, instanceId: string, kind: AgentDocKind): InstanceDoc | undefined {
 	return listInstanceDocs(db, instanceId).find((d) => d.kind === kind)
 }
 
-/**
- * Speichert ein Dokument einer LLM-Instanz. Bei `init.md` werden die
- * Model-Voreinstellungen daraus neu abgeleitet und in
- * `instances.model_settings` gespiegelt — die Engine liest nur diese Spalte.
- */
 export function saveInstanceDoc(
 	db: Db,
 	instanceId: string,
 	kind: AgentDocKind,
 	content: string,
 ): InstanceDoc | undefined {
-	if (!getInstance(db, instanceId)) {
-		return undefined
-	}
-	const now = new Date().toISOString()
-	writeInstanceDoc(db, instanceId, kind, content, now)
-	if (kind === "init") {
-		syncInstanceSettingsFromInit(db, instanceId)
-	}
-	return { instanceId, kind, content, updatedAt: now }
+	const doc = saveDoc(db, DOC_SCOPES.instance, instanceId, kind, content)
+	return doc && { instanceId, ...doc }
 }
 
-/** Liest `init.md` und schreibt die abgeleiteten Settings an die Instanz. */
 export function syncInstanceSettingsFromInit(db: Db, instanceId: string): ModelSettings {
-	const row = db
-		.prepare("SELECT content FROM instance_docs WHERE instance_id = ? AND kind = 'init'")
-		.get(instanceId) as { content: string } | undefined
-	const settings = parseInitDoc(row?.content ?? "")
-	const empty = Object.keys(settings).length === 0
-	db.prepare("UPDATE instances SET model_settings = ? WHERE id = ?").run(
-		empty ? null : JSON.stringify(settings),
-		instanceId,
-	)
-	return settings
+	return syncSettingsFromInit(db, DOC_SCOPES.instance, instanceId)
+}
+
+export function listProviderDocs(db: Db, providerId: string): ProviderDoc[] {
+	return listDocs(db, DOC_SCOPES.provider, providerId).map((d) => ({ providerId, ...d }))
+}
+
+export function getProviderDoc(db: Db, providerId: string, kind: AgentDocKind): ProviderDoc | undefined {
+	return listProviderDocs(db, providerId).find((d) => d.kind === kind)
+}
+
+export function saveProviderDoc(
+	db: Db,
+	providerId: string,
+	kind: AgentDocKind,
+	content: string,
+): ProviderDoc | undefined {
+	const doc = saveDoc(db, DOC_SCOPES.provider, providerId, kind, content)
+	return doc && { providerId, ...doc }
+}
+
+export function syncProviderSettingsFromInit(db: Db, providerId: string): ModelSettings {
+	return syncSettingsFromInit(db, DOC_SCOPES.provider, providerId)
 }
 
 /* ------------------------------------ Tasks ---------------------------------- */
@@ -1098,10 +1226,7 @@ export function createAgent(db: Db, input: AgentInput): Agent {
 		now,
 	)
 	// Dokumente (plan/changelog/init) sofort anlegen — jeder Spezialist hat sie.
-	for (const kind of AGENT_DOC_KINDS) {
-		const content = input.docs?.[kind] ?? templatedDoc(db, kind, "agent", input.name.trim(), now)
-		writeAgentDoc(db, id, kind, content, now)
-	}
+	createDocs(db, "agent", id, input.name.trim(), now, input.docs)
 	syncAgentSettingsFromInit(db, id)
 	const created = getAgent(db, id)
 	if (!created) {
@@ -1167,100 +1292,8 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent | unde
 }
 
 export function deleteAgent(db: Db, id: string): boolean {
-	db.prepare("DELETE FROM agent_docs WHERE agent_id = ?").run(id)
+	deleteDocs(db, "agent", id)
 	return db.prepare("DELETE FROM agents WHERE id = ?").run(id).changes > 0
-}
-
-/* -------------------------- Agenten-Dokumente (M9) --------------------------- */
-
-interface AgentDocRow {
-	agent_id: string
-	kind: string
-	content: string
-	updated_at: string
-}
-
-function mapAgentDoc(row: AgentDocRow): AgentDoc {
-	return {
-		agentId: row.agent_id,
-		kind: row.kind as AgentDocKind,
-		content: row.content,
-		updatedAt: row.updated_at,
-	}
-}
-
-function writeAgentDoc(db: Db, agentId: string, kind: AgentDocKind, content: string, now: string): void {
-	db.prepare(
-		`INSERT INTO agent_docs (agent_id, kind, content, updated_at) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(agent_id, kind) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
-	).run(agentId, kind, content, now)
-}
-
-/** Alle drei Dokumente eines Spezialisten — fehlende werden aus Vorlagen ergänzt. */
-export function listAgentDocs(db: Db, agentId: string): AgentDoc[] {
-	const agent = getAgent(db, agentId)
-	if (!agent) {
-		return []
-	}
-	const rows = db
-		.prepare("SELECT * FROM agent_docs WHERE agent_id = ?")
-		.all(agentId) as unknown as AgentDocRow[]
-	const byKind = new Map(rows.map((r) => [r.kind, mapAgentDoc(r)]))
-	const now = new Date().toISOString()
-	return AGENT_DOC_KINDS.map((kind) => {
-		const existing = byKind.get(kind)
-		if (existing) {
-			return existing
-		}
-		// Alt-Agenten (vor M9) bekommen ihre Dokumente beim ersten Zugriff. Ein
-		// bereits gesetztes `model_settings` wandert dabei ins `init.md`, sonst
-		// würde das erste Speichern die vorhandenen Overrides löschen.
-		const content =
-			kind === "init" && agent.modelSettings && Object.keys(agent.modelSettings).length > 0
-				? renderInitDoc(agent.modelSettings, agent.name)
-				: templatedDoc(db, kind, "agent", agent.name, agent.createdAt || now)
-		writeAgentDoc(db, agentId, kind, content, now)
-		return { agentId, kind, content, updatedAt: now }
-	})
-}
-
-export function getAgentDoc(db: Db, agentId: string, kind: AgentDocKind): AgentDoc | undefined {
-	return listAgentDocs(db, agentId).find((d) => d.kind === kind)
-}
-
-/**
- * Speichert ein Dokument. Bei `init.md` werden die Model-Voreinstellungen
- * daraus neu abgeleitet und in `agents.model_settings` gespiegelt.
- */
-export function saveAgentDoc(
-	db: Db,
-	agentId: string,
-	kind: AgentDocKind,
-	content: string,
-): AgentDoc | undefined {
-	if (!getAgent(db, agentId)) {
-		return undefined
-	}
-	const now = new Date().toISOString()
-	writeAgentDoc(db, agentId, kind, content, now)
-	if (kind === "init") {
-		syncAgentSettingsFromInit(db, agentId)
-	}
-	return { agentId, kind, content, updatedAt: now }
-}
-
-/** Liest `init.md` und schreibt die abgeleiteten Settings an den Agenten. */
-export function syncAgentSettingsFromInit(db: Db, agentId: string): ModelSettings {
-	const row = db
-		.prepare("SELECT content FROM agent_docs WHERE agent_id = ? AND kind = 'init'")
-		.get(agentId) as { content: string } | undefined
-	const settings = parseInitDoc(row?.content ?? "")
-	const empty = Object.keys(settings).length === 0
-	db.prepare("UPDATE agents SET model_settings = ? WHERE id = ?").run(
-		empty ? null : JSON.stringify(settings),
-		agentId,
-	)
-	return settings
 }
 
 /* ------------------------------------ Swarms ---------------------------------- */

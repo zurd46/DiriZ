@@ -4,14 +4,7 @@
  */
 
 import { type CSSProperties, useCallback, useEffect, useState } from "react"
-import {
-	IconAlert,
-	IconArrowRight,
-	IconDiff,
-	IconEye,
-	IconFile,
-	IconWorkspace,
-} from "../components/icons.js"
+import { IconAlert, IconArrowRight, IconDiff, IconEye, IconFile, IconWorkspace } from "../components/icons.js"
 import { api } from "../lib/api.js"
 
 interface WsFile {

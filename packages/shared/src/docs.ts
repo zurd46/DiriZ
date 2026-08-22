@@ -27,8 +27,11 @@ export type AgentDocKind = "plan" | "changelog" | "init"
 /** Alias — die Dokumente hängen nicht nur an Agenten. */
 export type DocKind = AgentDocKind
 
-/** Wem die Dokumente gehören: einem Spezialisten oder einer LLM-Instanz. */
-export type DocOwnerKind = "agent" | "instance"
+/**
+ * Wem die Dokumente gehören. Die drei Ebenen entsprechen der Auflösungskette:
+ * Rechner (`provider`) ← Modell (`instance`) ← Spezialist (`agent`).
+ */
+export type DocOwnerKind = "provider" | "instance" | "agent"
 
 export const AGENT_DOC_KINDS: AgentDocKind[] = ["plan", "changelog", "init"]
 
@@ -49,6 +52,14 @@ export interface AgentDoc {
 /** Dieselben drei Dokumente, aber an einer LLM-Instanz (Modell) hängend. */
 export interface InstanceDoc {
 	instanceId: string
+	kind: AgentDocKind
+	content: string
+	updatedAt: string
+}
+
+/** Dieselben drei Dokumente an einem Rechner (Provider). */
+export interface ProviderDoc {
+	providerId: string
 	kind: AgentDocKind
 	content: string
 	updatedAt: string
@@ -265,10 +276,12 @@ export function renderInitDoc(settings: ModelSettings, agentName?: string): stri
 const PLAN_PLACEHOLDERS = [
 	"Wofür ist dieser Spezialist zuständig?",
 	"Wofür wird dieses Modell eingesetzt?",
+	"Wofür wird dieser Rechner eingesetzt?",
 	"Schritt 1",
 	"Schritt 2",
 	"Was darf der Spezialist nicht tun?",
 	"Was darf dieses Modell nicht tun?",
+	"Was darf auf diesem Rechner nicht laufen?",
 ]
 
 const PLACEHOLDER_SET = new Set(PLAN_PLACEHOLDERS.map((p) => normalizeKey(p)))
@@ -410,10 +423,11 @@ export function composeSystemPrompt(layers: PromptLayer[]): string {
 /** Systemweit einstellbare Vorlagen für die drei Dokumente. */
 export type DocTemplates = Partial<Record<AgentDocKind, string>>
 
-/** Vorlagen pro Besitzer-Art — Spezialist und LLM-Instanz sind getrennt. */
+/** Vorlagen pro Besitzer-Art — Rechner, Modell und Spezialist sind getrennt. */
 export interface DocTemplateSettings {
-	agent?: DocTemplates
+	provider?: DocTemplates
 	instance?: DocTemplates
+	agent?: DocTemplates
 }
 
 /**
@@ -433,7 +447,25 @@ export function renderDocTemplate(
 		.replace(/\{\{\s*(datei|file|Datei|File)\s*\}\}/g, AGENT_DOC_FILES[kind])
 }
 
-/** Startinhalt eines Dokuments — angelegt, sobald Spezialist/Instanz entsteht. */
+const OWNER_NOUNS: Record<DocOwnerKind, string> = {
+	provider: "Rechner",
+	instance: "Modell",
+	agent: "Spezialist",
+}
+
+const OWNER_PURPOSE: Record<DocOwnerKind, string> = {
+	provider: "Wofür wird dieser Rechner eingesetzt?",
+	instance: "Wofür wird dieses Modell eingesetzt?",
+	agent: "Wofür ist dieser Spezialist zuständig?",
+}
+
+const OWNER_LIMITS: Record<DocOwnerKind, string> = {
+	provider: "Was darf auf diesem Rechner nicht laufen?",
+	instance: "Was darf dieses Modell nicht tun?",
+	agent: "Was darf der Spezialist nicht tun?",
+}
+
+/** Startinhalt eines Dokuments — angelegt, sobald Rechner/Modell/Spezialist entsteht. */
 export function defaultDoc(
 	kind: AgentDocKind,
 	owner: DocOwnerKind,
@@ -446,8 +478,7 @@ export function defaultDoc(
 		return renderDocTemplate(custom, name, isoDate, kind)
 	}
 	const day = isoDate.slice(0, 10)
-	const isAgent = owner === "agent"
-	const noun = isAgent ? "Spezialist" : "Modell"
+	const noun = OWNER_NOUNS[owner]
 
 	if (kind === "plan") {
 		return [
@@ -457,7 +488,7 @@ export function defaultDoc(
 			"",
 			"## 1. Auftrag",
 			"",
-			isAgent ? "Wofür ist dieser Spezialist zuständig?" : "Wofür wird dieses Modell eingesetzt?",
+			OWNER_PURPOSE[owner],
 			"",
 			"## 2. Vorgehen",
 			"",
@@ -466,7 +497,7 @@ export function defaultDoc(
 			"",
 			"## 3. Leitplanken",
 			"",
-			isAgent ? "- Was darf der Spezialist nicht tun?" : "- Was darf dieses Modell nicht tun?",
+			`- ${OWNER_LIMITS[owner]}`,
 			"",
 		].join("\n")
 	}

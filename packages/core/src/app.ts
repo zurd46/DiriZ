@@ -11,6 +11,7 @@ import type { EventBus } from "./execution/bus.js"
 import type { ExecutionEngine } from "./execution/engine.js"
 import type { ProviderRegistry } from "./providers/registry.js"
 import { registerAgents } from "./routes/agents.js"
+import { registerDocs } from "./routes/docs.js"
 import { registerHealth } from "./routes/health.js"
 import { registerHost } from "./routes/host.js"
 import { registerInstances } from "./routes/instances.js"
@@ -44,6 +45,7 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
 	registerProviders(app, ctx)
 	registerAgents(app, ctx)
 	registerInstances(app, ctx)
+	registerDocs(app, ctx)
 	registerTasks(app, ctx)
 	registerTemplates(app, ctx)
 	registerLogs(app, ctx)

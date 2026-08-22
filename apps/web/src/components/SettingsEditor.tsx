@@ -43,21 +43,30 @@ export default function SettingsEditor({
 	}
 
 	return (
-		<div className="row" style={{ alignItems: "flex-end" }}>
-			{NUM_FIELDS.map((f) => (
-				<label key={f.key} className="field">
-					{f.label}
-					<input
-						type="number"
-						step={f.step}
-						min={f.min}
-						max={f.max}
-						value={value[f.key] ?? ""}
-						onChange={setNum(f.key)}
-						placeholder="—"
-					/>
-				</label>
-			))}
+		<div className="stack">
+			<div
+				style={{
+					display: "grid",
+					gap: "12px",
+					gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))",
+				}}
+			>
+				{NUM_FIELDS.map((f) => (
+					<label key={f.key} className="field">
+						{f.label}
+						<input
+							type="number"
+							step={f.step}
+							min={f.min}
+							max={f.max}
+							value={value[f.key] ?? ""}
+							onChange={setNum(f.key)}
+							placeholder="—"
+						/>
+					</label>
+				))}
+			</div>
+
 			<label className="field">
 				Stop-Wörter (kommagetrennt)
 				<input
@@ -74,7 +83,8 @@ export default function SettingsEditor({
 					placeholder="z. B. ```file:"
 				/>
 			</label>
-			<label className="field" style={{ flex: 1, minWidth: 260 }}>
+
+			<label className="field">
 				System-Prompt
 				<textarea
 					value={value.systemPrompt ?? ""}

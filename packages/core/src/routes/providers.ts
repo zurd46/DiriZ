@@ -4,20 +4,41 @@
  * im Klartext zurückgegeben (nur `hasApiKey`).
  */
 
-import type { ModelSettings, ProviderType } from "@diriz/shared"
+import {
+	AGENT_DOC_FILES,
+	type AgentDocKind,
+	appendChangelogEntry,
+	isAgentDocKind,
+	type ModelSettings,
+	parseInitDoc,
+	type ProviderType,
+	renderInitDoc,
+} from "@diriz/shared"
 import type { FastifyInstance } from "fastify"
 import type { AppContext } from "../app.js"
 import {
 	createProvider,
 	deleteProvider,
 	getProvider,
+	getProviderDoc,
 	listInstances,
+	listProviderDocs,
 	listProviders,
+	saveProviderDoc,
 	updateProvider,
 } from "../db/repositories.js"
 import { encryptString } from "../security/keys.js"
 
 const PROVIDER_TYPES: ProviderType[] = ["ollama", "lmstudio", "openai-compat", "openrouter", "openai"]
+
+/** Feld-Labels für den automatischen Changelog-Eintrag beim Bearbeiten. */
+const FIELD_LABELS: Record<string, string> = {
+	label: "Name",
+	baseUrl: "Base-URL",
+	enabled: "Status",
+	config: "Konfiguration",
+	modelSettings: "Model-Voreinstellungen",
+}
 
 interface CreateBody {
 	type: string
@@ -106,12 +127,46 @@ export function registerProviders(app: FastifyInstance, ctx: AppContext): void {
 		if (body.label !== undefined && body.label.trim().length === 0) {
 			return reply.code(400).send({ error: "label darf nicht leer sein" })
 		}
+		const before = getProvider(ctx.db, req.params.id)
+		if (!before) {
+			return reply.code(404).send({ error: "Provider nicht gefunden" })
+		}
+		// Model-Settings sind aus `init.md` abgeleitet — also dort hineinschreiben.
+		const { modelSettings, ...rest } = body
+		if (modelSettings !== undefined) {
+			saveProviderDoc(
+				ctx.db,
+				req.params.id,
+				"init",
+				renderInitDoc(modelSettings ?? {}, body.label?.trim() || before.label),
+			)
+		}
 		const provider = updateProvider(ctx.db, req.params.id, {
-			...body,
+			...rest,
 			apiKeyEnc: body.apiKey ? encryptString(body.apiKey, ctx.secret) : undefined,
 		})
 		if (!provider) {
 			return reply.code(404).send({ error: "Provider nicht gefunden" })
+		}
+		const changed = Object.entries(body)
+			.filter(([key, value]) => value !== undefined && key in FIELD_LABELS)
+			.filter(
+				([key, value]) =>
+					JSON.stringify(value ?? null) !==
+					JSON.stringify((before as unknown as Record<string, unknown>)[key] ?? null),
+			)
+			.map(([key]) => FIELD_LABELS[key] ?? key)
+		if (changed.length > 0) {
+			saveProviderDoc(
+				ctx.db,
+				provider.id,
+				"changelog",
+				appendChangelogEntry(
+					getProviderDoc(ctx.db, provider.id, "changelog")?.content ?? "",
+					`Bearbeitet: ${changed.join(", ")}`,
+					new Date().toISOString(),
+				),
+			)
 		}
 		// Adapter neu anlegen (BaseUrl/Key können sich geändert haben).
 		ctx.registry.unregister(provider.id)
@@ -147,6 +202,37 @@ export function registerProviders(app: FastifyInstance, ctx: AppContext): void {
 		const updated = getProvider(ctx.db, req.params.id)
 		return { ok, provider: updated }
 	})
+
+	/* --------------------- Dokumente: plan/changelog/init.md -------------------- */
+
+	app.get<{ Params: { id: string } }>("/api/providers/:id/docs", (req, reply) => {
+		if (!getProvider(ctx.db, req.params.id)) {
+			return reply.code(404).send({ error: "Provider nicht gefunden" })
+		}
+		return { providerId: req.params.id, docs: listProviderDocs(ctx.db, req.params.id) }
+	})
+
+	app.put<{ Params: { id: string; kind: string }; Body: { content?: string } }>(
+		"/api/providers/:id/docs/:kind",
+		(req, reply) => {
+			const { id, kind } = req.params
+			if (!isAgentDocKind(kind)) {
+				return reply
+					.code(400)
+					.send({ error: `kind muss einer von ${Object.values(AGENT_DOC_FILES).join(", ")} sein` })
+			}
+			const content = req.body?.content
+			if (typeof content !== "string") {
+				return reply.code(400).send({ error: "content ist erforderlich" })
+			}
+			const doc = saveProviderDoc(ctx.db, id, kind as AgentDocKind, content)
+			if (!doc) {
+				return reply.code(404).send({ error: "Provider nicht gefunden" })
+			}
+			// `init.md` wirkt: die abgeleiteten Settings gleich zurückgeben.
+			return { ...doc, settings: kind === "init" ? parseInitDoc(content) : undefined }
+		},
+	)
 
 	app.post<{ Params: { id: string } }>("/api/providers/:id/discover", async (req, reply) => {
 		const provider = getProvider(ctx.db, req.params.id)

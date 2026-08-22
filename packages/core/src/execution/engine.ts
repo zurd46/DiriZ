@@ -46,6 +46,7 @@ import {
 	getInstance,
 	getInstanceDoc,
 	getProvider,
+	getProviderDoc,
 	getSetting,
 	getSwarm,
 	getTask,
@@ -653,6 +654,7 @@ export class ExecutionEngine {
 			const systemPrompt = composeSystemPrompt([
 				{
 					label: `Rechner ${provider?.label ?? choice.instance.providerId}`,
+					plan: getProviderDoc(db, choice.instance.providerId, "plan")?.content,
 					systemPrompt: provider?.modelSettings?.systemPrompt,
 				},
 				{

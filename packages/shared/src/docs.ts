@@ -1,22 +1,34 @@
 /**
- * Agenten-Dokumente (`plan.md`, `changelog.md`, `init.md`).
+ * Deklarations-Dokumente (`plan.md`, `changelog.md`, `init.md`).
  *
- * Jeder Spezialist führt drei Markdown-Dokumente mit sich:
- * - `plan.md`      — Auftrag, Vorgehen, Leitplanken (reine Doku).
+ * Jeder Spezialist **und** jede LLM-Instanz (Modell auf einem Rechner) führt
+ * drei Markdown-Dokumente mit sich. Alle drei sind **wirksam** — das System
+ * deklariert darin, wie das Modell zu arbeiten hat:
+ *
+ * - `plan.md`      — Auftrag, Vorgehen, Leitplanken. Wird als **verbindliche
+ *   Arbeitsanweisung** in den System-Prompt übernommen (siehe
+ *   `composeSystemPrompt`); Vorlagen-Platzhalter werden dabei entfernt.
+ * - `init.md`      — setzt die Voreinstellungen des LLM-Modells (Temperatur,
+ *   Max-Tokens, System-Prompt, …).
  * - `changelog.md` — Änderungsprotokoll; der Core hängt Einträge automatisch an.
- * - `init.md`      — **wirksam**: setzt die Voreinstellungen des LLM-Modells
- *   (Temperatur, Max-Tokens, …). Der Parser lebt hier in `shared`, weil Core
- *   (Anwendung im Routing) und Web (Live-Vorschau) dieselbe Formel brauchen —
- *   keine Drift möglich.
+ *
+ * Der Parser lebt in `shared`, weil Core (Anwendung im Routing) und Web
+ * (Live-Vorschau) dieselbe Formel brauchen — keine Drift möglich.
  *
  * Auflösung der Model-Settings (späterer Eintrag gewinnt):
- * Provider-Default ← Modell-Override ← **Agent (`init.md`)** ← Task-Override.
+ * Provider ← **Instanz (`init.md`)** ← **Agent (`init.md`)** ← Agent-Feld ← Task.
  */
 
 import type { ModelSettings } from "./types.js"
 
-/** Die drei Dokumente pro Spezialist. */
+/** Die drei Dokumente pro Spezialist bzw. LLM-Instanz. */
 export type AgentDocKind = "plan" | "changelog" | "init"
+
+/** Alias — die Dokumente hängen nicht nur an Agenten. */
+export type DocKind = AgentDocKind
+
+/** Wem die Dokumente gehören: einem Spezialisten oder einer LLM-Instanz. */
+export type DocOwnerKind = "agent" | "instance"
 
 export const AGENT_DOC_KINDS: AgentDocKind[] = ["plan", "changelog", "init"]
 
@@ -29,6 +41,14 @@ export const AGENT_DOC_FILES: Record<AgentDocKind, string> = {
 
 export interface AgentDoc {
 	agentId: string
+	kind: AgentDocKind
+	content: string
+	updatedAt: string
+}
+
+/** Dieselben drei Dokumente, aber an einer LLM-Instanz (Modell) hängend. */
+export interface InstanceDoc {
+	instanceId: string
 	kind: AgentDocKind
 	content: string
 	updatedAt: string
@@ -211,8 +231,8 @@ export function renderInitDoc(settings: ModelSettings, agentName?: string): stri
 	const lines: string[] = [
 		`# init.md${agentName ? ` — ${agentName}` : ""}`,
 		"",
-		"Voreinstellungen für das LLM-Modell dieses Spezialisten.",
-		"Reihenfolge: Provider-Default ← Modell-Override ← **init.md** ← Task-Override.",
+		"Voreinstellungen für das LLM-Modell.",
+		"Reihenfolge: Provider ← Instanz-init.md ← Agent-init.md ← Task-Override.",
 		"",
 		"## Model-Parameter",
 		"",
@@ -235,20 +255,209 @@ export function renderInitDoc(settings: ModelSettings, agentName?: string): stri
 	return lines.join("\n")
 }
 
+/* --------------------------- plan.md → Arbeitsanweisung ---------------------- */
+
+/**
+ * Platzhalter-Zeilen der Vorlagen. Sie stehen in `defaultDoc` **und** hier —
+ * eine unbearbeitete Vorlage darf das Modell nie erreichen („Schritt 1“ ist
+ * keine Arbeitsanweisung). Normalisiert verglichen (klein, ohne Deko).
+ */
+const PLAN_PLACEHOLDERS = [
+	"Wofür ist dieser Spezialist zuständig?",
+	"Wofür wird dieses Modell eingesetzt?",
+	"Schritt 1",
+	"Schritt 2",
+	"Was darf der Spezialist nicht tun?",
+	"Was darf dieses Modell nicht tun?",
+]
+
+const PLACEHOLDER_SET = new Set(PLAN_PLACEHOLDERS.map((p) => normalizeKey(p)))
+
+/** Zeile ohne Inhalt: Vorlagen-Platzhalter, TODO, Strich, `{{…}}`. */
+function isPlaceholderLine(line: string): boolean {
+	const text = stripMarkdown(line)
+	if (text.length === 0) {
+		return true
+	}
+	if (PLACEHOLDER_SET.has(normalizeKey(text))) {
+		return true
+	}
+	return /^(todo|tbd|-{1,3}|—|–|\.{3}|…)$/i.test(text) || /^\{\{.*\}\}$/.test(text)
+}
+
+/** Metazeile, die im Prompt nichts verloren hat (Titel, Erstell-Datum). */
+function isMetaLine(line: string): boolean {
+	const text = stripMarkdown(line)
+	return /^(plan|init|changelog)\.md\b/i.test(text) || /^(erstellt am|angelegt am|stand)\s*:/i.test(text)
+}
+
+/**
+ * Zieht aus einem `plan.md` die tatsächliche Arbeitsanweisung heraus.
+ *
+ * Entfernt Titel, Erstell-Datum und alle unbearbeiteten Vorlagen-Platzhalter;
+ * Überschriften ohne verbleibenden Inhalt fallen mit weg. Ergebnis ist
+ * `undefined`, wenn das Dokument nie ausgefüllt wurde — dann wird auch nichts
+ * deklariert und das Modell arbeitet wie zuvor.
+ */
+export function extractDirective(markdown: string): string | undefined {
+	const lines = (markdown ?? "").split(/\r?\n/)
+
+	// 1. Durchgang: Meta/Platzhalter raus, Struktur (Überschriften) behalten.
+	type Entry = { heading: boolean; text: string }
+	const kept: Entry[] = []
+	for (const raw of lines) {
+		const isHeading = /^\s*#{1,6}\s+/.test(raw)
+		if (isHeading) {
+			if (isMetaLine(raw)) {
+				continue
+			}
+			kept.push({ heading: true, text: raw.trim() })
+			continue
+		}
+		if (raw.trim().length === 0) {
+			kept.push({ heading: false, text: "" })
+			continue
+		}
+		if (isMetaLine(raw) || isPlaceholderLine(raw)) {
+			continue
+		}
+		kept.push({ heading: false, text: raw.trimEnd() })
+	}
+
+	// 2. Durchgang: Überschriften ohne eigenen Inhalt fallen weg — ein „## 2.
+	// Vorgehen“, dessen Punkte alle Platzhalter waren, ist keine Anweisung.
+	const result: Entry[] = []
+	for (let i = 0; i < kept.length; i++) {
+		const entry = kept[i]
+		if (!entry) {
+			continue
+		}
+		if (!entry.heading) {
+			result.push(entry)
+			continue
+		}
+		// Nächste bedeutsame Zeile: eine weitere Überschrift → Abschnitt ist leer.
+		const next = kept.slice(i + 1).find((e) => e.heading || e.text.trim().length > 0)
+		if (next && !next.heading) {
+			result.push(entry)
+		}
+	}
+
+	const text = result
+		.map((e) => e.text)
+		.join("\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim()
+	return text.length > 0 ? text : undefined
+}
+
+/**
+ * Eine Deklarations-Ebene für den System-Prompt: Instanz oder Spezialist.
+ * `label` erscheint im Prompt, damit das Modell weiß, woher eine Vorgabe kommt.
+ */
+export interface PromptLayer {
+	label: string
+	/** Roher `plan.md`-Inhalt dieser Ebene. */
+	plan?: string
+	/** System-Prompt dieser Ebene (aus `init.md` oder dem Agenten-Feld). */
+	systemPrompt?: string
+}
+
+const DIRECTIVE_HEADER = [
+	"# Verbindliche Arbeitsanweisung",
+	"",
+	"Die folgenden Abschnitte sind die Deklaration des Systems für diesen Auftrag.",
+	"Arbeite **exakt** danach: Auftrag, Vorgehen und Leitplanken sind bindend und",
+	"haben Vorrang vor eigenen Annahmen oder Gewohnheiten. Widersprechen sich zwei",
+	"Abschnitte, gilt der weiter unten stehende. Ist eine Vorgabe unmöglich oder",
+	"unsicher, halte dich trotzdem an alle übrigen und sage ausdrücklich, welche",
+	"Vorgabe du warum nicht erfüllen konntest.",
+].join("\n")
+
+/**
+ * Baut den finalen System-Prompt aus den Deklarations-Ebenen.
+ *
+ * - **Rolle**: der zuletzt gesetzte, nicht-leere System-Prompt gewinnt
+ *   (Provider ← Instanz ← Agent ← Task) — er steht ganz oben.
+ * - **Anweisung**: jede Ebene mit ausgefülltem `plan.md` liefert einen
+ *   Abschnitt, in der übergebenen Reihenfolge (allgemein → spezifisch).
+ *
+ * Ohne jede Deklaration bleibt es beim reinen System-Prompt — kein Rahmen,
+ * kein zusätzlicher Text (Verhalten wie vor M9).
+ */
+export function composeSystemPrompt(layers: PromptLayer[]): string {
+	const role = layers
+		.map((l) => (l.systemPrompt ?? "").trim())
+		.filter((s) => s.length > 0)
+		.at(-1)
+
+	const sections: string[] = []
+	for (const layer of layers) {
+		const directive = extractDirective(layer.plan ?? "")
+		if (directive) {
+			sections.push(`## ${layer.label} — ${AGENT_DOC_FILES.plan}\n\n${directive}`)
+		}
+	}
+
+	if (sections.length === 0) {
+		return role ?? ""
+	}
+	return [role, DIRECTIVE_HEADER, ...sections].filter((s) => s && s.length > 0).join("\n\n")
+}
+
 /* ------------------------------ Default-Inhalte ------------------------------ */
 
-/** Startinhalt eines Dokuments — angelegt, sobald ein Spezialist entsteht. */
-export function defaultAgentDoc(kind: AgentDocKind, agentName: string, isoDate: string): string {
+/** Systemweit einstellbare Vorlagen für die drei Dokumente. */
+export type DocTemplates = Partial<Record<AgentDocKind, string>>
+
+/** Vorlagen pro Besitzer-Art — Spezialist und LLM-Instanz sind getrennt. */
+export interface DocTemplateSettings {
+	agent?: DocTemplates
+	instance?: DocTemplates
+}
+
+/**
+ * Füllt die Platzhalter einer Vorlage: `{{name}}` (Spezialist/Modell),
+ * `{{datum}}`/`{{date}}` (ISO-Tag) und `{{datei}}`/`{{file}}` (Dateiname).
+ */
+export function renderDocTemplate(
+	template: string,
+	name: string,
+	isoDate: string,
+	kind: AgentDocKind,
+): string {
 	const day = isoDate.slice(0, 10)
+	return template
+		.replace(/\{\{\s*(name|Name)\s*\}\}/g, name)
+		.replace(/\{\{\s*(datum|date|Datum|Date)\s*\}\}/g, day)
+		.replace(/\{\{\s*(datei|file|Datei|File)\s*\}\}/g, AGENT_DOC_FILES[kind])
+}
+
+/** Startinhalt eines Dokuments — angelegt, sobald Spezialist/Instanz entsteht. */
+export function defaultDoc(
+	kind: AgentDocKind,
+	owner: DocOwnerKind,
+	name: string,
+	isoDate: string,
+	templates?: DocTemplateSettings,
+): string {
+	const custom = templates?.[owner]?.[kind]
+	if (custom && custom.trim().length > 0) {
+		return renderDocTemplate(custom, name, isoDate, kind)
+	}
+	const day = isoDate.slice(0, 10)
+	const isAgent = owner === "agent"
+	const noun = isAgent ? "Spezialist" : "Modell"
+
 	if (kind === "plan") {
 		return [
-			`# plan.md — ${agentName}`,
+			`# plan.md — ${name}`,
 			"",
 			`**Erstellt am:** ${day}`,
 			"",
 			"## 1. Auftrag",
 			"",
-			"Wofür ist dieser Spezialist zuständig?",
+			isAgent ? "Wofür ist dieser Spezialist zuständig?" : "Wofür wird dieses Modell eingesetzt?",
 			"",
 			"## 2. Vorgehen",
 			"",
@@ -257,21 +466,31 @@ export function defaultAgentDoc(kind: AgentDocKind, agentName: string, isoDate: 
 			"",
 			"## 3. Leitplanken",
 			"",
-			"- Was darf der Spezialist nicht tun?",
+			isAgent ? "- Was darf der Spezialist nicht tun?" : "- Was darf dieses Modell nicht tun?",
 			"",
 		].join("\n")
 	}
 	if (kind === "changelog") {
 		return [
-			`# changelog.md — ${agentName}`,
+			`# changelog.md — ${name}`,
 			"",
-			"Änderungsprotokoll dieses Spezialisten (neueste Einträge oben).",
+			"Änderungsprotokoll (neueste Einträge oben).",
 			"",
-			`- ${day} — Spezialist angelegt`,
+			`- ${day} — ${noun} angelegt`,
 			"",
 		].join("\n")
 	}
-	return renderInitDoc({}, agentName)
+	return renderInitDoc({}, name)
+}
+
+/** Rückwärtskompatibler Kurzweg für Spezialisten. */
+export function defaultAgentDoc(
+	kind: AgentDocKind,
+	agentName: string,
+	isoDate: string,
+	templates?: DocTemplateSettings,
+): string {
+	return defaultDoc(kind, "agent", agentName, isoDate, templates)
 }
 
 /**

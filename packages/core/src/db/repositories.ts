@@ -12,8 +12,11 @@ import type {
 	AgentScore,
 	Capability,
 	DiscoveredModel,
+	DocOwnerKind,
+	DocTemplateSettings,
 	Execution,
 	ExecutionStatus,
+	InstanceDoc,
 	InstanceModel,
 	ModelSettings,
 	ModelSource,
@@ -27,9 +30,29 @@ import type {
 	TaskMetadata,
 	TaskStatus,
 } from "@diriz/shared"
-import { AGENT_DOC_KINDS, defaultAgentDoc, parseInitDoc } from "@diriz/shared"
+import { AGENT_DOC_KINDS, defaultDoc, parseInitDoc } from "@diriz/shared"
 import type { LogEntry } from "../logger.js"
 import type { Db } from "./connection.js"
+
+/**
+ * Systemweit eingestellte Dokument-Vorlagen (`settings.doc_templates`).
+ * Greift beim Anlegen von Spezialisten und LLM-Instanzen; ohne Eintrag
+ * gelten die eingebauten Vorlagen aus `@diriz/shared`.
+ */
+export function getDocTemplates(db: Db): DocTemplateSettings | undefined {
+	return getSetting<DocTemplateSettings>(db, "doc_templates")
+}
+
+/** Startinhalt eines Dokuments unter Berücksichtigung der System-Vorlagen. */
+function templatedDoc(
+	db: Db,
+	kind: AgentDocKind,
+	owner: DocOwnerKind,
+	name: string,
+	isoDate: string,
+): string {
+	return defaultDoc(kind, owner, name, isoDate, getDocTemplates(db))
+}
 
 /* ---------------------------------- Provider --------------------------------- */
 
@@ -258,6 +281,10 @@ export function upsertInstance(
 			null,
 			now,
 		)
+		// Dokumente (plan/changelog/init) sofort anlegen — jede LLM-Instanz hat sie.
+		for (const kind of AGENT_DOC_KINDS) {
+			writeInstanceDoc(db, id, kind, templatedDoc(db, kind, "instance", model.displayName, now), now)
+		}
 		const created = getInstance(db, id)
 		if (!created) {
 			throw new Error("instance create failed")
@@ -361,11 +388,100 @@ export function updateInstance(db: Db, id: string, patch: InstancePatch): Instan
 }
 
 export function deleteInstance(db: Db, id: string): boolean {
+	db.prepare("DELETE FROM instance_docs WHERE instance_id = ?").run(id)
 	return db.prepare("DELETE FROM instances WHERE id = ?").run(id).changes > 0
 }
 
 export function setInstanceStatus(db: Db, id: string, status: ProviderStatus): void {
 	db.prepare("UPDATE instances SET status = ? WHERE id = ?").run(status, id)
+}
+
+/* ---------------------- Dokumente je LLM-Instanz (M9) ------------------------ */
+
+interface InstanceDocRow {
+	instance_id: string
+	kind: string
+	content: string
+	updated_at: string
+}
+
+function mapInstanceDoc(row: InstanceDocRow): InstanceDoc {
+	return {
+		instanceId: row.instance_id,
+		kind: row.kind as AgentDocKind,
+		content: row.content,
+		updatedAt: row.updated_at,
+	}
+}
+
+function writeInstanceDoc(db: Db, instanceId: string, kind: AgentDocKind, content: string, now: string): void {
+	db.prepare(
+		`INSERT INTO instance_docs (instance_id, kind, content, updated_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(instance_id, kind) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
+	).run(instanceId, kind, content, now)
+}
+
+/** Alle drei Dokumente einer LLM-Instanz — fehlende werden aus Vorlagen ergänzt. */
+export function listInstanceDocs(db: Db, instanceId: string): InstanceDoc[] {
+	const instance = getInstance(db, instanceId)
+	if (!instance) {
+		return []
+	}
+	const rows = db
+		.prepare("SELECT * FROM instance_docs WHERE instance_id = ?")
+		.all(instanceId) as unknown as InstanceDocRow[]
+	const byKind = new Map(rows.map((r) => [r.kind, mapInstanceDoc(r)]))
+	const now = new Date().toISOString()
+	return AGENT_DOC_KINDS.map((kind) => {
+		const existing = byKind.get(kind)
+		if (existing) {
+			return existing
+		}
+		// Instanzen aus der Zeit vor M9 bekommen ihre Dokumente beim ersten Zugriff.
+		const content = templatedDoc(db, kind, "instance", instance.displayName, instance.lastSeenAt || now)
+		writeInstanceDoc(db, instanceId, kind, content, now)
+		return { instanceId, kind, content, updatedAt: now }
+	})
+}
+
+export function getInstanceDoc(db: Db, instanceId: string, kind: AgentDocKind): InstanceDoc | undefined {
+	return listInstanceDocs(db, instanceId).find((d) => d.kind === kind)
+}
+
+/**
+ * Speichert ein Dokument einer LLM-Instanz. Bei `init.md` werden die
+ * Model-Voreinstellungen daraus neu abgeleitet und in
+ * `instances.model_settings` gespiegelt — die Engine liest nur diese Spalte.
+ */
+export function saveInstanceDoc(
+	db: Db,
+	instanceId: string,
+	kind: AgentDocKind,
+	content: string,
+): InstanceDoc | undefined {
+	if (!getInstance(db, instanceId)) {
+		return undefined
+	}
+	const now = new Date().toISOString()
+	writeInstanceDoc(db, instanceId, kind, content, now)
+	if (kind === "init") {
+		syncInstanceSettingsFromInit(db, instanceId)
+	}
+	return { instanceId, kind, content, updatedAt: now }
+}
+
+/** Liest `init.md` und schreibt die abgeleiteten Settings an die Instanz. */
+export function syncInstanceSettingsFromInit(db: Db, instanceId: string): ModelSettings {
+	const row = db
+		.prepare("SELECT content FROM instance_docs WHERE instance_id = ? AND kind = 'init'")
+		.get(instanceId) as { content: string } | undefined
+	const settings = parseInitDoc(row?.content ?? "")
+	const empty = Object.keys(settings).length === 0
+	db.prepare("UPDATE instances SET model_settings = ? WHERE id = ?").run(
+		empty ? null : JSON.stringify(settings),
+		instanceId,
+	)
+	return settings
 }
 
 /* ------------------------------------ Tasks ---------------------------------- */
@@ -973,7 +1089,7 @@ export function createAgent(db: Db, input: AgentInput): Agent {
 	)
 	// Dokumente (plan/changelog/init) sofort anlegen — jeder Spezialist hat sie.
 	for (const kind of AGENT_DOC_KINDS) {
-		const content = input.docs?.[kind] ?? defaultAgentDoc(kind, input.name.trim(), now)
+		const content = input.docs?.[kind] ?? templatedDoc(db, kind, "agent", input.name.trim(), now)
 		writeAgentDoc(db, id, kind, content, now)
 	}
 	syncAgentSettingsFromInit(db, id)
@@ -1087,7 +1203,7 @@ export function listAgentDocs(db: Db, agentId: string): AgentDoc[] {
 			return existing
 		}
 		// Alt-Agenten (vor M9) bekommen ihre Dokumente beim ersten Zugriff.
-		const content = defaultAgentDoc(kind, agent.name, agent.createdAt || now)
+		const content = templatedDoc(db, kind, "agent", agent.name, agent.createdAt || now)
 		writeAgentDoc(db, agentId, kind, content, now)
 		return { agentId, kind, content, updatedAt: now }
 	})

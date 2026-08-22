@@ -6,8 +6,10 @@
  */
 
 import {
+	AGENT_DOC_KINDS,
 	type AgentDocKind,
 	DEFAULT_WEIGHTS,
+	type DocTemplateSettings,
 	isAgentDocKind,
 	normalizeWeights,
 	type ScoringWeights,
@@ -18,6 +20,7 @@ import {
 	createAgent,
 	createSwarm,
 	createTemplate,
+	getDocTemplates,
 	getSetting,
 	listAgentDocs,
 	listAgents,
@@ -66,20 +69,77 @@ function parseWeights(body: unknown): ScoringWeights | undefined {
 	return normalizeWeights(raw as unknown as ScoringWeights)
 }
 
+/**
+ * Vorlagen für `plan.md`/`changelog.md`/`init.md` — je Besitzer-Art
+ * (`agent`, `instance`). Leere Strings bedeuten „eingebaute Vorlage nutzen“
+ * und werden verworfen. Gibt `undefined` bei ungültiger Struktur zurück.
+ */
+function parseDocTemplates(body: unknown): DocTemplateSettings | undefined {
+	if (!body || typeof body !== "object" || Array.isArray(body)) {
+		return undefined
+	}
+	const result: DocTemplateSettings = {}
+	for (const owner of ["agent", "instance"] as const) {
+		const group = (body as Record<string, unknown>)[owner]
+		if (group === undefined || group === null) {
+			continue
+		}
+		if (typeof group !== "object" || Array.isArray(group)) {
+			return undefined
+		}
+		const entries: Record<string, string> = {}
+		for (const kind of AGENT_DOC_KINDS) {
+			const value = (group as Record<string, unknown>)[kind]
+			if (value === undefined || value === null) {
+				continue
+			}
+			if (typeof value !== "string") {
+				return undefined
+			}
+			if (value.trim().length > 0) {
+				entries[kind] = value
+			}
+		}
+		if (Object.keys(entries).length > 0) {
+			result[owner] = entries
+		}
+	}
+	return result
+}
+
 export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 	app.get("/api/settings", () => {
 		const weights = getSetting<ScoringWeights>(ctx.db, "routing_weights") ?? DEFAULT_WEIGHTS
-		return { routingWeights: normalizeWeights(weights) }
+		return { routingWeights: normalizeWeights(weights), docTemplates: getDocTemplates(ctx.db) ?? {} }
 	})
 
-	app.put<{ Body: { routingWeights?: ScoringWeights } }>("/api/settings", (req, reply) => {
-		const parsed = parseWeights(req.body?.routingWeights)
-		if (!parsed) {
-			return reply.code(400).send({ error: "routingWeights muss Zahlen zwischen 0 und 1 sein" })
-		}
-		setSetting(ctx.db, "routing_weights", parsed)
-		return { routingWeights: parsed }
-	})
+	app.put<{ Body: { routingWeights?: ScoringWeights; docTemplates?: DocTemplateSettings } }>(
+		"/api/settings",
+		(req, reply) => {
+			const body = req.body ?? {}
+			if (body.routingWeights === undefined && body.docTemplates === undefined) {
+				return reply.code(400).send({ error: "routingWeights oder docTemplates erforderlich" })
+			}
+			if (body.routingWeights !== undefined) {
+				const parsed = parseWeights(body.routingWeights)
+				if (!parsed) {
+					return reply.code(400).send({ error: "routingWeights muss Zahlen zwischen 0 und 1 sein" })
+				}
+				setSetting(ctx.db, "routing_weights", parsed)
+			}
+			if (body.docTemplates !== undefined) {
+				const templates = parseDocTemplates(body.docTemplates)
+				if (!templates) {
+					return reply
+						.code(400)
+						.send({ error: "docTemplates muss { agent?, instance? } mit Text-Vorlagen sein" })
+				}
+				setSetting(ctx.db, "doc_templates", templates)
+			}
+			const weights = getSetting<ScoringWeights>(ctx.db, "routing_weights") ?? DEFAULT_WEIGHTS
+			return { routingWeights: normalizeWeights(weights), docTemplates: getDocTemplates(ctx.db) ?? {} }
+		},
+	)
 
 	app.get("/api/export", () => {
 		const weights = getSetting<ScoringWeights>(ctx.db, "routing_weights") ?? DEFAULT_WEIGHTS
@@ -95,7 +155,7 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			})),
 			swarms: listSwarms(ctx.db),
 			templates: listTemplates(ctx.db),
-			settings: { routingWeights: normalizeWeights(weights) },
+			settings: { routingWeights: normalizeWeights(weights), docTemplates: getDocTemplates(ctx.db) ?? {} },
 		}
 	})
 
@@ -146,12 +206,20 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			imported++
 		}
 
-		const weights = parseWeights(
-			(body.settings as { routingWeights?: ScoringWeights } | undefined)?.routingWeights,
-		)
+		const importedSettings = body.settings as
+			| { routingWeights?: ScoringWeights; docTemplates?: DocTemplateSettings }
+			| undefined
+		const weights = parseWeights(importedSettings?.routingWeights)
 		if (weights) {
 			setSetting(ctx.db, "routing_weights", weights)
 			imported++
+		}
+		if (importedSettings?.docTemplates !== undefined) {
+			const templates = parseDocTemplates(importedSettings.docTemplates)
+			if (templates) {
+				setSetting(ctx.db, "doc_templates", templates)
+				imported++
+			}
 		}
 
 		return { imported, tasks: Array.isArray(body.tasks) ? body.tasks.length : 0 }

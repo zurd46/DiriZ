@@ -1,5 +1,20 @@
 import type { HostMetrics, LoadInfo } from "@diriz/shared"
-import { type CSSProperties, useEffect, useState } from "react"
+import { type CSSProperties, type ReactNode, useEffect, useState } from "react"
+import {
+	IconAlert,
+	IconBolt,
+	IconChart,
+	IconChevronRight,
+	IconClose,
+	IconCost,
+	IconCpu,
+	IconGpu,
+	IconLayers,
+	IconMemory,
+	IconServer,
+	IconTasks,
+	IconTokens,
+} from "../components/icons.js"
 import { api } from "../lib/api.js"
 import { useStore } from "../store.js"
 
@@ -27,78 +42,12 @@ function loadClass(pct: number): "ok" | "warn" | "err" {
 	return "ok"
 }
 
-/* ---------------------------------- Icons ----------------------------------- */
-
-const svgProps = {
-	width: 17,
-	height: 17,
-	viewBox: "0 0 24 24",
-	fill: "none",
-	stroke: "currentColor",
-	strokeWidth: 1.8,
-	strokeLinecap: "round" as const,
-	strokeLinejoin: "round" as const,
-}
-
-function IconServer() {
-	return (
-		<svg {...svgProps} aria-hidden="true">
-			<rect x="3" y="4" width="18" height="7" rx="2" />
-			<rect x="3" y="13" width="18" height="7" rx="2" />
-			<path d="M7 7.5h.01M7 16.5h.01" />
-		</svg>
-	)
-}
-
-function IconLayers() {
-	return (
-		<svg {...svgProps} aria-hidden="true">
-			<path d="m12 3 9 5-9 5-9-5 9-5Z" />
-			<path d="m3 13.5 9 5 9-5" />
-		</svg>
-	)
-}
-
-function IconTasks() {
-	return (
-		<svg {...svgProps} aria-hidden="true">
-			<path d="M4 6h10M4 12h10M4 18h7" />
-			<path d="m15 15.5 2 2 4-4.5" />
-		</svg>
-	)
-}
-
-function IconBolt() {
-	return (
-		<svg {...svgProps} aria-hidden="true">
-			<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" />
-		</svg>
-	)
-}
-
-function IconTokens() {
-	return (
-		<svg {...svgProps} aria-hidden="true">
-			<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18" />
-		</svg>
-	)
-}
-
-function IconCost() {
-	return (
-		<svg {...svgProps} aria-hidden="true">
-			<circle cx="12" cy="12" r="9" />
-			<path d="M15 9.3c-.7-1-1.8-1.6-3-1.6-1.9 0-3.2 1-3.2 2.4s1.3 2.4 3.2 2.4 3.2.9 3.2 2.4-1.3 2.4-3.2 2.4c-1.2 0-2.3-.6-3-1.6M12 5.8v1.9M12 16.3v1.9" />
-		</svg>
-	)
-}
-
-function IconChart() {
-	return (
-		<svg {...svgProps} aria-hidden="true">
-			<path d="M4 20v-9M10 20V5M16 20v-6M3 20h18" />
-		</svg>
-	)
+interface MetricCard {
+	label: string
+	value: string
+	sub?: string
+	icon: ReactNode
+	color: string
 }
 
 export default function Dashboard() {
@@ -195,33 +144,45 @@ export default function Dashboard() {
 	const maxTokens = Math.max(1, ...points.map((t) => t.tokens))
 	const labelStep = Math.max(1, Math.ceil(points.length / 8))
 	const xLabel = (bucket: string) => (range === 24 ? `${bucket.slice(11, 13)}h` : bucket.slice(5))
+	const totalRequests = points.reduce((sum, p) => sum + p.requests, 0)
+	const totalErrors = points.reduce((sum, p) => sum + p.errors, 0)
 
-	const cards = [
+	const cards: MetricCard[] = [
 		{
 			label: "Provider (online)",
 			value: `${metrics?.onlineProviders ?? 0} / ${metrics?.providers ?? 0}`,
-			icon: <IconServer />,
-			color: "#4f8cff",
+			icon: <IconServer size={17} />,
+			color: "#5b8cff",
 		},
-		{ label: "Modelle", value: String(metrics?.instances ?? 0), icon: <IconLayers />, color: "#a78bfa" },
-		{ label: "Tasks", value: String(metrics?.tasks ?? 0), icon: <IconTasks />, color: "#34d399" },
+		{
+			label: "Modelle",
+			value: String(metrics?.instances ?? 0),
+			icon: <IconLayers size={17} />,
+			color: "#a78bfa",
+		},
+		{
+			label: "Tasks",
+			value: String(metrics?.tasks ?? 0),
+			icon: <IconTasks size={17} />,
+			color: "#3ecf8e",
+		},
 		{
 			label: "Executions (aktiv)",
 			value: `${metrics?.activeExecutions ?? 0} / ${metrics?.executions ?? 0}`,
-			icon: <IconBolt />,
-			color: "#f59e0b",
+			icon: <IconBolt size={17} />,
+			color: "#f5a524",
 		},
 		{
 			label: "Tokens (24 h)",
 			value: formatCompact((metrics?.tokensIn24h ?? 0) + (metrics?.tokensOut24h ?? 0)),
 			sub: `${formatCompact(metrics?.tokensIn24h ?? 0)} in · ${formatCompact(metrics?.tokensOut24h ?? 0)} out`,
-			icon: <IconTokens />,
+			icon: <IconTokens size={17} />,
 			color: "#38bdf8",
 		},
 		{
 			label: "Kosten (24 h)",
 			value: `$${(metrics?.costUsd24h ?? 0).toLocaleString("de-DE", { maximumFractionDigits: 4 })}`,
-			icon: <IconCost />,
+			icon: <IconCost size={17} />,
 			color: "#f472b6",
 		},
 	]
@@ -242,15 +203,16 @@ export default function Dashboard() {
 			</div>
 
 			{lastError && lastError !== dismissedError && (
-				<div className="error-banner" role="alert">
-					<span>{lastError}</span>
+				<div className="banner error" role="alert">
+					<IconAlert size={17} />
+					<span className="banner-text">{lastError}</span>
 					<button
 						type="button"
-						className="error-close"
+						className="icon-btn sm"
 						aria-label="Fehlermeldung schließen"
 						onClick={() => setDismissedError(lastError)}
 					>
-						✕
+						<IconClose size={15} />
 					</button>
 				</div>
 			)}
@@ -261,7 +223,7 @@ export default function Dashboard() {
 						<div className="icon-chip">{c.icon}</div>
 						<div className="label">{c.label}</div>
 						<div className="value">{c.value}</div>
-						{"sub" in c && c.sub ? <div className="metric-sub">{c.sub}</div> : null}
+						{c.sub ? <div className="metric-sub">{c.sub}</div> : null}
 					</div>
 				))}
 			</div>
@@ -269,12 +231,22 @@ export default function Dashboard() {
 			<div className="card">
 				<div className="card-head">
 					<div>
-						<div className="card-title">Token-Volumen &amp; Requests</div>
+						<div className="card-title">
+							<IconChart size={16} />
+							Token-Volumen &amp; Requests
+						</div>
 						<div className="card-sub">
 							{range === 24 ? "Letzte 24 Stunden, stündlich" : "Letzte 7 Tage, täglich"}
+							{points.length > 0 && (
+								<>
+									{" · "}
+									{totalRequests.toLocaleString("de-DE")} Requests
+									{totalErrors > 0 && ` · ${totalErrors} Fehler`}
+								</>
+							)}
 						</div>
 					</div>
-					<div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+					<div className="row">
 						<div className="legend">
 							<span>
 								<i style={{ background: "var(--accent)" }} />
@@ -297,10 +269,11 @@ export default function Dashboard() {
 				</div>
 				{points.length === 0 ? (
 					<div className="empty">
-						<span className="icon-chip" style={{ "--mc": "var(--accent)" } as CSSProperties}>
-							<IconChart />
+						<span className="icon-chip lg" style={{ "--mc": "var(--accent)" } as CSSProperties}>
+							<IconChart size={20} />
 						</span>
-						Noch keine Daten — führe eine Task aus, um hier das Token-Volumen zu sehen.
+						<span className="empty-title">Noch keine Messwerte</span>
+						<p>Führe eine Task aus — danach erscheint hier das Token-Volumen pro Zeitfenster.</p>
 					</div>
 				) : (
 					<>
@@ -331,13 +304,26 @@ export default function Dashboard() {
 				<div className="card">
 					<div className="card-head">
 						<div>
-							<div className="card-title">Ollama Load</div>
+							<div className="card-title">
+								<IconLayers size={16} />
+								Ollama Load
+							</div>
 							<div className="card-sub">Geladene Modelle &amp; VRAM-Belegung</div>
 						</div>
-						{ollamaLoads.length > 0 && <span className="pill ok">{ollamaLoads.length} Provider</span>}
+						{ollamaLoads.length > 0 && (
+							<span className="pill ok">
+								{ollamaLoads.length} {ollamaLoads.length === 1 ? "Provider" : "Provider"}
+							</span>
+						)}
 					</div>
 					{ollamaLoads.length === 0 ? (
-						<div className="empty">Kein Ollama-Provider verbunden.</div>
+						<div className="empty">
+							<span className="icon-chip lg" style={{ "--mc": "var(--muted)" } as CSSProperties}>
+								<IconServer size={20} />
+							</span>
+							<span className="empty-title">Kein Ollama-Provider verbunden</span>
+							<p>Verbinde einen lokalen Ollama-Endpunkt, um Modell-Load und VRAM live zu sehen.</p>
+						</div>
 					) : (
 						ollamaLoads.map((l) => {
 							const usedPct =
@@ -347,13 +333,11 @@ export default function Dashboard() {
 							return (
 								<div key={l.providerId} style={{ marginTop: 14 }}>
 									<div className="row between">
-										<span style={{ fontWeight: 600 }}>{l.label ?? l.providerId}</span>
+										<strong>{l.label ?? l.providerId}</strong>
 										{usedPct !== null ? (
 											<span className={`pill ${loadClass(usedPct)}`}>{usedPct}% VRAM</span>
 										) : (
-											<span className="muted" style={{ fontSize: 12 }}>
-												keine Modelle geladen
-											</span>
+											<span className="faint text-sm">keine Modelle geladen</span>
 										)}
 									</div>
 									{usedPct !== null && (
@@ -382,10 +366,13 @@ export default function Dashboard() {
 				<div className="card">
 					<div className="card-head">
 						<div>
-							<div className="card-title">System (Host)</div>
+							<div className="card-title">
+								<IconCpu size={16} />
+								System (Host)
+							</div>
 							<div className="card-sub">RAM, CPU &amp; GPU des Rechners</div>
 						</div>
-						{host && <span className="pill ok">{Math.round(host.uptimeSec / 3600)} h Uptime</span>}
+						{host && <span className="pill no-dot">{Math.round(host.uptimeSec / 3600)} h Uptime</span>}
 					</div>
 					{host === null ? (
 						<div style={{ marginTop: 14 }}>
@@ -396,8 +383,11 @@ export default function Dashboard() {
 					) : (
 						<div style={{ marginTop: 14, display: "grid", gap: 12 }}>
 							<div>
-								<div className="row between" style={{ fontSize: 13 }}>
-									<span title="RAM-Belegung dieses Rechners — Basis der Routing-Achse „Host-Last“">RAM</span>
+								<div className="kv">
+									<span title="RAM-Belegung dieses Rechners — Basis der Routing-Achse „Host-Last“">
+										<IconMemory size={15} />
+										RAM
+									</span>
 									<span>
 										{formatBytes(host.ramUsedBytes)} / {formatBytes(host.ramTotalBytes)} ·{" "}
 										<strong>{host.ramUsagePct}%</strong>
@@ -410,21 +400,27 @@ export default function Dashboard() {
 									/>
 								</div>
 							</div>
-							<div className="row between" style={{ fontSize: 13 }}>
-								<span>CPU</span>
+							<div className="kv">
 								<span>
-									{host.cpuCores} Kerne · Last (1 min) {host.loadAvg1m.toFixed(1)}
+									<IconCpu size={15} />
+									CPU
+								</span>
+								<span>
+									{host.cpuCores} Kerne · Last (1 min) <strong>{host.loadAvg1m.toFixed(1)}</strong>
 								</span>
 							</div>
-							<div className="row between" style={{ fontSize: 13 }}>
-								<span>GPU</span>
+							<div className="kv">
+								<span>
+									<IconGpu size={15} />
+									GPU
+								</span>
 								<span>
 									{host.gpu
 										? `${host.gpu.name}${host.gpu.vramTotalBytes ? ` · ${formatBytes(host.gpu.vramUsedBytes ?? 0)} / ${formatBytes(host.gpu.vramTotalBytes)} VRAM` : ""}`
 										: "nicht detektierbar (Metal/Apple Silicon)"}
 								</span>
 							</div>
-							<div className="muted" style={{ fontSize: 11 }}>
+							<div className="faint text-xs">
 								{host.platform}/{host.arch} · Uptime {Math.round(host.uptimeSec / 3600)} h
 							</div>
 						</div>
@@ -435,41 +431,58 @@ export default function Dashboard() {
 			<div className="card">
 				<div className="card-head">
 					<div>
-						<div className="card-title">Provider</div>
-						<div className="card-sub">{providers.length} verbunden</div>
+						<div className="card-title">
+							<IconServer size={16} />
+							Provider
+						</div>
+						<div className="card-sub">
+							{providers.length} verbunden · {providers.filter((p) => p.status === "online").length} online
+						</div>
 					</div>
 				</div>
-				<table className="table" style={{ marginTop: 10 }}>
-					<thead>
-						<tr>
-							<th>Name</th>
-							<th>Typ</th>
-							<th>Status</th>
-							<th>Modelle</th>
-							<th>Latenz p50</th>
-						</tr>
-					</thead>
-					<tbody>
-						{providers.map((p) => (
-							<tr key={p.id}>
-								<td>{p.label}</td>
-								<td className="muted">{p.type}</td>
-								<td>
-									<span className={`pill ${p.status}`}>{p.status}</span>
-								</td>
-								<td>{p.instanceCount ?? 0}</td>
-								<td>{p.latencyP50 !== undefined ? `${p.latencyP50} ms` : "–"}</td>
-							</tr>
-						))}
-						{providers.length === 0 && (
+				<div className="table-wrap" style={{ marginTop: 10 }}>
+					<table className="table">
+						<thead>
 							<tr>
-								<td colSpan={5} className="muted">
-									Noch keine Provider — im Tab „Provider“ hinzufügen.
-								</td>
+								<th>Name</th>
+								<th>Typ</th>
+								<th>Status</th>
+								<th className="num">Modelle</th>
+								<th className="num">Latenz p50</th>
 							</tr>
-						)}
-					</tbody>
-				</table>
+						</thead>
+						<tbody>
+							{providers.map((p) => (
+								<tr key={p.id}>
+									<td>
+										<strong>{p.label}</strong>
+									</td>
+									<td className="muted mono">{p.type}</td>
+									<td>
+										<span className={`pill ${p.status}`}>{p.status}</span>
+									</td>
+									<td className="num">{p.instanceCount ?? 0}</td>
+									<td className="num">{p.latencyP50 !== undefined ? `${p.latencyP50} ms` : "–"}</td>
+								</tr>
+							))}
+							{providers.length === 0 && (
+								<tr>
+									<td colSpan={5}>
+										<div className="empty">
+											<span className="icon-chip lg" style={{ "--mc": "var(--muted)" } as CSSProperties}>
+												<IconServer size={20} />
+											</span>
+											<span className="empty-title">Noch keine Provider</span>
+											<p className="row" style={{ justifyContent: "center", gap: 4 }}>
+												Im Bereich „Provider“ hinzufügen <IconChevronRight size={14} />
+											</p>
+										</div>
+									</td>
+								</tr>
+							)}
+						</tbody>
+					</table>
+				</div>
 			</div>
 		</div>
 	)

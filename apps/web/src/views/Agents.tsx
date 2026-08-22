@@ -8,21 +8,16 @@
  * die Engine — hier wird nur verwaltet.
  */
 
-import {
-	AGENT_DOC_FILES,
-	AGENT_DOC_KINDS,
-	type Agent,
-	type AgentDoc,
-	type AgentDocKind,
-	type AgentPrivacy,
-	type Capability,
-	type InstanceModel,
-	type ModelSettings,
-	parseInitDoc,
-	renderInitDoc,
-	type Swarm,
+import type {
+	Agent,
+	AgentPrivacy,
+	Capability,
+	InstanceModel,
+	ModelSettings,
+	Swarm,
 } from "@diriz/shared"
 import { useEffect, useState } from "react"
+import DocsEditor from "../components/DocsEditor.js"
 import SettingsEditor from "../components/SettingsEditor.js"
 import { api } from "../lib/api.js"
 import { useStore } from "../store.js"
@@ -586,161 +581,16 @@ function AgentList(props: {
 						{props.editing === a.id && <div style={{ marginTop: 10 }}>{props.editForm}</div>}
 
 						{docsFor === a.id && (
-							<AgentDocs
-								agent={a}
-								onSettingsChanged={props.onSettingsChanged}
+							<DocsEditor
+								basePath={`/api/agents/${a.id}`}
+								ownerName={a.name}
+								onInitSaved={props.onSettingsChanged}
 								onClose={() => setDocsFor(null)}
 							/>
 						)}
 					</div>
 				)
 			})}
-		</div>
-	)
-}
-
-/**
- * Dokument-Editor eines Spezialisten: `plan.md`, `changelog.md`, `init.md`.
- * Für `init.md` wird live gezeigt, welche Model-Voreinstellungen der Core
- * daraus liest — dieselbe Parser-Funktion wie im Backend (keine Drift).
- */
-function AgentDocs(props: { agent: Agent; onSettingsChanged: () => Promise<void>; onClose: () => void }) {
-	const onError = useStore((s) => s.setLastError)
-	const [kind, setKind] = useState<AgentDocKind>("plan")
-	const [docs, setDocs] = useState<Record<string, string> | null>(null)
-	const [drafts, setDrafts] = useState<Record<string, string>>({})
-	const [busy, setBusy] = useState(false)
-	const [savedAt, setSavedAt] = useState<string | undefined>()
-
-	const agentId = props.agent.id
-	// `updatedAt` in den Deps: Nach einer Bearbeitung (die `init.md` neu schreibt)
-	// lädt der Editor die Dokumente frisch nach.
-	const agentUpdatedAt = props.agent.updatedAt
-	useEffect(() => {
-		let cancelled = false
-		api
-			.get<{ docs: AgentDoc[] }>(`/api/agents/${agentId}/docs`)
-			.then((data) => {
-				if (cancelled) return
-				const map = Object.fromEntries(data.docs.map((d) => [d.kind, d.content]))
-				setDocs(map)
-				setDrafts(map)
-			})
-			.catch((e: unknown) => onError(e instanceof Error ? e.message : String(e)))
-		return () => {
-			cancelled = true
-		}
-	}, [agentId, agentUpdatedAt, onError])
-
-	const content = drafts[kind] ?? ""
-	const dirty = docs !== null && content !== (docs[kind] ?? "")
-
-	const save = async () => {
-		setBusy(true)
-		try {
-			await api.put(`/api/agents/${agentId}/docs/${kind}`, { content })
-			setDocs((prev) => ({ ...(prev ?? {}), [kind]: content }))
-			setSavedAt(new Date().toLocaleTimeString())
-			if (kind === "init") {
-				await props.onSettingsChanged()
-			}
-		} catch (e) {
-			onError(e instanceof Error ? e.message : String(e))
-		} finally {
-			setBusy(false)
-		}
-	}
-
-	/** `init.md` aus den aktuell erkannten Werten neu formatieren. */
-	const normalizeInit = () => {
-		setDrafts((prev) => ({ ...prev, init: renderInitDoc(parseInitDoc(content), props.agent.name) }))
-	}
-
-	const parsed = kind === "init" ? parseInitDoc(content) : undefined
-	const parsedEntries = parsed ? Object.entries(parsed).filter(([, v]) => v !== undefined) : []
-
-	return (
-		<div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
-			<div className="row between">
-				<div className="row" style={{ gap: 6 }}>
-					{AGENT_DOC_KINDS.map((k) => (
-						<button
-							key={k}
-							type="button"
-							className={`btn ${kind === k ? "primary" : ""}`}
-							onClick={() => setKind(k)}
-						>
-							{AGENT_DOC_FILES[k]}
-							{docs && (drafts[k] ?? "") !== (docs[k] ?? "") ? " •" : ""}
-						</button>
-					))}
-				</div>
-				<button type="button" className="btn" onClick={props.onClose}>
-					Schließen
-				</button>
-			</div>
-
-			<p className="muted" style={{ fontSize: 12, margin: "8px 0 4px" }}>
-				{kind === "plan" && "Auftrag, Vorgehen und Leitplanken dieses Spezialisten (reine Dokumentation)."}
-				{kind === "changelog" &&
-					"Änderungsprotokoll — DiriZ hängt bei jeder Bearbeitung automatisch einen Eintrag an."}
-				{kind === "init" &&
-					"Wirksam: Zeilen der Form „Temperature: 0.3“ setzen die Voreinstellungen des LLM-Modells."}
-			</p>
-
-			{docs === null ? (
-				<p className="muted">Lade Dokumente …</p>
-			) : (
-				<>
-					<textarea
-						className="mono"
-						style={{ minHeight: 240 }}
-						value={content}
-						onChange={(e) => setDrafts((prev) => ({ ...prev, [kind]: e.target.value }))}
-						placeholder={`# ${AGENT_DOC_FILES[kind]}`}
-					/>
-					{kind === "init" && (
-						<div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-							Erkannte Voreinstellungen:{" "}
-							{parsedEntries.length === 0 ? (
-								<em>keine</em>
-							) : (
-								parsedEntries.map(([k, v]) => (
-									<span key={k} className="badge" style={{ marginRight: 4 }}>
-										{k}: {Array.isArray(v) ? v.join(" | ") : String(v).slice(0, 40)}
-									</span>
-								))
-							)}
-						</div>
-					)}
-					<div className="row" style={{ marginTop: 10 }}>
-						<button
-							type="button"
-							className="btn primary"
-							onClick={() => void save()}
-							disabled={busy || !dirty}
-						>
-							{busy ? "…" : "Speichern"}
-						</button>
-						<button
-							type="button"
-							className="btn"
-							onClick={() => setDrafts((prev) => ({ ...prev, [kind]: docs[kind] ?? "" }))}
-							disabled={!dirty}
-						>
-							Zurücksetzen
-						</button>
-						{kind === "init" && (
-							<button type="button" className="btn" onClick={normalizeInit}>
-								Aufräumen (Format vereinheitlichen)
-							</button>
-						)}
-						{savedAt && !dirty && (
-							<span style={{ color: "var(--ok)", fontSize: 13 }}>✓ Gespeichert {savedAt}</span>
-						)}
-					</div>
-				</>
-			)}
 		</div>
 	)
 }

@@ -16,6 +16,7 @@ import {
 	type AgentScore,
 	type CandidateScore,
 	type ChatMessage,
+	composeSystemPrompt,
 	type CoreEvent,
 	DEFAULT_CONCURRENCY,
 	DEFAULT_TIMEOUTS,
@@ -40,8 +41,10 @@ import {
 	appendChunk,
 	createExecution,
 	getAgent,
+	getAgentDoc,
 	getExecution,
 	getInstance,
+	getInstanceDoc,
 	getProvider,
 	getSetting,
 	getSwarm,
@@ -631,8 +634,8 @@ export class ExecutionEngine {
 		let tokensOut = 0
 		const startedAt = Date.now()
 		try {
-			// Model-Settings auflösen: Provider ← Modell ← Agent (`init.md`) ← Task
-			// (späterer Eintrag gewinnt).
+			// Model-Settings auflösen: Provider ← Modell (`init.md`) ← Agent
+			// (`init.md`) ← Task (späterer Eintrag gewinnt).
 			const provider = getProvider(db, choice.instance.providerId)
 			const effective: ModelSettings = {
 				...provider?.modelSettings,
@@ -640,7 +643,31 @@ export class ExecutionEngine {
 				...agent?.modelSettings,
 				...task.overrides,
 			}
-			const systemPrompt = (agent?.systemPrompt ?? "").trim() || (effective.systemPrompt ?? "").trim()
+			// Der System-Prompt entsteht aus denselben Ebenen: der zuletzt gesetzte
+			// gewinnt (Provider ← Instanz-`init.md` ← Agent-`init.md` ← Agenten-Feld
+			// ← Task-Override). Zusätzlich wird die `plan.md` jeder Ebene als
+			// verbindliche Arbeitsanweisung angehängt — das Modell arbeitet damit
+			// genau so, wie das System es deklariert hat.
+			const instancePlan = getInstanceDoc(db, choice.instance.id, "plan")?.content
+			const agentPlan = agent ? getAgentDoc(db, agent.id, "plan")?.content : undefined
+			const systemPrompt = composeSystemPrompt([
+				{
+					label: `Rechner ${provider?.label ?? choice.instance.providerId}`,
+					systemPrompt: provider?.modelSettings?.systemPrompt,
+				},
+				{
+					label: `Modell ${choice.instance.displayName}`,
+					plan: instancePlan,
+					systemPrompt: choice.instance.modelSettings?.systemPrompt,
+				},
+				{
+					label: `Spezialist ${agent?.name ?? ""}`.trim(),
+					plan: agentPlan,
+					// Das Agenten-Feld schlägt den System-Prompt aus dessen `init.md`.
+					systemPrompt: (agent?.systemPrompt ?? "").trim() || agent?.modelSettings?.systemPrompt,
+				},
+				{ label: "Task", systemPrompt: task.overrides?.systemPrompt },
+			]).trim()
 			const messages: ChatMessage[] = systemPrompt
 				? [
 						{ role: "system", content: systemPrompt },

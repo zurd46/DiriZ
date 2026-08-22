@@ -1,5 +1,6 @@
 import type { Capability, InstanceModel, ModelSettings, ProviderType } from "@diriz/shared"
 import { useState } from "react"
+import DocsEditor from "../components/DocsEditor.js"
 import SettingsEditor from "../components/SettingsEditor.js"
 import { api } from "../lib/api.js"
 import { useStore } from "../store.js"
@@ -53,6 +54,8 @@ export default function Providers() {
 	const [expanded, setExpanded] = useState<string | null>(null)
 	const [settings, setSettings] = useState<ModelSettings>({})
 	const [instExpanded, setInstExpanded] = useState<string | null>(null)
+	/** Offener Dokument-Editor (plan/changelog/init.md) einer LLM-Instanz. */
+	const [instDocs, setInstDocs] = useState<string | null>(null)
 	const [instSettings, setInstSettings] = useState<ModelSettings>({})
 	const [instances, setInstances] = useState<InstanceModel[]>([])
 	const [busySettings, setBusySettings] = useState(false)
@@ -514,6 +517,14 @@ export default function Providers() {
 											</button>
 											<button
 												type="button"
+												className="btn"
+												title="plan.md, changelog.md und init.md dieser LLM-Instanz"
+												onClick={() => setInstDocs(instDocs === inst.id ? null : inst.id)}
+											>
+												📄 Dokumente
+											</button>
+											<button
+												type="button"
 												className="linklike"
 												onClick={() => {
 													if (instExpanded === inst.id) {
@@ -639,6 +650,18 @@ export default function Providers() {
 														Overrides löschen
 													</button>
 												</div>
+											</div>
+										)}
+										{instDocs === inst.id && (
+											<div style={{ paddingLeft: 10, borderLeft: "2px solid var(--border)" }}>
+												<DocsEditor
+													basePath={`/api/instances/${inst.id}`}
+													ownerName={inst.displayName}
+													onInitSaved={async () => {
+														if (expanded) await reloadInstances(expanded)
+													}}
+													onClose={() => setInstDocs(null)}
+												/>
 											</div>
 										)}
 									</div>

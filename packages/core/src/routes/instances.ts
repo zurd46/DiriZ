@@ -1,12 +1,34 @@
 /**
  * Instance-Routen: Modelle pro Provider — Übersicht, manuelle Korrektur
  * (Context-Fenster, Fähigkeiten, Sprachen, Preis), Entfernen.
+ *
+ * Jede LLM-Instanz führt zusätzlich ihre drei Deklarations-Dokumente
+ * (`plan.md`, `changelog.md`, `init.md`) — dieselbe Mechanik wie beim
+ * Spezialisten: `init.md` setzt die Model-Voreinstellungen, `plan.md` wird
+ * zur verbindlichen Arbeitsanweisung im System-Prompt.
  */
 
-import type { Capability, ModelSettings } from "@diriz/shared"
+import {
+	AGENT_DOC_FILES,
+	type AgentDocKind,
+	appendChangelogEntry,
+	type Capability,
+	isAgentDocKind,
+	type ModelSettings,
+	parseInitDoc,
+	renderInitDoc,
+} from "@diriz/shared"
 import type { FastifyInstance } from "fastify"
 import type { AppContext } from "../app.js"
-import { deleteInstance, getInstance, listInstances, updateInstance } from "../db/repositories.js"
+import {
+	deleteInstance,
+	getInstance,
+	getInstanceDoc,
+	listInstanceDocs,
+	listInstances,
+	saveInstanceDoc,
+	updateInstance,
+} from "../db/repositories.js"
 
 const CAPABILITIES: Capability[] = ["code", "reasoning", "longform", "vision", "tools", "json"]
 
@@ -18,10 +40,23 @@ interface InstancePatchBody {
 	quantization?: string
 	priceInPerMTok?: number
 	priceOutPerMTok?: number
-	/** "null" = Overrides zurücksetzen, weggelassen = unverändert. */
+	/** "null" = Overrides zurücksetzen, weggelassen = unverändert. Schreibt `init.md`. */
 	modelSettings?: ModelSettings | null
 	/** Modell auf diesem Rechner aktivieren/deaktivieren (Routing-Gate). */
 	enabled?: boolean
+}
+
+/** Feld-Labels für den automatischen Changelog-Eintrag beim Bearbeiten. */
+const FIELD_LABELS: Record<string, string> = {
+	displayName: "Anzeigename",
+	contextWindow: "Kontext-Fenster",
+	capabilities: "Fähigkeiten",
+	languages: "Sprachen",
+	quantization: "Quantisierung",
+	priceInPerMTok: "Preis (in)",
+	priceOutPerMTok: "Preis (out)",
+	modelSettings: "Model-Voreinstellungen",
+	enabled: "Status",
 }
 
 export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
@@ -34,6 +69,19 @@ export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
 		if (body.capabilities?.some((c) => !CAPABILITIES.includes(c as Capability))) {
 			return reply.code(400).send({ error: `capabilities muss aus ${CAPABILITIES.join(", ")} kommen` })
 		}
+		const before = getInstance(ctx.db, req.params.id)
+		if (!before) {
+			return reply.code(404).send({ error: "Instance nicht gefunden" })
+		}
+		// Model-Settings sind aus `init.md` abgeleitet — also dort hineinschreiben.
+		if (body.modelSettings !== undefined) {
+			saveInstanceDoc(
+				ctx.db,
+				req.params.id,
+				"init",
+				renderInitDoc(body.modelSettings ?? {}, body.displayName?.trim() || before.displayName),
+			)
+		}
 		const instance = updateInstance(ctx.db, req.params.id, {
 			displayName: body.displayName,
 			contextWindow: body.contextWindow,
@@ -42,14 +90,65 @@ export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
 			quantization: body.quantization,
 			priceInPerMTok: body.priceInPerMTok,
 			priceOutPerMTok: body.priceOutPerMTok,
-			modelSettings: body.modelSettings,
 			enabled: body.enabled,
 		})
 		if (!instance) {
 			return reply.code(404).send({ error: "Instance nicht gefunden" })
 		}
+		const changed = Object.entries(body)
+			.filter(([key, value]) => value !== undefined && key in FIELD_LABELS)
+			.filter(
+				([key, value]) =>
+					JSON.stringify(value ?? null) !==
+					JSON.stringify((before as unknown as Record<string, unknown>)[key] ?? null),
+			)
+			.map(([key]) => FIELD_LABELS[key] ?? key)
+		if (changed.length > 0) {
+			const doc = getInstanceDoc(ctx.db, instance.id, "changelog")
+			saveInstanceDoc(
+				ctx.db,
+				instance.id,
+				"changelog",
+				appendChangelogEntry(
+					doc?.content ?? "",
+					`Bearbeitet: ${changed.join(", ")}`,
+					new Date().toISOString(),
+				),
+			)
+		}
 		return instance
 	})
+
+	/* --------------------- Dokumente: plan/changelog/init.md -------------------- */
+
+	app.get<{ Params: { id: string } }>("/api/instances/:id/docs", (req, reply) => {
+		if (!getInstance(ctx.db, req.params.id)) {
+			return reply.code(404).send({ error: "Instance nicht gefunden" })
+		}
+		return { instanceId: req.params.id, docs: listInstanceDocs(ctx.db, req.params.id) }
+	})
+
+	app.put<{ Params: { id: string; kind: string }; Body: { content?: string } }>(
+		"/api/instances/:id/docs/:kind",
+		(req, reply) => {
+			const { id, kind } = req.params
+			if (!isAgentDocKind(kind)) {
+				return reply
+					.code(400)
+					.send({ error: `kind muss einer von ${Object.values(AGENT_DOC_FILES).join(", ")} sein` })
+			}
+			const content = req.body?.content
+			if (typeof content !== "string") {
+				return reply.code(400).send({ error: "content ist erforderlich" })
+			}
+			const doc = saveInstanceDoc(ctx.db, id, kind as AgentDocKind, content)
+			if (!doc) {
+				return reply.code(404).send({ error: "Instance nicht gefunden" })
+			}
+			// `init.md` wirkt: die abgeleiteten Settings gleich zurückgeben.
+			return { ...doc, settings: kind === "init" ? parseInitDoc(content) : undefined }
+		},
+	)
 
 	app.delete<{ Params: { id: string } }>("/api/instances/:id", (req, reply) => {
 		const instance = getInstance(ctx.db, req.params.id)

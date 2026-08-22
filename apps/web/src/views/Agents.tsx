@@ -378,7 +378,7 @@ function AgentForm(props: {
 				</button>
 			</div>
 
-			<div className="row" style={{ marginTop: 14, alignItems: "flex-end" }}>
+			<div className="row top" style={{ marginTop: 14 }}>
 				<label className="field" style={{ minWidth: 180 }}>
 					Name *
 					<input
@@ -694,7 +694,7 @@ function SwarmForm(props: {
 					<IconClose size={16} />
 				</button>
 			</div>
-			<div className="row" style={{ marginTop: 14, alignItems: "flex-end" }}>
+			<div className="row top" style={{ marginTop: 14 }}>
 				<label className="field" style={{ minWidth: 180 }}>
 					Name *
 					<input

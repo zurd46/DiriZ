@@ -24,7 +24,7 @@ test("E2E smoke: App lädt → Onboarding → Task anlegen → Start → Rating"
 
 	// Task mit eindeutigem Titel anlegen.
 	const title = `E2E Smoke ${Date.now()}`
-	await page.click('button:has-text("+ Neue Task")')
+	await page.click('button:has-text("Neue Task")')
 	await page.fill('input[placeholder*="Auth-Fix"]', title)
 	await page.fill('textarea[placeholder*="Ergebnis"]', "Nur ein E2E-Smoke-Test — bitte kurz bestätigen.")
 	await page.click('button:has-text("Task anlegen")')

@@ -25,7 +25,7 @@ test("E2E M8: System-Karte (Host-Metriken) + Agentik-Checkbox + Host-Last-Gewich
 
 	// 3) Tasks: Composer bietet den Agentik-Modus an (M8 Tool-Loop).
 	await page.getByRole("button", { name: "Tasks" }).click()
-	await page.click('button:has-text("+ Neue Task")')
+	await page.click('button:has-text("Neue Task")')
 	const agentCheckbox = page.locator('label[title*="Agentik"] input[type="checkbox"]')
 	await expect(agentCheckbox).toBeVisible({ timeout: 5_000 })
 

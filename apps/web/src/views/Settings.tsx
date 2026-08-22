@@ -46,8 +46,9 @@ const WEIGHT_META: { key: keyof ScoringWeights; label: string; hint: string }[] 
 ]
 
 const OWNERS: { id: DocOwnerKind; label: string; hint: string }[] = [
+	{ id: "provider", label: "Rechner", hint: "Gilt für jeden neu angebundenen Rechner (Provider)." },
+	{ id: "instance", label: "LLM-Modelle", hint: "Gilt für jedes neu entdeckte Modell auf einem Rechner." },
 	{ id: "agent", label: "Spezialisten", hint: "Gilt für jeden neu angelegten Spezialisten." },
-	{ id: "instance", label: "LLM-Instanzen", hint: "Gilt für jedes neu entdeckte Modell auf einem Rechner." },
 ]
 
 export default function Settings() {
@@ -195,7 +196,7 @@ export default function Settings() {
 					{dirty && <span className="pill warn">ungespeichert</span>}
 				</div>
 
-				<div className="stack" style={{ marginTop: 16 }}>
+				<div className="weights">
 					{draft &&
 						normalized &&
 						WEIGHT_META.map((w) => (

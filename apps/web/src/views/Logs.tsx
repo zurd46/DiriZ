@@ -35,8 +35,8 @@ export default function Logs() {
 					</p>
 				</div>
 				<span className="live-chip">
-					<span className="live-dot" />
-					{logs.length} Einträge
+					{logs.length > 0 && <span className="live-dot" />}
+					{logs.length} {logs.length === 1 ? "Eintrag" : "Einträge"}
 				</span>
 			</div>
 

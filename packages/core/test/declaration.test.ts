@@ -19,6 +19,7 @@ import type {
 	InstanceDoc,
 	InstanceModel,
 	LLMProvider,
+	ProviderDoc,
 	ProviderType,
 } from "@diriz/shared"
 import type { FastifyInstance } from "fastify"
@@ -32,10 +33,13 @@ import {
 	createProvider,
 	createTask,
 	getInstance,
+	getProvider,
 	listAgentDocs,
 	listInstanceDocs,
+	listProviderDocs,
 	saveAgentDoc,
 	saveInstanceDoc,
+	saveProviderDoc,
 	upsertInstance,
 } from "../src/db/repositories.js"
 import { EventBus } from "../src/execution/bus.js"
@@ -328,5 +332,85 @@ describe("Dokument-Vorlagen (systemweit)", () => {
 		expect(bad.statusCode).toBe(400)
 		const empty = await app.inject({ method: "PUT", url: "/api/settings", payload: {} })
 		expect(empty.statusCode).toBe(400)
+	})
+})
+
+describe("Dokumente je Rechner (Provider)", () => {
+	it("legt plan/changelog/init beim Anbinden an", async () => {
+		expect(listProviderDocs(db, providerId).map((d) => d.kind)).toEqual(["plan", "changelog", "init"])
+		const res = await app.inject({ method: "GET", url: `/api/providers/${providerId}/docs` })
+		expect(res.statusCode).toBe(200)
+		const docs = (res.json() as { docs: ProviderDoc[] }).docs
+		expect(docs.find((d) => d.kind === "plan")?.content).toContain("Lokal")
+	})
+
+	it("`init.md` setzt die Voreinstellungen des Rechners", async () => {
+		const res = await app.inject({
+			method: "PUT",
+			url: `/api/providers/${providerId}/docs/init`,
+			payload: { content: "- Temperature: 0.33\n" },
+		})
+		expect(res.statusCode).toBe(200)
+		expect(getProvider(db, providerId)?.modelSettings).toEqual({ temperature: 0.33 })
+		saveProviderDoc(db, providerId, "init", "# init.md\n")
+		expect(getProvider(db, providerId)?.modelSettings).toBeNull()
+	})
+
+	it("`plan.md` des Rechners steht als erste Deklaration im Prompt", async () => {
+		saveProviderDoc(db, providerId, "plan", "## Leitplanken\n\n- Keine Cloud-Aufrufe.\n")
+		saveInstanceDoc(db, instance.id, "plan", "## Auftrag\n\nKurze Antworten.\n")
+		const text = (await runAndCaptureSystemPrompt()) ?? ""
+		expect(text).toContain("Keine Cloud-Aufrufe.")
+		expect(text.indexOf("Rechner Lokal")).toBeLessThan(text.indexOf("Modell Qwen3 8B"))
+		saveProviderDoc(db, providerId, "plan", "# plan.md\n")
+		saveInstanceDoc(db, instance.id, "plan", "# plan.md\n")
+	})
+
+	it("PATCH schreibt init.md und einen Changelog-Eintrag", async () => {
+		const res = await app.inject({
+			method: "PATCH",
+			url: `/api/providers/${providerId}`,
+			payload: { modelSettings: { temperature: 0.42 } },
+		})
+		expect(res.statusCode).toBe(200)
+		const docs = listProviderDocs(db, providerId)
+		expect(docs.find((d) => d.kind === "init")?.content).toContain("Temperature: 0.42")
+		expect(docs.find((d) => d.kind === "changelog")?.content).toContain("Bearbeitet: Model-Voreinstellungen")
+		saveProviderDoc(db, providerId, "init", "# init.md\n")
+	})
+})
+
+describe("Sammel-Endpunkt /api/docs", () => {
+	it("liefert alle drei Ebenen mit Schreibpfad und Inhalten", async () => {
+		const agent = await createAgentViaApi("Übersicht-Agent")
+		saveAgentDoc(db, agent.id, "plan", "## Auftrag\n\nEinzigartiger Suchbegriff Zwiebelfisch.\n")
+
+		const res = await app.inject({ method: "GET", url: "/api/docs" })
+		expect(res.statusCode).toBe(200)
+		const owners = (
+			res.json() as {
+				owners: {
+					kind: string
+					id: string
+					name: string
+					basePath: string
+					providerLabel?: string
+					docs: Record<string, string>
+				}[]
+			}
+		).owners
+
+		expect(owners.some((o) => o.kind === "provider" && o.id === providerId)).toBe(true)
+		const inst = owners.find((o) => o.kind === "instance" && o.id === instance.id)
+		expect(inst?.providerLabel).toBe("Lokal")
+		expect(inst?.basePath).toBe(`/api/instances/${instance.id}`)
+
+		const entry = owners.find((o) => o.id === agent.id)
+		expect(entry?.basePath).toBe(`/api/agents/${agent.id}`)
+		expect(entry?.docs.plan).toContain("Zwiebelfisch")
+		// Jeder Besitzer bringt alle drei Dokumente mit.
+		for (const owner of owners) {
+			expect(Object.keys(owner.docs).sort()).toEqual(["changelog", "init", "plan"])
+		}
 	})
 })

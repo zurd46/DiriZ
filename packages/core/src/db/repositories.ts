@@ -464,7 +464,14 @@ interface PlainDoc {
 	updatedAt: string
 }
 
-function writeDoc(db: Db, scope: DocScope, ownerId: string, kind: AgentDocKind, content: string, now: string): void {
+function writeDoc(
+	db: Db,
+	scope: DocScope,
+	ownerId: string,
+	kind: AgentDocKind,
+	content: string,
+	now: string,
+): void {
 	db.prepare(
 		`INSERT INTO ${scope.docTable} (${scope.docColumn}, kind, content, updated_at) VALUES (?, ?, ?, ?)
 		 ON CONFLICT(${scope.docColumn}, kind) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,

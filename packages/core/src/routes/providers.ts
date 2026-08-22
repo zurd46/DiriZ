@@ -10,8 +10,8 @@ import {
 	appendChangelogEntry,
 	isAgentDocKind,
 	type ModelSettings,
-	parseInitDoc,
 	type ProviderType,
+	parseInitDoc,
 	renderInitDoc,
 } from "@diriz/shared"
 import type { FastifyInstance } from "fastify"

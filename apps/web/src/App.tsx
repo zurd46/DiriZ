@@ -4,6 +4,7 @@ import type { IconProps } from "./components/icons.js"
 import {
 	IconAgents,
 	IconDashboard,
+	IconDoc,
 	IconLogs,
 	IconServer,
 	IconSettings,
@@ -16,13 +17,14 @@ import { connectStream } from "./lib/sse.js"
 import { useStore } from "./store.js"
 import Agents from "./views/Agents.js"
 import Dashboard from "./views/Dashboard.js"
+import Docs from "./views/Docs.js"
 import Logs from "./views/Logs.js"
 import Providers from "./views/Providers.js"
 import Settings from "./views/Settings.js"
 import Tasks from "./views/Tasks.js"
 import Workspace from "./views/Workspace.js"
 
-type View = "dashboard" | "providers" | "agents" | "tasks" | "logs" | "workspace" | "settings"
+type View = "dashboard" | "providers" | "agents" | "tasks" | "docs" | "logs" | "workspace" | "settings"
 
 interface NavItem {
 	id: View
@@ -42,6 +44,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
 			{ id: "providers", label: "Provider", icon: IconServer },
 			{ id: "agents", label: "Agenten", icon: IconAgents },
 			{ id: "tasks", label: "Tasks", icon: IconTasks },
+			{ id: "docs", label: "Dokumente", icon: IconDoc },
 		],
 	},
 	{
@@ -108,6 +111,8 @@ export default function App() {
 									key={item.id}
 									type="button"
 									className={`nav-btn ${view === item.id ? "active" : ""}`}
+									aria-label={item.label}
+									title={item.label}
 									aria-current={view === item.id ? "page" : undefined}
 									onClick={() => setView(item.id)}
 								>
@@ -131,6 +136,7 @@ export default function App() {
 				{view === "providers" && <Providers />}
 				{view === "agents" && <Agents />}
 				{view === "tasks" && <Tasks />}
+				{view === "docs" && <Docs />}
 				{view === "workspace" && <Workspace />}
 				{view === "logs" && <Logs />}
 				{view === "settings" && <Settings />}

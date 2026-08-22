@@ -287,7 +287,7 @@ export default function Tasks() {
 						aria-expanded={showForm}
 					>
 						{showForm ? <IconClose size={15} /> : <IconPlus size={15} />}
-						{showForm ? "Abbrechen" : "+ Neue Task"}
+						{showForm ? "Abbrechen" : "Neue Task"}
 					</button>
 				</div>
 			</div>

@@ -102,9 +102,7 @@ export default function Markdown({ source }: { source: string }) {
 			return
 		}
 		const text = quote.join(" ")
-		blocks.push(
-			<blockquote key={`q-${blocks.length}`}>{renderInline(text, `q${blocks.length}`)}</blockquote>,
-		)
+		blocks.push(<blockquote key={`q-${blocks.length}`}>{renderInline(text, `q${blocks.length}`)}</blockquote>)
 		quote = []
 	}
 	const flushAll = () => {

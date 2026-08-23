@@ -1,0 +1,58 @@
+# Kontinuierliche Prüfung: derselbe Ablauf wie lokal `npm run check`,
+# plus Produktions-Build und ein Rauchtest gegen den echten Server.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint · Typecheck · Tests · Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Abhängigkeiten installieren
+        run: npm ci
+
+      - name: Lint (Biome)
+        run: npm run lint
+
+      - name: Typecheck (Core, Shared, Web)
+        run: npm run typecheck
+
+      - name: Unit-Tests
+        run: npm test
+
+      - name: Produktions-Build
+        run: npm run build
+
+      # Beweist, dass der gebaute Core die Oberfläche wirklich ausliefert —
+      # genau der Fall, der beim reinen Unit-Test nicht auffällt.
+      - name: Rauchtest gegen den gebauten Server
+        run: |
+          DIRIZ_DATA_DIR=$(mktemp -d) DIRIZ_WORKSPACE_DIR=$(mktemp -d) npm start &
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:8787/api/health > /dev/null && break
+            sleep 0.5
+          done
+          echo "— /api/health"  && curl -sf http://127.0.0.1:8787/api/health  | head -c 200 && echo
+          echo "— /api/version" && curl -sf http://127.0.0.1:8787/api/version | head -c 200 && echo
+          echo "— Deep-Link /tasks liefert die Oberfläche"
+          curl -sf http://127.0.0.1:8787/tasks | grep -q "<div id=\"root\"" 
+          echo "— unbekannte API-Route antwortet mit JSON-404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/api/nope)" = "404"

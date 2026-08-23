@@ -26,6 +26,7 @@ import {
 	IconTrash,
 	IconXCircle,
 } from "../components/icons.js"
+import TaskGitPanel from "../components/TaskGitPanel.js"
 import { api } from "../lib/api.js"
 import type { TaskDetail } from "../store.js"
 import { useStore } from "../store.js"
@@ -257,6 +258,8 @@ export default function Tasks() {
 	}
 
 	const detail: TaskDetail | undefined = selected ? taskDetails[selected] : undefined
+	/** Die ausgewählte Task selbst — der Detail-Datensatz enthält sie nicht. */
+	const selectedTask = selected ? tasks.find((t) => t.id === selected) : undefined
 	const liveRuns = detail ? Object.entries(live).filter(([, r]) => r.status === "running") : []
 	const queuedTasks = tasks.filter((t) => t.status === "queued")
 
@@ -961,6 +964,17 @@ export default function Tasks() {
 								</tbody>
 							</table>
 						</div>
+					)}
+
+					{/* GitHub (M10): Repo pinnen, Diff ansehen, committen und pushen. */}
+					{selectedTask && (
+						<TaskGitPanel
+							task={selectedTask}
+							onTaskChanged={() => {
+								void useStore.getState().refreshTasks()
+								void loadDetail(selectedTask.id)
+							}}
+						/>
 					)}
 
 					{detail && detail.files.length > 0 && (

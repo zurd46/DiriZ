@@ -71,6 +71,13 @@ export interface MetricsView {
 	schemaVersion: number
 }
 
+/** Kurzlebige Meldung in der Ecke — Fehler bleiben stehen, Erfolge verschwinden. */
+export interface Toast {
+	id: number
+	kind: "error" | "success" | "info"
+	message: string
+}
+
 interface State {
 	connected: boolean
 	providers: ProviderView[]
@@ -84,9 +91,15 @@ interface State {
 	live: Record<string, LiveRun>
 	taskDetails: Record<string, TaskDetail>
 	lastError?: string
+	toasts: Toast[]
+	/** Version des laufenden Cores — deckt veraltete Prozesse sofort auf. */
+	version: { version: string; schemaVersion: number } | null
 
 	setConnected(connected: boolean): void
 	setLastError(message?: string): void
+	notify(kind: Toast["kind"], message: string): void
+	dismissToast(id: number): void
+	refreshVersion(): Promise<void>
 	refreshProviders(): Promise<void>
 	refreshAgents(): Promise<void>
 	refreshSwarms(): Promise<void>
@@ -101,6 +114,8 @@ interface State {
 
 const MAX_LOGS = 500
 
+let nextToastId = 1
+
 export const useStore = create<State>((set, get) => ({
 	connected: false,
 	providers: [],
@@ -114,9 +129,43 @@ export const useStore = create<State>((set, get) => ({
 	live: {},
 	taskDetails: {},
 	lastError: undefined,
+	toasts: [],
+	version: null,
 
 	setConnected: (connected) => set({ connected }),
-	setLastError: (message) => set({ lastError: message }),
+
+	// Jeder Fehler wird zusätzlich als Toast sichtbar — vorher konnte eine
+	// Fehlermeldung in einer Ansicht liegen, die gerade niemand ansieht.
+	setLastError: (message) => {
+		set({ lastError: message })
+		if (message) {
+			get().notify("error", message)
+		}
+	},
+
+	notify: (kind, message) =>
+		set((state) => {
+			// Dieselbe Meldung nicht doppelt stapeln (z. B. bei Polling-Fehlern).
+			if (state.toasts.some((t) => t.message === message && t.kind === kind)) {
+				return state
+			}
+			const toast: Toast = { id: nextToastId++, kind, message }
+			if (kind !== "error") {
+				setTimeout(() => useStore.getState().dismissToast(toast.id), 4000)
+			}
+			return { toasts: [...state.toasts, toast].slice(-4) }
+		}),
+
+	dismissToast: (id) => set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
+
+	refreshVersion: async () => {
+		try {
+			const version = await api.get<{ version: string; schemaVersion: number }>("/api/version")
+			set({ version })
+		} catch {
+			// Version ist Beiwerk — ein Fehler hier darf nichts blockieren.
+		}
+	},
 
 	refreshProviders: async () => {
 		try {

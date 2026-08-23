@@ -4,7 +4,7 @@
  */
 
 import type { ComponentType } from "react"
-import { useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import type { IconProps } from "./icons.js"
 import { IconArrowRight, IconBolt, IconPlug, IconStar, IconTasks } from "./icons.js"
 
@@ -41,17 +41,38 @@ const STEPS: Step[] = [
 
 export default function Onboarding({ onDone }: { onDone: () => void }) {
 	const [step, setStep] = useState(0)
+	const dialogRef = useRef<HTMLDivElement>(null)
 	const last = step === STEPS.length - 1
 	const current = STEPS[step]
 	const Icon = current.icon
 
-	const finish = () => {
+	const finish = useCallback(() => {
 		localStorage.setItem(STORAGE_KEY, "1")
 		onDone()
-	}
+	}, [onDone])
+
+	// Ein modaler Dialog muss mit Escape schließbar sein und den Fokus bekommen —
+	// sonst hängt man mit der Tastatur fest und Screenreader landen im Nichts.
+	useEffect(() => {
+		dialogRef.current?.focus()
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") {
+				finish()
+			}
+		}
+		window.addEventListener("keydown", onKey)
+		return () => window.removeEventListener("keydown", onKey)
+	}, [finish])
 
 	return (
-		<div className="onboarding-backdrop" role="dialog" aria-modal="true" aria-label="Einführung">
+		<div
+			className="onboarding-backdrop"
+			role="dialog"
+			aria-modal="true"
+			aria-label="Einführung"
+			ref={dialogRef}
+			tabIndex={-1}
+		>
 			<div className="card onboarding">
 				<span className="onboard-icon">
 					<Icon size={26} />

@@ -8,6 +8,7 @@ import type { AddressInfo } from "node:net"
 import type { ChatChunk } from "@diriz/shared"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createProvider } from "../src/providers/factory.js"
+import { summarizeBody } from "../src/providers/http.js"
 import { LmStudioProvider } from "../src/providers/lmstudio.js"
 import { OllamaProvider } from "../src/providers/ollama.js"
 import { OpenAiCompatProvider } from "../src/providers/openai-compat.js"
@@ -204,5 +205,39 @@ describe("adapter: Fabrik", () => {
 		expect(createProvider("b", "lmstudio", "http://x")).toBeInstanceOf(LmStudioProvider)
 		expect(() => createProvider("c", "unbekannt", "http://x")).toThrow()
 		expect(() => createProvider("d", "openrouter", "http://x")).toThrow("API-Key")
+	})
+})
+
+describe("Fehlertexte lesbar halten", () => {
+	it("verdichtet eine HTML-Fehlerseite auf ihren Titel", () => {
+		const html = [
+			"<!DOCTYPE html>",
+			'<html class="h-full" lang="en-US">',
+			"<head><title>ngrok — Tunnel nicht gefunden</title>",
+			"<style>body{color:red}</style></head>",
+			"<body><h1>404</h1><p>Der Tunnel ist offline.</p></body></html>",
+		].join("\n")
+		const summary = summarizeBody(html)
+		expect(summary).toBe("HTML-Antwort: ngrok — Tunnel nicht gefunden")
+		// Weder Markup noch Skripte oder Stile dürfen ins Log gelangen.
+		expect(summary).not.toContain("<")
+		expect(summary).not.toContain("color:red")
+	})
+
+	it("fällt auf den sichtbaren Text zurück, wenn ein Titel fehlt", () => {
+		const summary = summarizeBody("<html><body><h1>Zugriff verweigert</h1></body></html>")
+		expect(summary).toBe("HTML-Antwort: Zugriff verweigert")
+	})
+
+	it("lässt JSON-Fehler unangetastet und kürzt sehr lange Texte", () => {
+		expect(summarizeBody('{"error":"model not found"}')).toBe('{"error":"model not found"}')
+		const lang = "x".repeat(500)
+		const summary = summarizeBody(lang)
+		expect(summary.length).toBeLessThan(200)
+		expect(summary.endsWith(" …")).toBe(true)
+	})
+
+	it("liefert für leere Antworten nichts", () => {
+		expect(summarizeBody("   ")).toBe("")
 	})
 })

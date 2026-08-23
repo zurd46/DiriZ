@@ -9,7 +9,6 @@
  */
 
 import fs from "node:fs"
-import path from "node:path"
 import {
 	type Agent,
 	type AgentProfile,
@@ -68,7 +67,8 @@ import { extractProfile } from "../routing/profile.js"
 import type { CandidateInfo } from "../routing/scorer.js"
 import { scoreCandidate } from "../routing/scorer.js"
 import { runAgentLoop } from "./agent.js"
-import { parseFileBlocks, writeWorkspaceFiles } from "./files.js"
+import { parseFileBlocks, writeWorkspaceFilesAt } from "./files.js"
+import { taskWorktreePath } from "./worktree.js"
 
 type EmitFn = (event: CoreEvent) => void
 type LogFn = (level: LogEntry["level"], scope: string, msg: string) => void
@@ -95,6 +95,11 @@ export interface EngineDeps {
 	emit: EmitFn
 	log: LogFn
 	workspaceDir: string
+	/**
+	 * Arbeitsverzeichnis einer Task. Ohne Angabe der Slug-Ordner in der
+	 * Workspace-Sandbox; mit gepinntem Repository ein Git-Worktree (M10).
+	 */
+	resolveTaskDir?: (task: Task) => Promise<string>
 }
 
 interface ActiveRun {
@@ -585,6 +590,17 @@ export class ExecutionEngine {
 		return [...ordered.slice(start), ...ordered.slice(0, start)]
 	}
 
+	/**
+	 * Wohin schreibt diese Task? Mit gepinntem Repository sorgt der Aufrufer
+	 * (siehe `index.ts`) dafür, dass dort ein Git-Worktree bereitsteht.
+	 */
+	private async taskDir(task: Task): Promise<string> {
+		if (this.deps.resolveTaskDir) {
+			return this.deps.resolveTaskDir(task)
+		}
+		return taskWorktreePath(this.deps.workspaceDir, task)
+	}
+
 	/* -------------------------------- Streaming -------------------------------- */
 
 	/**
@@ -597,7 +613,7 @@ export class ExecutionEngine {
 		choice: PolicyCandidate,
 		agent?: Agent,
 	): Promise<Execution> {
-		const { db, emit, log, registry, feedback, workspaceDir } = this.deps
+		const { db, emit, log, registry, feedback } = this.deps
 		const adapter = registry.adapter(choice.instance.providerId)
 		if (!adapter) {
 			throw new Error(`Kein Adapter für Provider ${choice.instance.providerId}`)
@@ -680,7 +696,7 @@ export class ExecutionEngine {
 			if (task.metadata.agentMode === true && adapter.supportsTools) {
 				// M8 Agentik: Tool-Loop statt Einzelstream — das Modell arbeitet
 				// mit list_files/read_file/write_file in der Task-Sandbox.
-				const baseDir = path.join(workspaceDir, taskSlug(task))
+				const baseDir = await this.taskDir(task)
 				fs.mkdirSync(baseDir, { recursive: true })
 				log("info", "agent", `Agentik-Modus aktiv für Task ${task.id} (${choice.instance.modelId})`)
 				const result = await runAgentLoop({
@@ -762,7 +778,7 @@ export class ExecutionEngine {
 		try {
 			const blocks = parseFileBlocks(fullText)
 			if (blocks.length > 0) {
-				const written = writeWorkspaceFiles(workspaceDir, taskSlug(task), blocks)
+				const written = writeWorkspaceFilesAt(await this.taskDir(task), blocks)
 				for (const w of written) {
 					const content = blocks.find((b) => b.relPath === w.relPath)?.content ?? ""
 					saveFile(db, {
@@ -813,10 +829,3 @@ export class ExecutionEngine {
 }
 
 /** Kurzer, sicherer Slug für den Workspace-Unterverzeichnis-Namen. */
-function taskSlug(task: Task): string {
-	const base = (task.title || task.prompt)
-		.toLowerCase()
-		.replace(/[^a-z0-9äöüß]+/g, "-")
-		.replace(/^-+|-+$/g, "")
-	return (base.slice(0, 40) || "task").replace(/-+$/g, "")
-}

@@ -30,6 +30,7 @@ import {
 } from "../src/db/repositories.js"
 import { EventBus } from "../src/execution/bus.js"
 import { ExecutionEngine, NoCandidateError } from "../src/execution/engine.js"
+import { taskWorktreePath } from "../src/execution/worktree.js"
 import { ProviderRegistry } from "../src/providers/registry.js"
 import { Feedback } from "../src/routing/feedback.js"
 
@@ -136,7 +137,7 @@ describe("engine: Erfolgspfad", () => {
 		expect(replayOutput(db, result.id)).toContain("Ergebnis:")
 
 		// Workspace-Datei geschrieben + in DB
-		const fileAbs = path.join(workspaceDir, "engine-test", "src", "out.txt")
+		const fileAbs = path.join(taskWorktreePath(workspaceDir, task), "src", "out.txt")
 		expect(fs.readFileSync(fileAbs, "utf8")).toBe("hallo diriz\n")
 		expect(result.files?.some((f) => f.relPath === "src/out.txt")).toBe(true)
 
@@ -329,7 +330,7 @@ describe("engine: Agentik-Modus (M8)", () => {
 		}
 
 		// Die Datei wurde per Tool in der Task-Sandbox geschrieben.
-		const fileAbs = path.join(workspaceDir, "agentik-test", "agent", "out.txt")
+		const fileAbs = path.join(taskWorktreePath(workspaceDir, task), "agent", "out.txt")
 		expect(fs.readFileSync(fileAbs, "utf8")).toBe("via tool")
 
 		// Finale Antwort im Replay sichtbar.

@@ -56,7 +56,14 @@ export function writeWorkspaceFiles(
 	taskSlug: string,
 	blocks: FileBlock[],
 ): WrittenFile[] {
-	const base = path.join(workspaceDir, taskSlug)
+	return writeWorkspaceFilesAt(path.join(workspaceDir, taskSlug), blocks)
+}
+
+/**
+ * Wie `writeWorkspaceFiles`, aber mit fertigem Zielverzeichnis — nötig, seit
+ * eine Task auch in einem Git-Worktree arbeiten kann (M10).
+ */
+export function writeWorkspaceFilesAt(base: string, blocks: FileBlock[]): WrittenFile[] {
 	const written: WrittenFile[] = []
 	for (const block of blocks) {
 		if (!isSafeRelPath(block.relPath)) {

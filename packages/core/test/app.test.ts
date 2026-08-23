@@ -51,7 +51,16 @@ beforeAll(async () => {
 		},
 	)
 	const engine = new ExecutionEngine({ db, registry, feedback, emit: (e) => bus.emit(e), log, workspaceDir })
-	ctx = { db, bus, registry, engine, feedback, secret, workspaceDir }
+	ctx = {
+		db,
+		bus,
+		registry,
+		engine,
+		feedback,
+		secret,
+		workspaceDir,
+		reposDir: fs.mkdtempSync(path.join(os.tmpdir(), "diriz-repos-")),
+	}
 	app = await buildApp(ctx)
 })
 

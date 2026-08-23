@@ -18,10 +18,13 @@ import { registerInstances } from "./routes/instances.js"
 import { registerLogs } from "./routes/logs.js"
 import { registerMetrics } from "./routes/metrics.js"
 import { registerProviders } from "./routes/providers.js"
+import { registerRepos } from "./routes/repos.js"
 import { registerSettings } from "./routes/settings.js"
 import { registerStream } from "./routes/stream.js"
 import { registerTasks } from "./routes/tasks.js"
 import { registerTemplates } from "./routes/templates.js"
+import { registerVersion } from "./routes/version.js"
+import { registerWebUi } from "./routes/webui.js"
 import { registerWorkspace } from "./routes/workspace.js"
 import type { Feedback } from "./routing/feedback.js"
 
@@ -34,6 +37,8 @@ export interface AppContext {
 	feedback: Feedback
 	secret: Buffer
 	workspaceDir: string
+	/** Lokale Klone der verbundenen GitHub-Repositories (M10). */
+	reposDir: string
 }
 
 export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
@@ -41,11 +46,13 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
 	await app.register(cors, { origin: WEB_ORIGIN, methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"] })
 
 	registerHealth(app, ctx)
+	registerVersion(app, ctx)
 	registerHost(app, ctx)
 	registerProviders(app, ctx)
 	registerAgents(app, ctx)
 	registerInstances(app, ctx)
 	registerDocs(app, ctx)
+	registerRepos(app, ctx)
 	registerTasks(app, ctx)
 	registerTemplates(app, ctx)
 	registerLogs(app, ctx)
@@ -53,6 +60,9 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
 	registerSettings(app, ctx)
 	registerWorkspace(app, ctx)
 	registerStream(app, ctx)
+
+	// Zuletzt: die gebaute Oberfläche + SPA-Fallback (setzt den 404-Handler).
+	await registerWebUi(app)
 
 	return app
 }

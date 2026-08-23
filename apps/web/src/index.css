@@ -2538,3 +2538,353 @@ pre.code {
 	font-size: var(--fs-sm);
 	line-height: 1.6;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   App-Rahmen: Skip-Link, mobile Navigation, Meldungen (Toasts)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.skip-link {
+	position: absolute;
+	left: -9999px;
+	top: 0;
+	z-index: 100;
+	padding: var(--sp-2) var(--sp-4);
+	background: var(--accent);
+	color: #fff;
+	border-radius: 0 0 var(--r-sm) 0;
+	font-size: var(--fs-md);
+	font-weight: 600;
+}
+
+.skip-link:focus {
+	left: 0;
+}
+
+/* Umschalter erscheint nur auf schmalen Bildschirmen (siehe Media-Query). */
+.nav-toggle {
+	display: none;
+	align-items: center;
+	gap: var(--sp-2);
+	margin-bottom: var(--sp-3);
+	padding: var(--sp-2) var(--sp-3);
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--r-sm);
+	color: var(--text);
+	font-family: inherit;
+	font-size: var(--fs-md);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.nav-scrim {
+	display: none;
+	position: fixed;
+	inset: 0;
+	z-index: 39;
+	border: none;
+	background: rgba(4, 7, 12, 0.6);
+	cursor: default;
+}
+
+@media (max-width: 860px) {
+	.app {
+		grid-template-columns: 1fr;
+	}
+
+	.sidebar {
+		position: fixed;
+		z-index: 40;
+		top: 0;
+		bottom: 0;
+		left: 0;
+		width: 250px;
+		transform: translateX(-100%);
+		transition: transform var(--fast);
+	}
+
+	.app.nav-open .sidebar {
+		transform: none;
+	}
+
+	.app.nav-open .nav-scrim {
+		display: block;
+	}
+
+	.nav-toggle {
+		display: inline-flex;
+	}
+}
+
+/* ── Meldungen ── */
+
+.toasts {
+	position: fixed;
+	right: var(--sp-4);
+	bottom: calc(var(--sp-8) + var(--sp-4));
+	z-index: 60;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-2);
+	max-width: min(420px, calc(100vw - 2 * var(--sp-4)));
+}
+
+.toast {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--sp-2);
+	padding: var(--sp-3);
+	background: var(--surface-2);
+	border: 1px solid var(--border-strong);
+	border-left-width: 3px;
+	border-radius: var(--r-sm);
+	box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+	font-size: var(--fs-md);
+	animation: toast-in 160ms ease-out;
+}
+
+@keyframes toast-in {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+}
+
+.toast.error {
+	border-left-color: var(--err);
+}
+
+.toast.error .icon {
+	color: var(--err);
+}
+
+.toast.success {
+	border-left-color: var(--ok);
+}
+
+.toast.success .icon {
+	color: var(--ok);
+}
+
+.toast.info {
+	border-left-color: var(--info);
+}
+
+.toast.info .icon {
+	color: var(--info);
+}
+
+.toast .icon {
+	flex: none;
+	margin-top: 1px;
+}
+
+.toast-text {
+	flex: 1;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   GitHub (M10): Diff-Ansicht, Repo-Auswahl, Commit-Liste
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.diff-list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-3);
+}
+
+.diff-file {
+	border: 1px solid var(--border);
+	border-radius: var(--r-sm);
+	overflow: hidden;
+	background: var(--surface);
+}
+
+.diff-file-head {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-2);
+	width: 100%;
+	padding: var(--sp-2) var(--sp-3);
+	background: var(--surface-2);
+	border: none;
+	border-bottom: 1px solid var(--border);
+	color: var(--text);
+	font-family: inherit;
+	font-size: var(--fs-md);
+	text-align: left;
+	cursor: pointer;
+}
+
+.diff-file-head:hover {
+	background: var(--surface-hover);
+}
+
+.diff-file-head .icon {
+	color: var(--faint);
+	flex: none;
+}
+
+.diff-path {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: var(--fs-sm);
+}
+
+.diff-stat {
+	display: inline-flex;
+	gap: 6px;
+	font-family: var(--mono);
+	font-size: var(--fs-xs);
+	flex: none;
+}
+
+.diff-stat .add {
+	color: var(--ok-text);
+}
+
+.diff-stat .del {
+	color: var(--err-text);
+}
+
+.diff-body {
+	max-height: 520px;
+	overflow: auto;
+}
+
+.diff-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-family: var(--mono);
+	font-size: var(--fs-sm);
+	line-height: 1.55;
+}
+
+.diff-hunk td {
+	padding: 3px var(--sp-3);
+	background: var(--surface-2);
+	color: var(--faint);
+	border-top: 1px solid var(--border-soft);
+	border-bottom: 1px solid var(--border-soft);
+}
+
+.diff-num {
+	width: 1%;
+	min-width: 42px;
+	padding: 0 var(--sp-2);
+	text-align: right;
+	color: var(--faint);
+	background: var(--bg-soft);
+	user-select: none;
+	vertical-align: top;
+	border-right: 1px solid var(--border-soft);
+}
+
+.diff-text {
+	padding: 0 var(--sp-3) 0 0;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	vertical-align: top;
+}
+
+.diff-marker {
+	display: inline-block;
+	width: 1.2em;
+	color: var(--faint);
+	user-select: none;
+}
+
+.diff-line.add {
+	background: rgba(62, 207, 142, 0.1);
+}
+
+.diff-line.add .diff-marker {
+	color: var(--ok);
+}
+
+.diff-line.del {
+	background: rgba(240, 98, 91, 0.1);
+}
+
+.diff-line.del .diff-marker {
+	color: var(--err);
+}
+
+.diff-line.meta .diff-text {
+	color: var(--faint);
+	font-style: italic;
+}
+
+/* ── Repo-Auswahl ── */
+
+.repo-picker {
+	display: grid;
+	gap: var(--sp-2);
+	grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+	max-height: 380px;
+	overflow-y: auto;
+}
+
+.repo-option {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	padding: var(--sp-2) var(--sp-3);
+	background: var(--surface-2);
+	border: 1px solid var(--border);
+	border-radius: var(--r-sm);
+	color: var(--text);
+	font-family: inherit;
+	text-align: left;
+	cursor: pointer;
+	transition:
+		border-color var(--fast),
+		background var(--fast);
+}
+
+.repo-option:hover:not(:disabled) {
+	border-color: var(--accent-line);
+	background: var(--surface-hover);
+}
+
+.repo-option-name {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-2);
+	font-weight: 560;
+	font-size: var(--fs-md);
+}
+
+.repo-option-desc {
+	font-size: var(--fs-xs);
+	color: var(--faint);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ── Commits ── */
+
+.commit-list {
+	margin: var(--sp-2) 0 0;
+	padding: 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-1);
+	font-size: var(--fs-md);
+}
+
+.commit-list li {
+	padding: var(--sp-1) 0;
+	border-bottom: 1px solid var(--border-soft);
+}
+
+.commit-list li:last-child {
+	border-bottom: none;
+}

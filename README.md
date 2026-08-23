@@ -3,11 +3,15 @@
 **Der Dirigent für deine LLM-Orchester.** DiriZ ist ein lokales Orchestrierungssystem, das jede Task automatisch dem besten Modell zuweist — lokal (Ollama, LM Studio) oder Cloud (OpenRouter, OpenAI) — mit vollem Live-Monitoring, Explainability und lernendem Routing.
 
 ```
-┌─────────────┐     ┌──────────────────────────┐     ┌─────────────────────┐
-│  React-UI   │ SSE │      DiriZ Core          │ HTTP│  Ollama · LM Studio │
-│  :5173      │◄────►│  Fastify · SQLite :8787  │◄───►│  OpenRouter · OpenAI│
-└─────────────┘     │  Routing-Engine + Failover│     └─────────────────────┘
-                    └──────────────────────────┘
+Betrieb — ein Prozess, ein Port:
+
+   Browser  ──────────────►  DiriZ Core :8787  ──────────►  Ollama · LM Studio
+   (UI + API, gleiche Herkunft)  Fastify · SQLite · SSE      OpenRouter · OpenAI
+                                 Routing-Engine + Failover
+
+Entwicklung — Vite davor, mit HMR:
+
+   Browser :5173  ──/api──►  DiriZ Core :8787  ──────────►  LLM-Backends
 ```
 
 ## ✨ Features
@@ -20,33 +24,53 @@
 | **Monitoring** | Dashboard mit Metriken-Karten, 24 h/7-Tage-Charts (Tokens, Requests, Kosten), Ollama-VRAM-Load, System-Karte (Host-RAM/CPU/GPU), Live-Logs, Statusleiste |
 | **Workspace** | Versionierte Task-Dateien: Baum-Ansicht, Vorschau mit Zeilennummern, farbiger Diff zwischen beliebigen zwei Versionen |
 | **Feedback** | 1–5-Sterne-Ratings pro Execution → exponentiell glättender Qualitäts-Prior — DiriZ wird mit jedem Feedback besser |
+| **GitHub** | Repositories verbinden und **pro Task pinnen**: Die Task arbeitet in einem eigenen Git-Worktree auf eigenem Branch, Änderungen erscheinen als Diff mit Zeilennummern, und lassen sich committen, pushen oder als Pull-Request öffnen — auf Wunsch auch direkt auf den Basis-Branch |
+| **Deklaration** | `plan.md`, `changelog.md` und `init.md` je Rechner, Modell und Spezialist. `plan.md` wird zur verbindlichen Arbeitsanweisung im System-Prompt, `init.md` setzt die Model-Parameter — bearbeitbar im Tab **Dokumente** mit Vorschau und Volltextsuche |
 | **Spezialisten** | Agenten (System-Prompt + Capability-Anforderungen) und Swarms; Auto-Zuordnung per Prompt-Match oder feste Zuweisung |
 | **Sicherheit** | Local-first: Cloud nur auf Wunsch. API-Keys AES-256-GCM-verschlüsselt in der DB, nie im Klartext zurückgegeben |
 
 ## 🚀 Quickstart
 
-**Voraussetzungen:** Node.js ≥ 22 · ein lokeller LLM-Server (z. B. [Ollama](https://ollama.com)) oder Cloud-API-Key
+**Voraussetzungen:** Node.js ≥ 22 · ein lokaler LLM-Server (z. B. [Ollama](https://ollama.com)) oder ein Cloud-API-Key
 
 ```bash
-# 1) Abhängigkeiten installieren
-npm install
+npm install       # Abhängigkeiten
+npm run serve     # baut alles und startet DiriZ auf http://127.0.0.1:8787
+```
 
-# 2) Entwicklung starten (Core :8787 + Web :5173, mit HMR)
-npm run dev
+Der Core liefert die Oberfläche selbst aus — **ein Prozess, ein Port, eine URL.**
+Beim Start schreibt er Port, Datenverzeichnis und Workspace ins Terminal:
 
-# 3) Browser öffnen → http://localhost:5173
+```
+DiriZ Core  ·  Schema v8
+  URL         http://127.0.0.1:8787
+  Oberfläche  …/apps/web/dist
+  Daten       ~/.diriz
+  Workspace   ~/DiriZ/workspace
 ```
 
 **Erste Task:**
 1. Tab **Provider** → Ollama hinzufügen (`http://localhost:11434`) — Modelle werden automatisch entdeckt
-2. Tab **Tasks** → „+ Neue Task“ → Prompt eingeben → anlegen & starten
-3. Ergebnis im Live-Stream verfolgen, in der Detail-Karte mit Sternen bewerten
+2. Tab **Dokumente** → in `plan.md` deklarieren, wie das Modell arbeiten soll (wirkt direkt im System-Prompt)
+3. Tab **Tasks** → „+ Neue Task" → Prompt eingeben → anlegen & starten
+4. Ergebnis im Live-Stream verfolgen und mit Sternen bewerten
 
-**Produktions-Build:**
+**Entwicklung (mit Hot-Reload):**
 ```bash
-npm run build   # Core (tsc) + Web (Vite)
-npm start       # Core aus dist/ starten
+npm run dev       # Core :8787 (tsx watch) + Vite :5173 (HMR) → http://localhost:5173
 ```
+
+**Konfiguration** (alles optional, per Environment):
+
+| Variable | Default | Wirkung |
+|----------|---------|---------|
+| `DIRIZ_PORT` | `8787` | Port des Cores |
+| `DIRIZ_HOST` | `127.0.0.1` | Bind-Adresse — bewusst nur lokal |
+| `DIRIZ_DATA_DIR` | `~/.diriz` | SQLite-Datenbank und Verschlüsselungs-Secret |
+| `DIRIZ_WORKSPACE_DIR` | `~/DiriZ/workspace` | Sandbox für AI-generierte Dateien |
+| `DIRIZ_WEB_DIR` | `apps/web/dist` | Verzeichnis der gebauten Oberfläche |
+| `DIRIZ_REPOS_DIR` | `<data>/repos` | Lokale Klone der verbundenen GitHub-Repositories |
+| `DIRIZ_GIT_NAME` / `DIRIZ_GIT_EMAIL` | `DiriZ` / `diriz@localhost` | Autor der von DiriZ erzeugten Commits |
 
 **Desktop-App (optional, M8):**
 ```bash
@@ -58,17 +82,19 @@ npm run desktop  # Tauri-Fenster um die Web-UI (Dev: Vite; Prod: npm run build v
 ```
 DiriZ/
 ├── apps/web/                  # React-UI (Vite, Zustand, SSE-Live-Events)
-│   └── src/views/             # Dashboard · Provider · Agenten · Tasks · Workspace · Logs · Einstellungen
+│   └── src/views/             # Dashboard · Provider · Agenten · Tasks · Dokumente · Workspace · Logs · Einstellungen
 ├── apps/desktop/              # Tauri-2-Desktop-Hülle (M8): `npm run desktop`
 ├── packages/core/             # Fastify-Core: API, Engine, Routing, DB
-│   ├── db/migrations/         # SQLite-Migrationen (0001–0004)
+│   ├── db/migrations/         # SQLite-Migrationen (0001–0009)
 │   └── src/
 │       ├── execution/         # ExecutionEngine, Failover, Event-Bus, Agent-Loop + Sandbox-Tools
+│       ├── git/               # GitHub-Anbindung: git-Hülle, Worktrees, Diff-Parser, REST-Client
 │       ├── monitoring/        # Host-RAM/CPU/GPU-Metriken (M8)
 │       ├── providers/         # Adapter: Ollama · LM Studio · OpenAI(-Compat) · OpenRouter
 │       ├── routing/           # Profil-Extraktion · Policies · Scoring · Feedback-Prior
 │       └── routes/            # REST-API (tasks, providers, agents, metrics, host, workspace, settings, …)
 ├── packages/shared/           # Gemeinsame Typen, Event-Kontrakte, Scoring-Formeln (UI ≡ Core)
+├── .github/workflows/         # CI: Lint · Typecheck · Tests · Build · Server-Rauchtest
 ├── docs/                      # 01-plan.md (Architektur & Roadmap) · STATUS.md (aktueller Stand)
 └── playwright.config.ts       # E2E-Smoke-Tests
 ```
@@ -79,12 +105,27 @@ DiriZ/
 
 | Befehl | Wirkung |
 |--------|---------|
+| `npm run serve` | Build + Start — **der Weg in den Betrieb** |
 | `npm run dev` | Core + Web parallel (tsx watch + Vite HMR) |
-| `npm run desktop` | Tauri-2-Fenster um die Web-UI (M8) |
-| `npm run check` | **Lint + Typecheck + Tests** — der tägliche Qualitäts-Gate |
-| `npm test` | Vitest: shared + core (93 Tests) |
-| `npx playwright test` | E2E-Smoke gegen laufende Dev-Server |
-| `npm run build` / `npm start` | Produktions-Build bzw. Core starten |
+| `npm start` | Startet den bereits gebauten Core (inkl. Oberfläche) |
+| `npm run build` | Produktions-Build von Core, Shared und Web |
+| `npm run check` | **Lint + Typecheck + Unit-Tests** — das tägliche Qualitäts-Gate |
+| `npm test` | Vitest: shared + core |
+| `npm run test:e2e` | Playwright-E2E; startet den Dev-Stack selbst, wenn nötig |
+| `npm run desktop` | Tauri-2-Fenster um die Web-UI |
+
+Jeder Push und Pull-Request durchläuft dieselben Schritte in der
+[CI](.github/workflows/ci.yml) — zuzüglich eines Rauchtests, der den
+**gebauten** Server startet und prüft, dass er Oberfläche und API ausliefert.
+
+## 🔧 Fehlersuche
+
+| Symptom | Ursache & Behebung |
+|---------|--------------------|
+| API antwortet mit **404** auf neue Routen | Es läuft noch ein **älterer Prozess** auf dem Port. `lsof -nP -iTCP:8787 -sTCP:LISTEN` zeigt ihn; beenden und neu starten. `GET /api/version` nennt den tatsächlich laufenden Stand — auch in der Statusleiste sichtbar. |
+| `Port 8787 ist bereits belegt` | Ein zweiter Start (oft `npm start` **und** `npm run dev`). Einen beenden oder `DIRIZ_PORT=8788 npm start`. |
+| UI zeigt „Die Oberfläche wurde noch nicht gebaut" | `npm run build` — oder in der Entwicklung `npm run dev` und http://localhost:5173 nutzen. |
+| Provider bleibt „offline" | Base-URL prüfen (LM Studio braucht `/v1`), dann Tab **Provider** → Health-Check. Details im Tab **Logs**. |
 
 ## 📚 Dokumentation
 

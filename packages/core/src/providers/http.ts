@@ -14,6 +14,35 @@ export class ProviderHttpError extends Error {
 	}
 }
 
+/**
+ * Fehlertext eines HTTP-Fehlers lesbar machen.
+ *
+ * Antwortet ein Endpunkt mit einer HTML-Seite (Tunnel-Fehlerseite, Login-Wand,
+ * falscher Pfad), landete bisher die halbe Seite im Log — bei jedem Poll aufs
+ * Neue. Hier wird Markup zu einer Zeile verdichtet: erst der Titel, sonst der
+ * sichtbare Text, hart gekürzt.
+ */
+export function summarizeBody(text: string, max = 160): string {
+	const trimmed = text.trim()
+	if (trimmed.length === 0) {
+		return ""
+	}
+	const looksLikeHtml = /^\s*<(?:!doctype|html|head|body)\b/i.test(trimmed)
+	if (looksLikeHtml) {
+		const title = trimmed.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.trim()
+		const stripped = trimmed
+			.replace(/<script[\s\S]*?<\/script>/gi, " ")
+			.replace(/<style[\s\S]*?<\/style>/gi, " ")
+			.replace(/<[^>]+>/g, " ")
+			.replace(/\s+/g, " ")
+			.trim()
+		const summary = title || stripped
+		return `HTML-Antwort: ${summary.slice(0, max)}${summary.length > max ? " …" : ""}`
+	}
+	const oneLine = trimmed.replace(/\s+/g, " ")
+	return oneLine.length > max ? `${oneLine.slice(0, max)} …` : oneLine
+}
+
 export function errorMessage(e: unknown): string {
 	if (e instanceof Error) {
 		return e.message
@@ -51,7 +80,11 @@ export async function fetchJson<T>(url: string, opts: JsonOptions = {}): Promise
 		})
 		if (!res.ok) {
 			const text = await res.text().catch(() => "")
-			throw new ProviderHttpError(`HTTP ${res.status} ${res.statusText}: ${text.slice(0, 300)}`, res.status)
+			const detail = summarizeBody(text)
+			throw new ProviderHttpError(
+				`HTTP ${res.status} ${res.statusText}${detail ? ` — ${detail}` : ""}`,
+				res.status,
+			)
 		}
 		return (await res.json()) as T
 	} finally {

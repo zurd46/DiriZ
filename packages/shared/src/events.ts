@@ -90,8 +90,15 @@ export interface LogEvent {
 	data: { level: LogLevel; scope: string; msg: string }
 }
 
+/** Eine Task wurde nach GitHub gepusht (M10). */
+export interface TaskPushedEvent {
+	event: "task.pushed"
+	data: { taskId: string; branch: string; toBase: boolean }
+}
+
 export type CoreEvent =
 	| TaskCreatedEvent
+	| TaskPushedEvent
 	| AgentSelectedEvent
 	| AgentsChangedEvent
 	| SwarmsChangedEvent
@@ -108,6 +115,7 @@ export type CoreEvent =
 /** Sämtliche Event-Namen — für Client-Validierung und Tests. */
 export const CORE_EVENT_NAMES = [
 	"task.created",
+	"task.pushed",
 	"task.agent_selected",
 	"agents.changed",
 	"swarms.changed",

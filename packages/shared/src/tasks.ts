@@ -42,6 +42,16 @@ export interface Task {
 	swarmId?: string
 	/** Task-Override für Model-Settings — höchste Priorität. */
 	overrides?: ModelSettings
+	/** GitHub-Anbindung (M10): an welches Repository ist die Task gepinnt? */
+	repoId?: string | null
+	/** Basis-Branch, von dem der Arbeitsbranch abzweigt. */
+	baseBranch?: string | null
+	/** Arbeitsbranch dieser Task (`diriz/<slug>`). */
+	workBranch?: string | null
+	/** Zeitpunkt des letzten Pushes. */
+	pushedAt?: string | null
+	/** Link zum Pull-Request, sofern geöffnet. */
+	prUrl?: string | null
 }
 
 export interface Execution {

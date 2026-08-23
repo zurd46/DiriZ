@@ -14,6 +14,8 @@ export interface CoreConfig {
 	dataDir: string
 	/** Sandbox für AI-generierte Dateien (§9). */
 	workspaceDir: string
+	/** Lokale Klone verbundener GitHub-Repositories (M10). */
+	reposDir: string
 }
 
 function expandHome(p: string): string {
@@ -29,5 +31,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
 		port: Number(env.DIRIZ_PORT ?? CORE_PORT),
 		dataDir: expandHome(env.DIRIZ_DATA_DIR ?? DEFAULT_DATA_DIR),
 		workspaceDir: expandHome(env.DIRIZ_WORKSPACE_DIR ?? DEFAULT_WORKSPACE_DIR),
+		reposDir: expandHome(env.DIRIZ_REPOS_DIR ?? path.join(env.DIRIZ_DATA_DIR ?? DEFAULT_DATA_DIR, "repos")),
 	}
 }

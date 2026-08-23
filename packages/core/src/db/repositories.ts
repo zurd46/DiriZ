@@ -25,6 +25,7 @@ import type {
 	ProviderDoc,
 	ProviderStatus,
 	ProviderType,
+	Repo,
 	RoutingDecision,
 	Swarm,
 	Task,
@@ -629,6 +630,140 @@ export function syncProviderSettingsFromInit(db: Db, providerId: string): ModelS
 	return syncSettingsFromInit(db, DOC_SCOPES.provider, providerId)
 }
 
+/* --------------------------- Repositories (M10) ------------------------------ */
+
+interface RepoRow {
+	id: string
+	owner: string
+	name: string
+	clone_url: string
+	default_branch: string
+	local_path: string | null
+	last_synced_at: string | null
+	last_error: string | null
+	created_at: string
+}
+
+function mapRepo(row: RepoRow): Repo {
+	return {
+		id: row.id,
+		owner: row.owner,
+		name: row.name,
+		fullName: `${row.owner}/${row.name}`,
+		cloneUrl: row.clone_url,
+		defaultBranch: row.default_branch,
+		localPath: row.local_path,
+		lastSyncedAt: row.last_synced_at,
+		lastError: row.last_error,
+		createdAt: row.created_at,
+	}
+}
+
+export interface RepoInput {
+	owner: string
+	name: string
+	cloneUrl: string
+	defaultBranch?: string
+}
+
+export function createRepo(db: Db, input: RepoInput): Repo {
+	const id = randomUUID()
+	db.prepare(
+		`INSERT INTO repos (id, owner, name, clone_url, default_branch, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+	).run(id, input.owner, input.name, input.cloneUrl, input.defaultBranch ?? "main", new Date().toISOString())
+	const created = getRepo(db, id)
+	if (!created) {
+		throw new Error("repo create failed")
+	}
+	return created
+}
+
+export function listRepos(db: Db): Repo[] {
+	const rows = db
+		.prepare("SELECT * FROM repos ORDER BY owner COLLATE NOCASE, name COLLATE NOCASE")
+		.all() as unknown as RepoRow[]
+	return rows.map(mapRepo)
+}
+
+export function getRepo(db: Db, id: string): Repo | undefined {
+	const row = db.prepare("SELECT * FROM repos WHERE id = ?").get(id) as unknown as RepoRow | undefined
+	return row ? mapRepo(row) : undefined
+}
+
+export function findRepoByFullName(db: Db, owner: string, name: string): Repo | undefined {
+	const row = db.prepare("SELECT * FROM repos WHERE owner = ? AND name = ?").get(owner, name) as
+		| RepoRow
+		| undefined
+	return row ? mapRepo(row) : undefined
+}
+
+export interface RepoPatch {
+	defaultBranch?: string
+	localPath?: string | null
+	lastSyncedAt?: string | null
+	lastError?: string | null
+}
+
+export function updateRepo(db: Db, id: string, patch: RepoPatch): Repo | undefined {
+	const current = getRepo(db, id)
+	if (!current) {
+		return undefined
+	}
+	db.prepare(
+		`UPDATE repos SET default_branch = ?, local_path = ?, last_synced_at = ?, last_error = ? WHERE id = ?`,
+	).run(
+		patch.defaultBranch ?? current.defaultBranch,
+		patch.localPath === undefined ? current.localPath : patch.localPath,
+		patch.lastSyncedAt === undefined ? current.lastSyncedAt : patch.lastSyncedAt,
+		patch.lastError === undefined ? current.lastError : patch.lastError,
+		id,
+	)
+	return getRepo(db, id)
+}
+
+export function deleteRepo(db: Db, id: string): boolean {
+	// Tasks behalten ihre Historie, verlieren aber die Bindung.
+	db.prepare("UPDATE tasks SET repo_id = NULL WHERE repo_id = ?").run(id)
+	return db.prepare("DELETE FROM repos WHERE id = ?").run(id).changes > 0
+}
+
+/** Setzt Repo-Bindung, Branches und Push-Zustand einer Task. */
+export interface TaskRepoPatch {
+	repoId?: string | null
+	baseBranch?: string | null
+	workBranch?: string | null
+	pushedAt?: string | null
+	prUrl?: string | null
+}
+
+export function setTaskRepo(db: Db, taskId: string, patch: TaskRepoPatch): void {
+	const row = db
+		.prepare("SELECT repo_id, base_branch, work_branch, pushed_at, pr_url FROM tasks WHERE id = ?")
+		.get(taskId) as
+		| {
+				repo_id: string | null
+				base_branch: string | null
+				work_branch: string | null
+				pushed_at: string | null
+				pr_url: string | null
+		  }
+		| undefined
+	if (!row) {
+		return
+	}
+	db.prepare(
+		"UPDATE tasks SET repo_id = ?, base_branch = ?, work_branch = ?, pushed_at = ?, pr_url = ? WHERE id = ?",
+	).run(
+		patch.repoId === undefined ? row.repo_id : patch.repoId,
+		patch.baseBranch === undefined ? row.base_branch : patch.baseBranch,
+		patch.workBranch === undefined ? row.work_branch : patch.workBranch,
+		patch.pushedAt === undefined ? row.pushed_at : patch.pushedAt,
+		patch.prUrl === undefined ? row.pr_url : patch.prUrl,
+		taskId,
+	)
+}
+
 /* ------------------------------------ Tasks ---------------------------------- */
 
 interface TaskRow {
@@ -645,6 +780,11 @@ interface TaskRow {
 	agent_id: string | null
 	swarm_id: string | null
 	overrides_json: string | null
+	repo_id?: string | null
+	base_branch?: string | null
+	work_branch?: string | null
+	pushed_at?: string | null
+	pr_url?: string | null
 }
 
 function mapTask(row: TaskRow): Task {
@@ -660,6 +800,11 @@ function mapTask(row: TaskRow): Task {
 		agentId: row.agent_id ?? undefined,
 		swarmId: row.swarm_id ?? undefined,
 		overrides: parseSettings(row.overrides_json) ?? undefined,
+		repoId: row.repo_id ?? null,
+		baseBranch: row.base_branch ?? null,
+		workBranch: row.work_branch ?? null,
+		pushedAt: row.pushed_at ?? null,
+		prUrl: row.pr_url ?? null,
 	}
 }
 
@@ -671,6 +816,9 @@ export interface TaskInput {
 	agentId?: string
 	swarmId?: string
 	overrides?: ModelSettings | null
+	/** GitHub-Anbindung: Repo und Basis-Branch direkt beim Anlegen setzen. */
+	repoId?: string | null
+	baseBranch?: string | null
 }
 
 export function createTask(db: Db, input: TaskInput): Task {
@@ -690,8 +838,8 @@ export function createTask(db: Db, input: TaskInput): Task {
 	const title = (input.title ?? "").trim() || input.prompt.slice(0, 60)
 	db.prepare(
 		`INSERT INTO tasks (id, title, prompt, metadata_json, privacy, mode, status, created_at,
-			assignment_mode, agent_id, swarm_id, overrides_json)
-		 VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)`,
+			assignment_mode, agent_id, swarm_id, overrides_json, repo_id, base_branch)
+		 VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)`,
 	).run(
 		id,
 		title,
@@ -704,6 +852,8 @@ export function createTask(db: Db, input: TaskInput): Task {
 		input.agentId ?? null,
 		input.swarmId ?? null,
 		input.overrides ? JSON.stringify(input.overrides) : null,
+		input.repoId ?? null,
+		input.baseBranch ?? null,
 	)
 	const created = getTask(db, id)
 	if (!created) {

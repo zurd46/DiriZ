@@ -54,6 +54,10 @@ export class ProviderRegistry {
 	private circuits = new Map<string, CircuitState>()
 	private latencySamples = new Map<string, LatencySample[]>()
 	private pollers = new Map<string, NodeJS.Timeout>()
+	/** Zuletzt protokollierte Health-Zeile je Provider (Entprellung). */
+	private readonly lastHealthLine = new Map<string, string>()
+	/** Zuletzt protokollierter Polling-Fehler je Provider (Entprellung). */
+	private readonly lastPollError = new Map<string, string>()
 	private statuses = new Map<string, ProviderStatus>()
 	private loads = new Map<
 		string,
@@ -147,11 +151,14 @@ export class ProviderRegistry {
 			event: "provider.status",
 			data: { providerId, status: health.ok ? "online" : "offline" },
 		})
-		this.log(
-			health.ok ? "info" : "error",
-			"health",
-			`${entry.label}: ${health.ok ? "online" : `offline (${health.detail ?? "?"})`}`,
-		)
+		// Nur Zustandswechsel protokollieren. Sonst schrieb jeder Poll (alle 10 s)
+		// dieselbe Zeile — ein dauerhaft offline stehender Provider machte das
+		// Log unlesbar, obwohl der Status in der Oberfläche ohnehin sichtbar ist.
+		const line = health.ok ? "online" : `offline (${health.detail ?? "?"})`
+		if (this.lastHealthLine.get(providerId) !== line) {
+			this.lastHealthLine.set(providerId, line)
+			this.log(health.ok ? "info" : "error", "health", `${entry.label}: ${line}`)
+		}
 		return health.ok
 	}
 
@@ -260,7 +267,12 @@ export class ProviderRegistry {
 					await this.checkHealth(providerId)
 					await this.refreshDiscovery(providerId)
 				} catch (e) {
-					this.log("error", "polling", `${providerId}: ${e instanceof Error ? e.message : String(e)}`)
+					// Ebenfalls entprellt: derselbe Fehler wird nur einmal gemeldet.
+					const msg = e instanceof Error ? e.message : String(e)
+					if (this.lastPollError.get(providerId) !== msg) {
+						this.lastPollError.set(providerId, msg)
+						this.log("error", "polling", `${this.meta.get(providerId)?.label ?? providerId}: ${msg}`)
+					}
 				}
 			})()
 		}

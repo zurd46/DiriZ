@@ -14,7 +14,7 @@ import type {
 	LLMProvider,
 	ProviderType,
 } from "@diriz/shared"
-import { errorMessage, fetchJson, ProviderHttpError, sseData } from "./http.js"
+import { errorMessage, fetchJson, ProviderHttpError, sseData, summarizeBody } from "./http.js"
 
 export interface OpenAiCompatOptions {
 	id: string
@@ -156,7 +156,11 @@ export class OpenAiCompatProvider implements LLMProvider {
 		})
 		if (!res.ok || !res.body) {
 			const text = await res.text().catch(() => "")
-			throw new ProviderHttpError(`HTTP ${res.status} ${res.statusText}: ${text.slice(0, 300)}`, res.status)
+			const detail = summarizeBody(text)
+			throw new ProviderHttpError(
+				`HTTP ${res.status} ${res.statusText}${detail ? ` — ${detail}` : ""}`,
+				res.status,
+			)
 		}
 		// Tool-Calls werden pro Index akkumuliert (Name + Argumente streamen in Fragmenten).
 		const pending = new Map<number, { id: string; name: string; argsBuf: string }>()

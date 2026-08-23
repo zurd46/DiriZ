@@ -1,11 +1,14 @@
 import type { ComponentType } from "react"
 import { useEffect, useState } from "react"
+import ErrorBoundary from "./components/ErrorBoundary.js"
 import type { IconProps } from "./components/icons.js"
 import {
 	IconAgents,
 	IconDashboard,
 	IconDoc,
+	IconGitBranch,
 	IconLogs,
+	IconMenu,
 	IconServer,
 	IconSettings,
 	IconTasks,
@@ -13,21 +16,22 @@ import {
 	LogoMark,
 } from "./components/icons.js"
 import Onboarding, { shouldShowOnboarding } from "./components/Onboarding.js"
+import Toasts from "./components/Toasts.js"
+import { ROUTE_TITLES, type Route, useRoute } from "./lib/router.js"
 import { connectStream } from "./lib/sse.js"
 import { useStore } from "./store.js"
 import Agents from "./views/Agents.js"
 import Dashboard from "./views/Dashboard.js"
 import Docs from "./views/Docs.js"
+import Github from "./views/Github.js"
 import Logs from "./views/Logs.js"
 import Providers from "./views/Providers.js"
 import Settings from "./views/Settings.js"
 import Tasks from "./views/Tasks.js"
 import Workspace from "./views/Workspace.js"
 
-type View = "dashboard" | "providers" | "agents" | "tasks" | "docs" | "logs" | "workspace" | "settings"
-
 interface NavItem {
-	id: View
+	id: Route
 	label: string
 	icon: ComponentType<IconProps>
 }
@@ -45,6 +49,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
 			{ id: "agents", label: "Agenten", icon: IconAgents },
 			{ id: "tasks", label: "Tasks", icon: IconTasks },
 			{ id: "docs", label: "Dokumente", icon: IconDoc },
+			{ id: "github", label: "GitHub", icon: IconGitBranch },
 		],
 	},
 	{
@@ -58,13 +63,16 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
 ]
 
 export default function App() {
-	const [view, setView] = useState<View>("dashboard")
+	const { route, navigate } = useRoute()
 	const [showOnboarding, setShowOnboarding] = useState(shouldShowOnboarding)
+	/** Sidebar auf schmalen Bildschirmen — auf Desktop immer sichtbar. */
+	const [navOpen, setNavOpen] = useState(false)
 	const connected = useStore((s) => s.connected)
 	const metrics = useStore((s) => s.metrics)
 	const tasks = useStore((s) => s.tasks)
 	const setConnected = useStore((s) => s.setConnected)
 	const handleStreamEvent = useStore((s) => s.handleStreamEvent)
+	const version = useStore((s) => s.version)
 
 	useEffect(() => {
 		const state = useStore.getState()
@@ -74,6 +82,7 @@ export default function App() {
 		void state.refreshTasks()
 		void state.refreshMetrics()
 		void state.refreshSettings()
+		void state.refreshVersion()
 		const handle = connectStream(handleStreamEvent, setConnected)
 		const metricsTimer = setInterval(() => useStore.getState().refreshMetrics(), 15_000)
 		const logsTimer = setInterval(() => useStore.getState().refreshLogs(), 10_000)
@@ -85,11 +94,20 @@ export default function App() {
 	}, [handleStreamEvent, setConnected])
 
 	const runningTasks = tasks.filter((t) => t.running).length
-	const counts: Partial<Record<View, number>> = { tasks: runningTasks }
+	const counts: Partial<Record<Route, number>> = { tasks: runningTasks }
+
+	const go = (to: Route) => {
+		navigate(to)
+		setNavOpen(false)
+	}
 
 	return (
-		<div className="app">
-			<aside className="sidebar">
+		<div className={`app ${navOpen ? "nav-open" : ""}`}>
+			<a href="#main" className="skip-link">
+				Zum Inhalt springen
+			</a>
+
+			<aside className="sidebar" id="nav">
 				<div className="brand">
 					<LogoMark size={30} />
 					<span className="brand-text">
@@ -110,11 +128,11 @@ export default function App() {
 								<button
 									key={item.id}
 									type="button"
-									className={`nav-btn ${view === item.id ? "active" : ""}`}
+									className={`nav-btn ${route === item.id ? "active" : ""}`}
 									aria-label={item.label}
 									title={item.label}
-									aria-current={view === item.id ? "page" : undefined}
-									onClick={() => setView(item.id)}
+									aria-current={route === item.id ? "page" : undefined}
+									onClick={() => go(item.id)}
 								>
 									<Icon size={17} />
 									<span>{item.label}</span>
@@ -131,15 +149,40 @@ export default function App() {
 				</div>
 			</aside>
 
-			<main className="main">
-				{view === "dashboard" && <Dashboard />}
-				{view === "providers" && <Providers />}
-				{view === "agents" && <Agents />}
-				{view === "tasks" && <Tasks />}
-				{view === "docs" && <Docs />}
-				{view === "workspace" && <Workspace />}
-				{view === "logs" && <Logs />}
-				{view === "settings" && <Settings />}
+			{navOpen && (
+				<button
+					type="button"
+					className="nav-scrim"
+					aria-label="Navigation schließen"
+					onClick={() => setNavOpen(false)}
+				/>
+			)}
+
+			<main className="main" id="main">
+				<button
+					type="button"
+					className="nav-toggle"
+					aria-label="Navigation öffnen"
+					aria-expanded={navOpen}
+					aria-controls="nav"
+					onClick={() => setNavOpen((v) => !v)}
+				>
+					<IconMenu size={18} />
+					<span>{ROUTE_TITLES[route]}</span>
+				</button>
+
+				{/* Ein Fehler in einer Ansicht darf nie die ganze App abräumen. */}
+				<ErrorBoundary resetKey={route}>
+					{route === "dashboard" && <Dashboard />}
+					{route === "providers" && <Providers />}
+					{route === "agents" && <Agents />}
+					{route === "tasks" && <Tasks />}
+					{route === "docs" && <Docs />}
+					{route === "github" && <Github />}
+					{route === "workspace" && <Workspace />}
+					{route === "logs" && <Logs />}
+					{route === "settings" && <Settings />}
+				</ErrorBoundary>
 			</main>
 
 			<footer className="statusbar">
@@ -166,10 +209,13 @@ export default function App() {
 						Provider online
 					</span>
 					<span className="sep">·</span>
-					<span className="faint">DiriZ v1.0</span>
+					<span className="faint" title={version ? `Schema v${version.schemaVersion}` : undefined}>
+						DiriZ {version ? `v${version.version}` : "…"}
+					</span>
 				</span>
 			</footer>
 
+			<Toasts />
 			{showOnboarding && <Onboarding onDone={() => setShowOnboarding(false)} />}
 		</div>
 	)

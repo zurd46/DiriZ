@@ -47,6 +47,7 @@ beforeAll(async () => {
 		feedback,
 		secret: Buffer.from("test-secret-0123456789abcdef0123456789abcdef"),
 		workspaceDir,
+		reposDir: fs.mkdtempSync(path.join(os.tmpdir(), "diriz-repos-")),
 	}
 	app = await buildApp(ctx)
 })

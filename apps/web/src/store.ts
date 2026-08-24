@@ -114,6 +114,8 @@ interface State {
 		concurrency?: ConcurrencySettings
 		timeouts?: TimeoutSettings
 		agent?: AgentSettings
+		/** Warmhalten geladener Modelle (`settings.warmup`). */
+		warmup?: { enabled: boolean; intervalMinutes: number; perProvider: number }
 	} | null
 	live: Record<string, LiveRun>
 	taskDetails: Record<string, TaskDetail>

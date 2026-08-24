@@ -58,6 +58,13 @@ const WEIGHT_META: { key: keyof ScoringWeights; label: string; hint: string }[] 
 	},
 ]
 
+/** Warmhalte-Einstellungen, wie die Oberfläche sie bearbeitet. */
+interface WarmupView {
+	enabled: boolean
+	intervalMinutes: number
+	perProvider: number
+}
+
 const OWNERS: { id: DocOwnerKind; label: string; hint: string }[] = [
 	{ id: "provider", label: "Rechner", hint: "Gilt für jeden neu angebundenen Rechner (Provider)." },
 	{ id: "instance", label: "LLM-Modelle", hint: "Gilt für jedes neu entdeckte Modell auf einem Rechner." },
@@ -85,6 +92,12 @@ export default function Settings() {
 	const [limits, setLimits] = useState<ConcurrencySettings | null>(null)
 	const [limitsBusy, setLimitsBusy] = useState(false)
 	const [limitsSaved, setLimitsSaved] = useState(false)
+
+	// Warmhalten: hält geladene Modelle im Speicher, damit der erste Aufruf
+	// nicht Minuten kostet.
+	const [warm, setWarm] = useState<WarmupView | null>(null)
+	const [warmBusy, setWarmBusy] = useState(false)
+	const [warmSaved, setWarmSaved] = useState(false)
 
 	// Dokument-Vorlagen (M9): je Besitzer-Art und Dokumenttyp.
 	const [tplOwner, setTplOwner] = useState<DocOwnerKind>("agent")
@@ -120,6 +133,12 @@ export default function Settings() {
 			setTimes(settings.timeouts)
 		}
 	}, [settings, times])
+
+	useEffect(() => {
+		if (settings?.warmup && warm === null) {
+			setWarm(settings.warmup)
+		}
+	}, [settings, warm])
 
 	useEffect(() => {
 		if (settings?.agent && steps === null) {
@@ -161,6 +180,23 @@ export default function Settings() {
 			setImportMsg(e instanceof Error ? e.message : String(e))
 		} finally {
 			setLimitsBusy(false)
+		}
+	}
+
+	const warmDirty = warm !== null && JSON.stringify(warm) !== JSON.stringify(settings?.warmup ?? null)
+
+	const saveWarm = async () => {
+		if (!warm) return
+		setWarmBusy(true)
+		try {
+			await api.put("/api/settings", { warmup: warm })
+			await useStore.getState().refreshSettings()
+			setWarmSaved(true)
+			setTimeout(() => setWarmSaved(false), 2500)
+		} catch (e) {
+			setImportMsg(e instanceof Error ? e.message : String(e))
+		} finally {
+			setWarmBusy(false)
 		}
 	}
 
@@ -472,6 +508,80 @@ export default function Settings() {
 						disabled={!limitsDirty || limitsBusy}
 					>
 						Grenzen speichern
+					</button>
+				</div>
+			</div>
+
+			<div className="card">
+				<div className="card-head">
+					<div>
+						<div className="card-title">
+							<IconServer size={16} />
+							Modelle warm halten
+						</div>
+						<div className="card-sub">
+							Ein kaltes 30-B-Modell braucht beim ersten Aufruf Minuten, bis es im Grafikspeicher liegt —
+							genau die Minuten, die wie ein hängendes Programm aussehen. DiriZ tippt geladene Modelle in
+							Abständen an, damit sie geladen bleiben. Rechner, die gerade arbeiten, werden übersprungen; ein
+							fremdes Modell wird nie verdrängt.
+						</div>
+					</div>
+					{warmDirty && <span className="pill warn">ungespeichert</span>}
+				</div>
+
+				{warm && (
+					<div className="limits">
+						<label className="limit-row">
+							<span className="limit-label">Warmhalten</span>
+							<input
+								type="checkbox"
+								checked={warm.enabled}
+								onChange={(e) => setWarm({ ...warm, enabled: e.target.checked })}
+							/>
+							<span className="field-hint">
+								Aus = Modelle kühlen aus und laden beim nächsten Auftrag neu.
+							</span>
+						</label>
+						<label className="limit-row">
+							<span className="limit-label">Abstand (Minuten)</span>
+							<input
+								type="number"
+								min={1}
+								step={1}
+								value={warm.intervalMinutes}
+								onChange={(e) =>
+									setWarm({ ...warm, intervalMinutes: Math.max(1, Number(e.target.value) || 1) })
+								}
+							/>
+							<span className="field-hint">
+								Kürzer als die Auslagerungsfrist des Servers — bei LM Studio sind 4 Minuten sicher.
+							</span>
+						</label>
+						<label className="limit-row">
+							<span className="limit-label">Modelle je Rechner</span>
+							<input
+								type="number"
+								min={1}
+								step={1}
+								value={warm.perProvider}
+								onChange={(e) => setWarm({ ...warm, perProvider: Math.max(1, Number(e.target.value) || 1) })}
+							/>
+							<span className="field-hint">
+								Nicht höher als „Modelle je Rechner gleichzeitig“ — sonst wälzt die Grafikkarte pausenlos um.
+							</span>
+						</label>
+					</div>
+				)}
+
+				<div className="card-actions">
+					{warmSaved && <span className="pill ok">gespeichert</span>}
+					<button
+						type="button"
+						className="btn primary"
+						onClick={() => void saveWarm()}
+						disabled={!warmDirty || warmBusy}
+					>
+						Warmhalten speichern
 					</button>
 				</div>
 			</div>

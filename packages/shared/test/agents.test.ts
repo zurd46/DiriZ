@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest"
 import type { AgentCandidate, AgentProfile } from "../src/agents.js"
-import { MIN_AGENT_SCORE, planSwarm, scoreAgents, tokenize } from "../src/agents.js"
+import { MIN_AGENT_SCORE, planSwarm, scoreAgents, stagesOf, tokenize } from "../src/agents.js"
 
 const PROFILE: AgentProfile = {
 	privacy: "local-only",
@@ -182,5 +182,23 @@ describe("planSwarm", () => {
 		const a = planSwarm("Architektur und Sicherheit", profil, team)
 		const b = planSwarm("Architektur und Sicherheit", profil, [...team].reverse())
 		expect(a.map((s) => s.agentId)).toEqual(b.map((s) => s.agentId))
+	})
+})
+
+describe("stagesOf", () => {
+	it("lässt gleichrangige Fachbereiche gemeinsam laufen", () => {
+		const stufen = stagesOf([
+			{ agentId: "a", discipline: "Produkt & Analyse" },
+			{ agentId: "b", discipline: "Implementierung" },
+			{ agentId: "c", discipline: "Daten & KI" },
+			{ agentId: "d", discipline: "Qualität" },
+		])
+		// Bauen und Datenarbeit greifen nicht ineinander → eine Stufe.
+		expect(stufen).toEqual([["a"], ["b", "c"], ["d"]])
+	})
+
+	it("stellt unbekannte Fachbereiche allein ans Ende", () => {
+		const stufen = stagesOf([{ agentId: "eigen" }, { agentId: "a", discipline: "Produkt & Analyse" }])
+		expect(stufen).toEqual([["a"], ["eigen"]])
 	})
 })

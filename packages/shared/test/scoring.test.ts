@@ -7,6 +7,7 @@ import {
 	DEFAULT_WEIGHTS,
 	estimateTokens,
 	normalizeWeights,
+	providerSpreadScore,
 } from "../src/scoring.js"
 
 describe("scoring", () => {
@@ -54,6 +55,14 @@ describe("scoring", () => {
 			latencyScore: 1,
 		})
 		expect(w.contextFit).toBeCloseTo(1 / 6)
+	})
+
+	it("providerSpread bevorzugt den freien Rechner", () => {
+		expect(providerSpreadScore(0)).toBe(1)
+		expect(providerSpreadScore(1)).toBeCloseTo(0.5)
+		expect(providerSpreadScore(2)).toBeCloseTo(1 / 3)
+		// Unbekannt zählt als frei — ohne Auskunft wird nicht bestraft.
+		expect(providerSpreadScore(undefined)).toBe(1)
 	})
 
 	it("estimateTokens ist konservativ (inkl. Output-Reserve)", () => {

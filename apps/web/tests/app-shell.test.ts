@@ -18,6 +18,7 @@ const VIEWS = [
 	{ label: "Dashboard", path: "/dashboard" },
 	{ label: "Chat", path: "/chat" },
 	{ label: "Provider", path: "/providers" },
+	{ label: "LLM-Modelle", path: "/models" },
 	{ label: "Agenten", path: "/agents" },
 	{ label: "Tasks", path: "/tasks" },
 	{ label: "Dokumente", path: "/docs" },
@@ -83,6 +84,14 @@ test("Dokumente-Ansicht listet die Ebenen und zeigt eine Vorschau", async ({ pag
 	// muss trotzdem stehen und den leeren Zustand erklären.
 	await expect(page.locator(".docs-layout")).toBeVisible()
 	await expect(page.getByPlaceholder("Suchen in allen Dokumenten …")).toBeVisible()
+})
+
+test("LLM-Modelle-Ansicht steht auch ohne angebundenen Rechner", async ({ page }) => {
+	await page.goto("/models")
+	await expect(page.locator("main h1")).toHaveText("LLM-Modelle")
+	await expect(page.getByPlaceholder("Modell oder Datenblatt suchen …")).toBeVisible()
+	// Ohne Modelle erklärt die Ansicht den leeren Zustand, statt leer zu bleiben.
+	await expect(page.getByText("Kein Modell gewählt")).toBeVisible()
 })
 
 test("unbekannter Pfad landet in der Anwendung statt im 404", async ({ page }) => {

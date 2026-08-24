@@ -15,7 +15,7 @@ import {
 	isAgentDocKind,
 	type ModelSettings,
 	parseInitDoc,
-	planTeam,
+	planSwarm,
 	renderInitDoc,
 	SOFTWARE_TEAM,
 	type Task,
@@ -130,12 +130,15 @@ export function registerAgents(app: FastifyInstance, ctx: AppContext): void {
 	})
 
 	/**
-	 * Team-Planung: Welche Spezialisten braucht dieser Auftrag, in welcher
+	 * Swarm-Planung: Welche Spezialisten braucht dieser Auftrag, in welcher
 	 * Reihenfolge? Deterministisch aus demselben Scoring wie die Einzel-
 	 * Zuordnung — nur eben mehrere, entlang des Wertstroms sortiert.
+	 *
+	 * Der Unterschied zu einem gespeicherten Swarm: Dieser hier wird pro Prompt
+	 * zusammengestellt, statt vorher festgelegt zu werden.
 	 */
 	app.post<{ Body: { prompt?: string; agentMode?: boolean; maxSteps?: number } }>(
-		"/api/team/plan",
+		"/api/swarms/plan",
 		(req, reply) => {
 			const prompt = req.body?.prompt?.trim()
 			if (!prompt) {
@@ -159,7 +162,7 @@ export function registerAgents(app: FastifyInstance, ctx: AppContext): void {
 					...toAgentCandidate(a),
 					discipline: findBlueprint(a.id.replace(/^agent-/, ""))?.discipline,
 				}))
-			const steps = planTeam(
+			const steps = planSwarm(
 				prompt,
 				{
 					privacy: profile.privacy,

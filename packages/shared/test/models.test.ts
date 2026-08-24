@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from "vitest"
 import {
+	AGENT_TOOLS,
 	instanceDocs,
 	parameterCount,
 	parseLlmDoc,
@@ -81,7 +82,9 @@ describe("llm.md", () => {
 
 	it("versteht auch von Hand geschriebene Schreibweisen", () => {
 		const spec = parseLlmDoc(
-			["- Kontext-Fenster: 32k", "Fähigkeiten: code, json, unsinn", "**Qualitätsklasse:** niedrig"].join("\n"),
+			["- Kontext-Fenster: 32k", "Fähigkeiten: code, json, unsinn", "**Qualitätsklasse:** niedrig"].join(
+				"\n",
+			),
 		)
 		expect(spec.contextWindow).toBe(32768)
 		expect(spec.capabilities).toEqual(["code", "json"])
@@ -128,5 +131,21 @@ describe("specFitScore — Stärken und Schwächen im Routing", () => {
 		const fit = specFitScore(spec, "Formuliere einen langen Fliesstext, freies Formulieren erwünscht")
 		expect(fit.value).toBeLessThan(0.6)
 		expect(fit.misses.length).toBeGreaterThan(0)
+	})
+})
+
+describe("Werkzeuge im Datenblatt", () => {
+	it("listet die Werkzeuge des Agentik-Modus und liest sie zurück", () => {
+		const md = renderLlmDoc({ modelId: "qwen3:8b", displayName: "Qwen3 8B" }, DATE)
+		expect(parseLlmDoc(md).tools).toEqual([...AGENT_TOOLS])
+	})
+
+	it("entzieht ein gestrichenes Werkzeug", () => {
+		const md = renderLlmDoc({ modelId: "qwen3:8b", displayName: "Qwen3 8B" }, DATE)
+		const ohneSchreiben = md
+			.split("\n")
+			.filter((l) => !l.startsWith("- write_file"))
+			.join("\n")
+		expect(parseLlmDoc(ohneSchreiben).tools).toEqual(["list_files", "read_file"])
 	})
 })

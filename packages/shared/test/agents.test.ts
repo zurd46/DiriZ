@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest"
 import type { AgentCandidate, AgentProfile } from "../src/agents.js"
-import { MIN_AGENT_SCORE, planTeam, scoreAgents, tokenize } from "../src/agents.js"
+import { MIN_AGENT_SCORE, planSwarm, scoreAgents, tokenize } from "../src/agents.js"
 
 const PROFILE: AgentProfile = {
 	privacy: "local-only",
@@ -112,11 +112,11 @@ describe("scoreAgents", () => {
 })
 
 /**
- * Team-Planung: Ein Auftrag braucht oft mehrere Rollen nacheinander. Die
+ * Swarm-Planung: Ein Auftrag braucht oft mehrere Rollen nacheinander. Die
  * Auswahl muss deterministisch und in der Reihenfolge des Wertstroms erfolgen —
  * erst klären, dann bauen, dann prüfen.
  */
-describe("planTeam", () => {
+describe("planSwarm", () => {
 	const team: AgentCandidate[] = [
 		cand({
 			agentId: "arch",
@@ -146,7 +146,7 @@ describe("planTeam", () => {
 	const profil: AgentProfile = { privacy: "local-only", requiredCapabilities: [], preferredCapabilities: [] }
 
 	it("ordnet die Schritte entlang des Wertstroms, nicht nach Punktzahl", () => {
-		const plan = planTeam(
+		const plan = planSwarm(
 			"Anforderungen klären, Architektur entwerfen, Webseite bauen und auf Sicherheit prüfen",
 			profil,
 			team,
@@ -164,23 +164,23 @@ describe("planTeam", () => {
 				discipline: "Implementierung",
 			}),
 		]
-		const plan = planTeam("Webseite bauen", profil, doppelt)
+		const plan = planSwarm("Webseite bauen", profil, doppelt)
 		const bereiche = plan.map((s) => s.discipline)
 		expect(new Set(bereiche).size).toBe(bereiche.length)
 	})
 
 	it("hält die Höchstzahl der Schritte ein", () => {
-		const plan = planTeam("Anforderungen, Architektur, Webseite, Sicherheit", profil, team, { maxSteps: 2 })
+		const plan = planSwarm("Anforderungen, Architektur, Webseite, Sicherheit", profil, team, { maxSteps: 2 })
 		expect(plan).toHaveLength(2)
 	})
 
 	it("liefert nichts, wenn kein Spezialist relevant ist", () => {
-		expect(planTeam("hallo", profil, team)).toEqual([])
+		expect(planSwarm("hallo", profil, team)).toEqual([])
 	})
 
 	it("ist deterministisch", () => {
-		const a = planTeam("Architektur und Sicherheit", profil, team)
-		const b = planTeam("Architektur und Sicherheit", profil, [...team].reverse())
+		const a = planSwarm("Architektur und Sicherheit", profil, team)
+		const b = planSwarm("Architektur und Sicherheit", profil, [...team].reverse())
 		expect(a.map((s) => s.agentId)).toEqual(b.map((s) => s.agentId))
 	})
 })

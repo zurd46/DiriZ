@@ -288,12 +288,12 @@ describe("api: Version", () => {
 	})
 })
 
-describe("api: Team-Planung", () => {
+describe("api: Swarm-Planung", () => {
 	it("stellt für einen mehrteiligen Auftrag eine Kette entlang des Wertstroms zusammen", async () => {
 		await app.inject({ method: "POST", url: "/api/agents/catalog" })
 		const res = await app.inject({
 			method: "POST",
-			url: "/api/team/plan",
+			url: "/api/swarms/plan",
 			payload: {
 				prompt: "Entwirf die REST-API, implementiere den Endpoint im Backend und prüfe ihn auf SQL-Injection",
 			},
@@ -308,7 +308,7 @@ describe("api: Team-Planung", () => {
 	})
 
 	it("weist einen leeren Prompt ab", async () => {
-		const res = await app.inject({ method: "POST", url: "/api/team/plan", payload: { prompt: "  " } })
+		const res = await app.inject({ method: "POST", url: "/api/swarms/plan", payload: { prompt: "  " } })
 		expect(res.statusCode).toBe(400)
 	})
 })

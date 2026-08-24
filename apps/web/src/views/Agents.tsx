@@ -110,7 +110,7 @@ export default function Agents() {
 	}
 
 	/**
-	 * Holt fehlende Spezialisten aus dem eingebauten Team-Katalog nach. Legt nie
+	 * Holt fehlende Spezialisten aus dem eingebauten Katalog nach. Legt nie
 	 * etwas doppelt an — wer einen Katalog-Spezialisten gelöscht hat, bekommt
 	 * ihn hier bewusst zurück.
 	 */
@@ -121,7 +121,7 @@ export default function Agents() {
 			await refreshAgents()
 			await refreshSwarms()
 			if (res.agents.length === 0 && res.swarms.length === 0) {
-				setLastError("Team-Katalog: alle Spezialisten sind bereits vorhanden")
+				setLastError("Katalog: alle Spezialisten sind bereits vorhanden")
 			}
 		} catch (e) {
 			setLastError(e instanceof Error ? e.message : String(e))
@@ -293,10 +293,10 @@ export default function Agents() {
 						className="btn"
 						onClick={installCatalog}
 						disabled={busy}
-						title="Fehlende Spezialisten des eingebauten Software-Teams anlegen"
+						title="Fehlende Spezialisten des eingebauten Katalogs anlegen"
 					>
 						<IconAgents size={15} />
-						Team-Katalog laden
+						Katalog laden
 					</button>
 					<button type="button" className="btn primary" onClick={startCreate} aria-expanded={editing === ""}>
 						{editing === "" ? <IconClose size={15} /> : <IconPlus size={15} />}
@@ -805,7 +805,10 @@ function SwarmList(props: {
 						<IconSwarm size={20} />
 					</span>
 					<span className="empty-title">Noch keine Swarms</span>
-					<p>Bündle mehrere Spezialisten zu einem Team — DiriZ wählt pro Prompt das beste Mitglied.</p>
+					<p>
+						Ein Swarm bündelt Spezialisten. Als <strong>Ablauf</strong> arbeiten alle nacheinander in fester
+						Reihenfolge, als <strong>Gruppe</strong> wählt DiriZ pro Prompt das beste Mitglied.
+					</p>
 				</div>
 			</div>
 		)

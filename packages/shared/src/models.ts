@@ -613,7 +613,12 @@ export function parameterCount(name: string): number | undefined {
 }
 
 /** Grössenklasse → was man dem Modell zumuten kann. */
-function sizeNote(params: number): { goodFor: string; notFor: string; quality: ModelQuality; speed: ModelSpeed } {
+function sizeNote(params: number): {
+	goodFor: string
+	notFor: string
+	quality: ModelQuality
+	speed: ModelSpeed
+} {
 	if (params <= 4) {
 		return {
 			goodFor: `sehr klein (${params} Mrd. Parameter): schnelle Routine, Vorfilter, Klassifikation`,
@@ -766,11 +771,12 @@ export function renderLlmDoc(identity: ModelIdentity, isoDate: string): string {
 		"",
 		"Technisches Datenblatt dieses Modells. DiriZ liest es aus und rechnet es in die",
 		"Orchestrierung ein: **Fähigkeiten** und **Kontext-Fenster** sind harte Gates,",
-		"**Gut für**/**Nicht geeignet für** bewegen die Eignungs-Achse, **Werkzeuge**",
-		"regeln den Agentik-Modus, die **Qualitätsklasse** ist der Startwert der",
-		"Qualitäts-Achse. Die Angaben unten",
-		"stammen aus dem Modell-Katalog und sind eine Vermutung anhand des Modellnamens —",
-		"korrigiere sie hier, sobald du das Modell im Einsatz gesehen hast.",
+		"**Gut für** und **Nicht geeignet für** bewegen die Eignungs-Achse, **Werkzeuge**",
+		"regeln den Agentik-Modus und die **Qualitätsklasse** ist der Startwert der",
+		"Qualitäts-Achse.",
+		"",
+		"Die Angaben stammen aus dem Modell-Katalog und sind eine Vermutung anhand des",
+		"Modellnamens — korrigiere sie hier, sobald du das Modell im Einsatz gesehen hast.",
 		"",
 		"## Steckbrief",
 		"",
@@ -806,15 +812,26 @@ export function renderLlmDoc(identity: ModelIdentity, isoDate: string): string {
 			? profile.capabilities.map((c) => `- ${c}`)
 			: ["- keine (dieses Modell beantwortet keine Aufträge)"]),
 	)
-	// Werkzeuge: nur, wenn das Modell Werkzeugaufrufe überhaupt beherrscht —
-	// sonst steht dort eine Freigabe, die niemand einlösen kann.
-	const toolsAllowed = profile.capabilities.includes("tools")
-	lines.push("", "## Werkzeuge", "")
+	// Alle Werkzeuge stehen drin, damit sichtbar ist, was es überhaupt gibt.
+	// Entzogen wird durch Streichen — eine leere Liste bedeutet „alle", sonst
+	// hätte ein unausgefülltes Datenblatt dem Modell stillschweigend die Hände
+	// gebunden.
 	lines.push(
-		...(toolsAllowed
-			? AGENT_TOOLS.map((t) => `- ${t} — ${AGENT_TOOL_HINTS[t]}`)
-			: ["- keine (dieses Modell ruft im Agentik-Modus keine Werkzeuge auf)"]),
+		"",
+		"## Werkzeuge",
+		"",
+		"Im Agentik-Modus freigegeben. Zeile streichen entzieht das Werkzeug;",
+		"steht hier nichts, sind alle freigegeben.",
+		"",
+		...AGENT_TOOLS.map((t) => `- ${t} — ${AGENT_TOOL_HINTS[t]}`),
 	)
+	if (!profile.capabilities.includes("tools")) {
+		lines.push(
+			"",
+			"Hinweis: Für dieses Modell sind Werkzeugaufrufe nicht bestätigt — im",
+			"Agentik-Modus zuerst mit einer kleinen Aufgabe prüfen.",
+		)
+	}
 	lines.push(
 		"",
 		"## Gut für",
@@ -858,7 +875,10 @@ function isEmptyValue(raw: string): boolean {
 
 /** „32768", „32k", „128 000" → Zahl. */
 function parseNumber(raw: string): number | undefined {
-	const cleaned = raw.trim().replace(/[\s'.](?=\d{3}\b)/g, "").replace(/,(?=\d)/, ".")
+	const cleaned = raw
+		.trim()
+		.replace(/[\s'.](?=\d{3}\b)/g, "")
+		.replace(/,(?=\d)/, ".")
 	const m = cleaned.match(/^(-?\d+(?:\.\d+)?)\s*([kK])?/)
 	if (!m) {
 		return undefined
@@ -925,8 +945,16 @@ export function parseLlmDoc(markdown: string): ModelSpec {
 			} else if (key === "quantisierung" || key === "quantization") {
 				spec.quantization = value
 			} else if (key === "sprachen" || key === "languages") {
-				spec.languages = value.split(",").map((x) => x.trim()).filter((x) => x.length > 0)
-			} else if (key === "qualitätsklasse" || key === "qualitatsklasse" || key === "qualität" || key === "qualitat") {
+				spec.languages = value
+					.split(",")
+					.map((x) => x.trim())
+					.filter((x) => x.length > 0)
+			} else if (
+				key === "qualitätsklasse" ||
+				key === "qualitatsklasse" ||
+				key === "qualität" ||
+				key === "qualitat"
+			) {
 				const q = value.toLowerCase()
 				spec.quality = q.startsWith("hoch") ? "hoch" : q.startsWith("niedrig") ? "niedrig" : "mittel"
 			} else if (key === "tempo" || key === "speed") {
@@ -989,7 +1017,10 @@ export function qualityPriorOf(spec: ModelSpec | undefined): number {
  * Die Startdokumente einer LLM-Instanz — befüllt statt leere Vorlage.
  * Das `changelog.md` hält fest, dass das Profil geraten und ungeprüft ist.
  */
-export function instanceDocs(identity: ModelIdentity, isoDate: string): Partial<Record<AgentDocKind, string>> {
+export function instanceDocs(
+	identity: ModelIdentity,
+	isoDate: string,
+): Partial<Record<AgentDocKind, string>> {
 	const profile = profileForModel(identity)
 	const name = identity.displayName || identity.modelId
 	const day = isoDate.slice(0, 10)
@@ -1031,7 +1062,13 @@ const SPEC_FIT_NEUTRAL = 0.6
  * sind dasselbe Wort, und ein exakter Vergleich fände keines davon.
  */
 function specTerms(text: string): string[] {
-	return [...new Set(tokenize(text).filter((t) => t.length >= 4).map((t) => t.slice(0, 5)))]
+	return [
+		...new Set(
+			tokenize(text)
+				.filter((t) => t.length >= 4)
+				.map((t) => t.slice(0, 5)),
+		),
+	]
 }
 
 /**

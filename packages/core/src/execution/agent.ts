@@ -58,6 +58,12 @@ export interface AgentLoopOptions {
 	/** Tool-Operation melden (Event `tool.call`). */
 	emitToolCall: (data: { name: string; argsSummary: string; ok: boolean; detail?: string }) => void
 	log: LogFn
+	/**
+	 * Freigegebene Werkzeuge laut `llm.md` des Modells. Leer/undefiniert = alle.
+	 * Wer im Datenblatt `write_file` streicht, nimmt dem Modell das Schreiben —
+	 * die Deklaration wirkt, sie ist keine Notiz.
+	 */
+	allowedTools?: string[]
 }
 
 export interface AgentLoopResult {
@@ -77,12 +83,18 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 	// 0 (oder negativ) bedeutet unbegrenzt — dann bestimmt allein das
 	// Gesamt-Timeout das Ende. Ein Tool-Budget, das mitten in der Arbeit
 	// zuschlägt, kostet den Lauf mehr, als es je an Schutz bringt.
+	// Werkzeug-Freigabe aus dem Datenblatt; ohne Angabe gilt der volle Satz.
+	const tools =
+		opts.allowedTools && opts.allowedTools.length > 0
+			? TOOL_SPECS.filter((t) => opts.allowedTools?.includes(t.name))
+			: TOOL_SPECS
+	const toolNames = tools.map((t) => t.name)
 	const requested = opts.maxSteps ?? MAX_AGENT_STEPS
 	const maxSteps = requested > 0 ? requested : Number.POSITIVE_INFINITY
 	const unlimited = !Number.isFinite(maxSteps)
 	// Kurze Tool-Anleitung — lokale Modelle brauchen den Hinweis explizit.
 	const toolHint =
-		"Du kannst Dateien im Workspace mit den Tools list_files, read_file und write_file lesen und schreiben. " +
+		`Du kannst im Workspace die Tools ${toolNames.join(", ")} nutzen. ` +
 		"Nutze die Tools, um die Aufgabe zu erledigen; gib am Ende eine vollständige Textantwort. " +
 		(unlimited
 			? "Du hast kein Schritt-Limit — arbeite so gründlich, wie die Aufgabe es verlangt, " +
@@ -114,7 +126,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 			messages,
 			model: opts.model,
 			settings: opts.settings,
-			tools: TOOL_SPECS,
+			tools,
 			signal: opts.signal,
 		})
 

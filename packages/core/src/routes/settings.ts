@@ -6,12 +6,12 @@
  */
 
 import {
-	docKindsFor,
 	type AgentDocKind,
 	type AgentSettings,
 	type ConcurrencySettings,
 	DEFAULT_WEIGHTS,
 	type DocTemplateSettings,
+	docKindsFor,
 	type GitSettings,
 	isAgentDocKind,
 	normalizeWeights,

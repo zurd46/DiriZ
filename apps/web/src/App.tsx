@@ -9,6 +9,7 @@ import {
 	IconDashboard,
 	IconDoc,
 	IconGitBranch,
+	IconLayers,
 	IconLogs,
 	IconMenu,
 	IconServer,
@@ -29,6 +30,7 @@ import Dashboard from "./views/Dashboard.js"
 import Docs from "./views/Docs.js"
 import Github from "./views/Github.js"
 import Logs from "./views/Logs.js"
+import Models from "./views/Models.js"
 import Providers from "./views/Providers.js"
 import Settings from "./views/Settings.js"
 import Tasks from "./views/Tasks.js"
@@ -53,6 +55,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
 		title: "Orchestrierung",
 		items: [
 			{ id: "providers", label: "Provider", icon: IconServer },
+			{ id: "models", label: "LLM-Modelle", icon: IconLayers },
 			{ id: "agents", label: "Agenten", icon: IconAgents },
 			{ id: "tasks", label: "Tasks", icon: IconTasks },
 			{ id: "docs", label: "Dokumente", icon: IconDoc },
@@ -200,6 +203,7 @@ export default function App() {
 					{route === "dashboard" && <Dashboard />}
 					{route === "chat" && <Chat />}
 					{route === "providers" && <Providers />}
+					{route === "models" && <Models />}
 					{route === "agents" && <Agents />}
 					{route === "tasks" && <Tasks />}
 					{route === "docs" && <Docs />}

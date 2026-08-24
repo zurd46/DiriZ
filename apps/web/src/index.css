@@ -2449,6 +2449,50 @@ pre.code {
 	border-radius: var(--r-sm);
 }
 
+/* ── LLM-Modelle: Datenblatt-Ansicht ─────────────────────────────────────────
+   Bewusst luftiger als die Dokumente-Ansicht: Fakten, Tabs und zwei
+   Auswertungs-Zeilen stehen sonst als ein einziger Block beieinander. */
+
+.models-view .docs-editor {
+	padding: var(--sp-6);
+}
+
+.models-view .docs-editor-head {
+	margin-bottom: var(--sp-5);
+	padding-bottom: var(--sp-4);
+	border-bottom: 1px solid var(--border);
+}
+
+.models-view .tabs {
+	margin-top: var(--sp-5);
+}
+
+.models-view .docs-panes {
+	margin-top: var(--sp-5);
+}
+
+.model-facts,
+.model-readout {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-2);
+	margin-top: var(--sp-4);
+}
+
+.model-readout {
+	padding-top: var(--sp-4);
+	border-top: 1px solid var(--border);
+}
+
+.model-actions {
+	margin-top: var(--sp-6);
+	padding-top: var(--sp-4);
+	border-top: 1px solid var(--border);
+	gap: var(--sp-3);
+	flex-wrap: wrap;
+}
+
 /* ── Markdown ── */
 
 .markdown {

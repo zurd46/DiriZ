@@ -35,9 +35,9 @@ import {
 	createTask,
 	getInstance,
 	getProvider,
+	getProviderDoc,
 	listAgentDocs,
 	listInstanceDocs,
-	getProviderDoc,
 	listProviderDocs,
 	saveAgentDoc,
 	saveInstanceDoc,
@@ -176,7 +176,8 @@ describe("Dokumente je LLM-Instanz", () => {
 			method: "PUT",
 			url: `/api/instances/${instance.id}/docs/llm`,
 			payload: {
-				content: "# llm.md\n\n## Steckbrief\n\n- Kontext-Fenster: 16384\n- Qualitätsklasse: hoch\n\n## Fähigkeiten\n\n- vision\n- json\n",
+				content:
+					"# llm.md\n\n## Steckbrief\n\n- Kontext-Fenster: 16384\n- Qualitätsklasse: hoch\n\n## Fähigkeiten\n\n- vision\n- json\n",
 			},
 		})
 		expect(res.statusCode).toBe(200)

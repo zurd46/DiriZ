@@ -354,7 +354,7 @@ export function toAgentCandidate(agent: Agent): AgentCandidate {
 	}
 }
 
-/* ------------------------------- Team-Planung -------------------------------- */
+/* ------------------------------ Swarm-Planung -------------------------------- */
 
 /**
  * Reihenfolge der Fachbereiche im Wertstrom. Ein Auftrag wandert von der
@@ -371,8 +371,8 @@ export const DISCIPLINE_ORDER = [
 	"Dokumentation & Governance",
 ]
 
-/** Ein Schritt der Kette: wer, warum, an welcher Stelle. */
-export interface TeamStep {
+/** Ein Schritt des Swarms: wer, warum, an welcher Stelle. */
+export interface SwarmStep {
 	agentId: string
 	name: string
 	discipline?: string
@@ -380,7 +380,7 @@ export interface TeamStep {
 	reasons: string[]
 }
 
-export interface TeamPlanOptions {
+export interface SwarmPlanOptions {
 	/** Höchstzahl der Schritte. Jeder Schritt kostet einen vollen Modelllauf. */
 	maxSteps?: number
 	/** Mindest-Score, ab dem ein Spezialist überhaupt in Frage kommt. */
@@ -388,7 +388,8 @@ export interface TeamPlanOptions {
 }
 
 /**
- * Stellt für einen Prompt eine **Kette** von Spezialisten zusammen.
+ * Stellt für einen Prompt einen **Swarm** zusammen — mehrere Spezialisten,
+ * die nacheinander arbeiten.
  *
  * Ein Auftrag wie „bau die Webseite und prüfe sie auf Sicherheit" braucht mehr
  * als eine Rolle. Die Auswahl bleibt deterministisch: bewerten, pro Fachbereich
@@ -398,18 +399,18 @@ export interface TeamPlanOptions {
  * Mehrere Spezialisten **desselben** Fachbereichs kommen nicht zusammen zum
  * Zug: Zwei Backend-Entwickler nacheinander verdoppeln nur die Kosten.
  */
-export function planTeam(
+export function planSwarm(
 	prompt: string,
 	profile: AgentProfile,
 	agents: AgentCandidate[],
-	opts: TeamPlanOptions = {},
-): TeamStep[] {
+	opts: SwarmPlanOptions = {},
+): SwarmStep[] {
 	const maxSteps = Math.max(1, opts.maxSteps ?? 4)
 	const minScore = opts.minScore ?? MIN_AGENT_SCORE
 	const scored = scoreAgents(prompt, profile, agents)
 	const byId = new Map(agents.map((a) => [a.agentId, a]))
 
-	const bestProDisziplin = new Map<string, TeamStep>()
+	const bestProDisziplin = new Map<string, SwarmStep>()
 	for (const s of scored) {
 		if (s.score < minScore) {
 			continue
@@ -429,7 +430,7 @@ export function planTeam(
 		}
 	}
 
-	const rang = (step: TeamStep): number => {
+	const rang = (step: SwarmStep): number => {
 		const i = step.discipline ? DISCIPLINE_ORDER.indexOf(step.discipline) : -1
 		// Unbekannte Bereiche hinten einsortieren, aber vor nichts stehen lassen.
 		return i >= 0 ? i : DISCIPLINE_ORDER.length

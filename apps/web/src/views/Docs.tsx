@@ -2,8 +2,10 @@
  * Dokumente (M9): eine Ansicht für **alle** Deklarations-Dokumente des Systems
  * — je Rechner (Provider), je Modell (LLM-Instanz) und je Spezialist.
  *
- * Rechner und Spezialist führen einen Auftrag (`plan.md`), ein Modell ein
- * Datenblatt (`llm.md`); dazu überall `changelog.md` und `init.md`.
+ * Hier stehen die **Aufträge**: `plan.md`, `changelog.md` und `init.md` von
+ * Rechnern und Spezialisten. Die Datenblätter der Modelle (`llm.md`) haben
+ * eine eigene Ansicht — „LLM-Modelle" —, weil ein Modell keinen Auftrag hat,
+ * sondern Eigenschaften.
  *
  * Bearbeiten, Markdown-Vorschau und Volltextsuche über den gesamten Bestand.
  * Gelesen wird gesammelt über `GET /api/docs`, geschrieben weiterhin über die
@@ -12,8 +14,8 @@
 
 import {
 	AGENT_DOC_FILES,
-	ALL_DOC_KINDS,
 	type AgentDocKind,
+	ALL_DOC_KINDS,
 	type DocOwnerKind,
 	docKindsFor,
 	extractDirective,
@@ -70,7 +72,6 @@ const HINTS: Record<AgentDocKind, string> = {
 /** Reihenfolge der Deklaration: Rechner ← Modell ← Spezialist. */
 const GROUPS: { kind: DocOwnerKind; title: string; hint: string }[] = [
 	{ kind: "provider", title: "Rechner", hint: "Gilt für alle Modelle darauf" },
-	{ kind: "instance", title: "Modelle", hint: "Datenblatt — Eigenschaften statt Auftrag" },
 	{ kind: "agent", title: "Spezialisten", hint: "Gilt für diesen Spezialisten" },
 ]
 
@@ -94,7 +95,10 @@ export default function Docs() {
 			.get<{ owners: DocOwner[] }>("/api/docs")
 			.then((data) => {
 				if (cancelled) return
-				setOwners(data.owners)
+				// Modelle haben eine eigene Ansicht („LLM-Modelle"): Ihr Datenblatt
+				// ist kein Auftrag, und zwischen Rechnern und Spezialisten stand es
+				// nur im Weg.
+				setOwners(data.owners.filter((o) => o.kind !== "instance"))
 				setSelectedId((prev) => prev ?? data.owners[0]?.id ?? null)
 			})
 			.catch((e: unknown) => setLastError(e instanceof Error ? e.message : String(e)))
@@ -192,8 +196,8 @@ export default function Docs() {
 				<div>
 					<h1>Dokumente</h1>
 					<p className="page-sub">
-						Auftrag (`plan.md`) für Rechner und Spezialisten, Datenblatt (`llm.md`) für jedes Modell, dazu
-						`changelog.md` und `init.md` — die Deklaration, nach der DiriZ orchestriert.
+						`plan.md`, `changelog.md` und `init.md` für jeden Rechner und jeden Spezialisten — die
+						Deklaration, nach der gearbeitet wird. Die Datenblätter der Modelle stehen unter „LLM-Modelle".
 					</p>
 				</div>
 				<div className="page-actions">
@@ -291,7 +295,7 @@ export default function Docs() {
 								<IconDoc size={20} />
 							</span>
 							<div className="empty-title">Kein Dokument gewählt</div>
-							<p>Wähle links einen Rechner, ein Modell oder einen Spezialisten.</p>
+							<p>Wähle links einen Rechner oder einen Spezialisten.</p>
 						</div>
 					) : (
 						<>

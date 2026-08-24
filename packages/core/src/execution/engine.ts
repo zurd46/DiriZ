@@ -32,6 +32,7 @@ import {
 	type ModelSettings,
 	normalizeWeights,
 	type ProviderType,
+	qualityPriorOf,
 	type RoutePreview,
 	type RoutingDecision,
 	type ScoringWeights,
@@ -40,7 +41,6 @@ import {
 	type TaskProfile,
 	type TimeoutSettings,
 	toAgentCandidate,
-	qualityPriorOf,
 	workBranchName,
 } from "@diriz/shared"
 import type { Db } from "../db/connection.js"
@@ -1025,6 +1025,8 @@ export class ExecutionEngine {
 				log("info", "agent", `Agentik-Modus aktiv für Task ${task.id} (${choice.instance.modelId})`)
 				const result = await runAgentLoop({
 					maxSteps: this.agentSettings().maxSteps,
+					// Werkzeug-Freigabe des Modells (`llm.md` → `## Werkzeuge`).
+					allowedTools: getInstanceSpec(db, choice.instance.id)?.tools,
 					adapter,
 					model: choice.instance.modelId,
 					settings: effective,

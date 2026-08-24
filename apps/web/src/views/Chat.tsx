@@ -21,7 +21,7 @@ import {
 	type GitStatus,
 	type InstanceModel,
 	type Repo,
-	type TeamStep,
+	type SwarmStep,
 } from "@diriz/shared"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import DiffView from "../components/DiffView.js"
@@ -403,12 +403,15 @@ export default function Chat() {
 	const [instances, setInstances] = useState<InstanceModel[]>([])
 	const [keepContext, setKeepContext] = useState(true)
 	/**
-	 * Team-Modus: mehrere Spezialisten nacheinander statt nur einer. Standard,
-	 * weil die meisten Aufträge mehr als eine Rolle brauchen — abschaltbar für
-	 * kurze Rückfragen, bei denen eine Kette nur Zeit kostet.
+	 * Swarm-Modus: mehrere Spezialisten nacheinander statt nur einer.
+	 *
+	 * Derselbe Begriff wie beim gespeicherten Swarm — es ist dieselbe Sache,
+	 * nur pro Prompt zusammengestellt statt vorher festgelegt. Standard, weil
+	 * die meisten Aufträge mehr als eine Rolle brauchen; abschaltbar für kurze
+	 * Rückfragen, bei denen eine Kette nur Zeit kostet.
 	 */
-	const [teamMode, setTeamMode] = useState(true)
-	const [plan, setPlan] = useState<TeamStep[]>([])
+	const [swarmMode, setSwarmMode] = useState(true)
+	const [plan, setPlan] = useState<SwarmStep[]>([])
 	/**
 	 * Verlauf standardmässig zugeklappt — die Unterhaltung bekommt die Breite.
 	 * Die Wahl bleibt erhalten (localStorage), damit man sie nicht bei jedem
@@ -540,7 +543,7 @@ export default function Chat() {
 		}
 		const id = setTimeout(() => {
 			api
-				.post<{ steps: TeamStep[] }>("/api/team/plan", { prompt: text, agentMode: target !== "answer" })
+				.post<{ steps: SwarmStep[] }>("/api/swarms/plan", { prompt: text, agentMode: target !== "answer" })
 				.then((r) => setPlan(r.steps))
 				.catch(() => setPlan([]))
 		}, 400)
@@ -583,9 +586,11 @@ export default function Chat() {
 			// Wer wird gebraucht? Meist mehr als einer — klären, bauen, prüfen.
 			// Fällt die Planung leer aus, bleibt es bei der Einzel-Zuordnung.
 			const plan = await api
-				.post<{ steps: TeamStep[] }>("/api/team/plan", { prompt: text, agentMode: target !== "answer" })
-				.catch(() => ({ steps: [] as TeamStep[] }))
-			const kette = teamMode ? plan.steps.map((s) => s.agentId) : plan.steps.slice(0, 1).map((s) => s.agentId)
+				.post<{ steps: SwarmStep[] }>("/api/swarms/plan", { prompt: text, agentMode: target !== "answer" })
+				.catch(() => ({ steps: [] as SwarmStep[] }))
+			const kette = swarmMode
+				? plan.steps.map((s) => s.agentId)
+				: plan.steps.slice(0, 1).map((s) => s.agentId)
 
 			const task = await api.post<{ id: string }>("/api/tasks", {
 				title: titleFrom(text),
@@ -977,9 +982,12 @@ export default function Chat() {
 										Kein Repository angebunden — jetzt verbinden
 									</a>
 								))}
-							<label className="chat-context" title="Mehrere Spezialisten nacheinander statt nur einer">
-								<input type="checkbox" checked={teamMode} onChange={(e) => setTeamMode(e.target.checked)} />
-								Team
+							<label
+								className="chat-context"
+								title="Swarm: mehrere Spezialisten nacheinander, automatisch zusammengestellt"
+							>
+								<input type="checkbox" checked={swarmMode} onChange={(e) => setSwarmMode(e.target.checked)} />
+								Swarm
 							</label>
 							<label className="chat-context">
 								<input
@@ -993,11 +1001,11 @@ export default function Chat() {
 						{plan.length > 0 && (
 							<div className="chat-plan">
 								<span className="chat-tools-label">
-									{teamMode && plan.length > 1 ? `Kette · ${plan.length} Schritte` : "Spezialist"}
+									{swarmMode && plan.length > 1 ? `Swarm · ${plan.length} Schritte` : "Spezialist"}
 								</span>
-								{(teamMode ? plan : plan.slice(0, 1)).map((s, i) => (
+								{(swarmMode ? plan : plan.slice(0, 1)).map((s, i) => (
 									<span key={s.agentId} className="plan-step" title={s.reasons.join(" · ")}>
-										{teamMode && plan.length > 1 && <span className="plan-index">{i + 1}</span>}
+										{swarmMode && plan.length > 1 && <span className="plan-index">{i + 1}</span>}
 										{s.name}
 									</span>
 								))}

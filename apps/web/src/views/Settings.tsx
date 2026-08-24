@@ -5,13 +5,13 @@
 
 import {
 	AGENT_DOC_FILES,
-	docKindsFor,
 	type AgentDocKind,
 	type ConcurrencySettings,
 	DEFAULT_WEIGHTS,
 	type DocOwnerKind,
 	type DocTemplateSettings,
 	defaultDoc,
+	docKindsFor,
 	normalizeWeights,
 	type ScoringWeights,
 	type TimeoutSettings,

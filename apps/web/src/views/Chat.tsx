@@ -15,7 +15,14 @@
  * das Modell noch geladen wird, was es gerade schreibt, welche Dateien es anfasst.
  */
 
-import { type FileDiff, findBlueprint, type GitStatus, type InstanceModel, type Repo } from "@diriz/shared"
+import {
+	type FileDiff,
+	findBlueprint,
+	type GitStatus,
+	type InstanceModel,
+	type Repo,
+	type TeamStep,
+} from "@diriz/shared"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import DiffView from "../components/DiffView.js"
 import {
@@ -396,6 +403,13 @@ export default function Chat() {
 	const [instances, setInstances] = useState<InstanceModel[]>([])
 	const [keepContext, setKeepContext] = useState(true)
 	/**
+	 * Team-Modus: mehrere Spezialisten nacheinander statt nur einer. Standard,
+	 * weil die meisten Aufträge mehr als eine Rolle brauchen — abschaltbar für
+	 * kurze Rückfragen, bei denen eine Kette nur Zeit kostet.
+	 */
+	const [teamMode, setTeamMode] = useState(true)
+	const [plan, setPlan] = useState<TeamStep[]>([])
+	/**
 	 * Verlauf standardmässig zugeklappt — die Unterhaltung bekommt die Breite.
 	 * Die Wahl bleibt erhalten (localStorage), damit man sie nicht bei jedem
 	 * Aufruf neu treffen muss; ein blockierter Speicher ist kein Fehlerfall.
@@ -513,6 +527,26 @@ export default function Chat() {
 		scrollToEnd()
 	}, [tick, running, scrollToEnd])
 
+	/**
+	 * Vorschau der Kette, während getippt wird. Entprellt, weil jede Anfrage
+	 * das Scoring über alle Spezialisten laufen lässt — und weil eine Vorschau,
+	 * die bei jedem Buchstaben zuckt, unruhiger ist als hilfreich.
+	 */
+	useEffect(() => {
+		const text = input.trim()
+		if (text.length < 12) {
+			setPlan([])
+			return
+		}
+		const id = setTimeout(() => {
+			api
+				.post<{ steps: TeamStep[] }>("/api/team/plan", { prompt: text, agentMode: target !== "answer" })
+				.then((r) => setPlan(r.steps))
+				.catch(() => setPlan([]))
+		}, 400)
+		return () => clearTimeout(id)
+	}, [input, target])
+
 	const runOf = (taskId: string) => Object.values(live).find((r) => r.taskId === taskId)
 	const instanceOf = (id?: string) => instances.find((i) => i.id === id)
 	const providerLabel = (providerId?: string) => providers.find((p) => p.id === providerId)?.label
@@ -546,6 +580,13 @@ export default function Chat() {
 			const history = turns
 				.filter((t) => t.status === "done")
 				.map((t) => ({ prompt: t.prompt, answer: t.answer }))
+			// Wer wird gebraucht? Meist mehr als einer — klären, bauen, prüfen.
+			// Fällt die Planung leer aus, bleibt es bei der Einzel-Zuordnung.
+			const plan = await api
+				.post<{ steps: TeamStep[] }>("/api/team/plan", { prompt: text, agentMode: target !== "answer" })
+				.catch(() => ({ steps: [] as TeamStep[] }))
+			const kette = teamMode ? plan.steps.map((s) => s.agentId) : plan.steps.slice(0, 1).map((s) => s.agentId)
+
 			const task = await api.post<{ id: string }>("/api/tasks", {
 				title: titleFrom(text),
 				prompt: keepContext ? withHistory(text, history) : text,
@@ -555,8 +596,10 @@ export default function Chat() {
 					// Agentik-Modus: nur wenn der Spezialist Dateien anfassen soll.
 					agentMode: target !== "answer",
 					chatId,
+					...(kette.length > 1 ? { chain: { agentIds: kette, index: 0, goal: text } } : {}),
 				},
-				assignmentMode: "auto",
+				assignmentMode: kette.length > 0 ? "agent" : "auto",
+				agentId: kette[0],
 			})
 			setPending((p) => [
 				...p,
@@ -934,6 +977,10 @@ export default function Chat() {
 										Kein Repository angebunden — jetzt verbinden
 									</a>
 								))}
+							<label className="chat-context" title="Mehrere Spezialisten nacheinander statt nur einer">
+								<input type="checkbox" checked={teamMode} onChange={(e) => setTeamMode(e.target.checked)} />
+								Team
+							</label>
 							<label className="chat-context">
 								<input
 									type="checkbox"
@@ -943,6 +990,19 @@ export default function Chat() {
 								Verlauf mitsenden
 							</label>
 						</div>
+						{plan.length > 0 && (
+							<div className="chat-plan">
+								<span className="chat-tools-label">
+									{teamMode && plan.length > 1 ? `Kette · ${plan.length} Schritte` : "Spezialist"}
+								</span>
+								{(teamMode ? plan : plan.slice(0, 1)).map((s, i) => (
+									<span key={s.agentId} className="plan-step" title={s.reasons.join(" · ")}>
+										{teamMode && plan.length > 1 && <span className="plan-index">{i + 1}</span>}
+										{s.name}
+									</span>
+								))}
+							</div>
+						)}
 						{target === "answer" && NEEDS_FILES.test(input) && (
 							<div className="chat-nudge">
 								<IconAlert size={14} />

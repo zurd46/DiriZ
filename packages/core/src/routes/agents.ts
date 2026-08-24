@@ -11,11 +11,15 @@ import {
 	appendChangelogEntry,
 	blueprintAgentId,
 	type Capability,
+	findBlueprint,
 	isAgentDocKind,
 	type ModelSettings,
 	parseInitDoc,
+	planTeam,
 	renderInitDoc,
 	SOFTWARE_TEAM,
+	type Task,
+	toAgentCandidate,
 } from "@diriz/shared"
 import type { FastifyInstance } from "fastify"
 import type { AppContext } from "../app.js"
@@ -34,6 +38,7 @@ import {
 	updateSwarm,
 } from "../db/repositories.js"
 import { refreshCatalogAgents, refreshCatalogSwarms, seedTeamCatalog } from "../db/seed.js"
+import { extractProfile } from "../routing/profile.js"
 
 const CAPABILITIES: Capability[] = ["code", "reasoning", "longform", "vision", "tools", "json"]
 const PRIVACIES: AgentPrivacy[] = ["any", "local-only", "allow-cloud"]
@@ -123,6 +128,50 @@ export function registerAgents(app: FastifyInstance, ctx: AppContext): void {
 		ctx.bus.emit({ event: "agents.changed", data: { agentId: agent.id } })
 		return reply.code(201).send(agent)
 	})
+
+	/**
+	 * Team-Planung: Welche Spezialisten braucht dieser Auftrag, in welcher
+	 * Reihenfolge? Deterministisch aus demselben Scoring wie die Einzel-
+	 * Zuordnung — nur eben mehrere, entlang des Wertstroms sortiert.
+	 */
+	app.post<{ Body: { prompt?: string; agentMode?: boolean; maxSteps?: number } }>(
+		"/api/team/plan",
+		(req, reply) => {
+			const prompt = req.body?.prompt?.trim()
+			if (!prompt) {
+				return reply.code(400).send({ error: "prompt ist erforderlich" })
+			}
+			const profile = extractProfile({
+				id: "plan",
+				title: "",
+				prompt,
+				metadata: {
+					privacy: "local-only",
+					mode: "auto",
+					agentMode: req.body?.agentMode === true,
+				},
+				status: "draft",
+				createdAt: new Date().toISOString(),
+			} as Task)
+			const candidates = listAgents(ctx.db)
+				.filter((a) => a.enabled)
+				.map((a) => ({
+					...toAgentCandidate(a),
+					discipline: findBlueprint(a.id.replace(/^agent-/, ""))?.discipline,
+				}))
+			const steps = planTeam(
+				prompt,
+				{
+					privacy: profile.privacy,
+					requiredCapabilities: profile.requiredCapabilities,
+					preferredCapabilities: profile.preferredCapabilities,
+				},
+				candidates,
+				{ maxSteps: req.body?.maxSteps },
+			)
+			return { steps }
+		},
+	)
 
 	/* ------------------------------ Team-Katalog ------------------------------ */
 

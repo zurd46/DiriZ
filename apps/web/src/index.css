@@ -3609,3 +3609,36 @@ pre.code {
 		transition: none;
 	}
 }
+
+/* Vorschau der geplanten Spezialisten-Kette über der Eingabe. */
+.chat-plan {
+	display: flex;
+	flex-flow: row wrap;
+	align-items: center;
+	gap: 4px;
+}
+
+.plan-step {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 1px 7px;
+	border-radius: 5px;
+	border: 1px solid var(--accent-line);
+	background: var(--accent-soft);
+	color: var(--text);
+	font-size: var(--fs-xs);
+}
+
+.plan-index {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 15px;
+	height: 15px;
+	border-radius: 50%;
+	background: var(--accent);
+	color: #fff;
+	font-size: 10px;
+	font-variant-numeric: tabular-nums;
+}

@@ -30,6 +30,15 @@ export interface TaskMetadata {
 	 * Verlauf die Datenbank selbst — nichts wird im Browser dupliziert.
 	 */
 	chatId?: string
+	/**
+	 * Kette von Spezialisten für **einen** Auftrag.
+	 *
+	 * Manche Aufträge brauchen mehrere Rollen nacheinander — klären, bauen,
+	 * prüfen. Jeder Schritt ist eine eigene Task mit eigenem Spezialisten und
+	 * eigener Ausführung; `index` sagt, an welcher Stelle diese Task steht.
+	 * Läuft ein Schritt erfolgreich durch, startet der Core den nächsten.
+	 */
+	chain?: { agentIds: string[]; index: number; goal?: string }
 }
 
 export interface Task {

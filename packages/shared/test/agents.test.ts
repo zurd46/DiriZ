@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest"
 import type { AgentCandidate, AgentProfile } from "../src/agents.js"
-import { MIN_AGENT_SCORE, scoreAgents, tokenize } from "../src/agents.js"
+import { MIN_AGENT_SCORE, planTeam, scoreAgents, tokenize } from "../src/agents.js"
 
 const PROFILE: AgentProfile = {
 	privacy: "local-only",
@@ -108,5 +108,79 @@ describe("scoreAgents", () => {
 		const agents = [cand({ agentId: "a1", name: "Frontend", description: "React TypeScript" })]
 		const scores = scoreAgents("react typescript bitte", PROFILE, agents)
 		expect(scores[0].reasons.length).toBeGreaterThan(0)
+	})
+})
+
+/**
+ * Team-Planung: Ein Auftrag braucht oft mehrere Rollen nacheinander. Die
+ * Auswahl muss deterministisch und in der Reihenfolge des Wertstroms erfolgen —
+ * erst klären, dann bauen, dann prüfen.
+ */
+describe("planTeam", () => {
+	const team: AgentCandidate[] = [
+		cand({
+			agentId: "arch",
+			name: "Software-Architekt",
+			description: "Architektur, Systemdesign, Schnittstellen",
+			discipline: "Architektur & Design",
+		}),
+		cand({
+			agentId: "front",
+			name: "Frontend-Entwickler",
+			description: "Frontend, React, Webseite, Komponente",
+			discipline: "Implementierung",
+		}),
+		cand({
+			agentId: "sec",
+			name: "Security-Engineer",
+			description: "Sicherheit, Schwachstelle, Injection",
+			discipline: "Qualität",
+		}),
+		cand({
+			agentId: "req",
+			name: "Requirements-Analyst",
+			description: "Anforderungen, User-Stories, Akzeptanzkriterien",
+			discipline: "Produkt & Analyse",
+		}),
+	]
+	const profil: AgentProfile = { privacy: "local-only", requiredCapabilities: [], preferredCapabilities: [] }
+
+	it("ordnet die Schritte entlang des Wertstroms, nicht nach Punktzahl", () => {
+		const plan = planTeam(
+			"Anforderungen klären, Architektur entwerfen, Webseite bauen und auf Sicherheit prüfen",
+			profil,
+			team,
+		)
+		expect(plan.map((s) => s.agentId)).toEqual(["req", "arch", "front", "sec"])
+	})
+
+	it("nimmt nur einen Spezialisten je Fachbereich", () => {
+		const doppelt = [
+			...team,
+			cand({
+				agentId: "back",
+				name: "Backend-Entwickler",
+				description: "Backend, Webseite, Server",
+				discipline: "Implementierung",
+			}),
+		]
+		const plan = planTeam("Webseite bauen", profil, doppelt)
+		const bereiche = plan.map((s) => s.discipline)
+		expect(new Set(bereiche).size).toBe(bereiche.length)
+	})
+
+	it("hält die Höchstzahl der Schritte ein", () => {
+		const plan = planTeam("Anforderungen, Architektur, Webseite, Sicherheit", profil, team, { maxSteps: 2 })
+		expect(plan).toHaveLength(2)
+	})
+
+	it("liefert nichts, wenn kein Spezialist relevant ist", () => {
+		expect(planTeam("hallo", profil, team)).toEqual([])
+	})
+
+	it("ist deterministisch", () => {
+		const a = planTeam("Architektur und Sicherheit", profil, team)
+		const b = planTeam("Architektur und Sicherheit", profil, [...team].reverse())
+		expect(a.map((s) => s.agentId)).toEqual(b.map((s) => s.agentId))
 	})
 })

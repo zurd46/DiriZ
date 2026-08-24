@@ -62,6 +62,8 @@ export interface AgentCandidate {
 	preferredCapabilities: Capability[]
 	privacy: AgentPrivacy
 	enabled: boolean
+	/** Fachbereich aus dem Katalog — ordnet den Schritt im Wertstrom ein. */
+	discipline?: string
 }
 
 /** Ein Agent-Score mit Erklärung — Basis für die Explainability-UI. */
@@ -340,4 +342,91 @@ export function toAgentCandidate(agent: Agent): AgentCandidate {
 		privacy: agent.privacy,
 		enabled: agent.enabled,
 	}
+}
+
+/* ------------------------------- Team-Planung -------------------------------- */
+
+/**
+ * Reihenfolge der Fachbereiche im Wertstrom. Ein Auftrag wandert von der
+ * Klärung über den Entwurf zur Umsetzung und wird danach geprüft — wer die
+ * Reihenfolge umdreht, prüft Code, den es noch nicht gibt.
+ */
+export const DISCIPLINE_ORDER = [
+	"Produkt & Analyse",
+	"Architektur & Design",
+	"Implementierung",
+	"Daten & KI",
+	"Qualität",
+	"Betrieb & Auslieferung",
+	"Dokumentation & Governance",
+]
+
+/** Ein Schritt der Kette: wer, warum, an welcher Stelle. */
+export interface TeamStep {
+	agentId: string
+	name: string
+	discipline?: string
+	score: number
+	reasons: string[]
+}
+
+export interface TeamPlanOptions {
+	/** Höchstzahl der Schritte. Jeder Schritt kostet einen vollen Modelllauf. */
+	maxSteps?: number
+	/** Mindest-Score, ab dem ein Spezialist überhaupt in Frage kommt. */
+	minScore?: number
+}
+
+/**
+ * Stellt für einen Prompt eine **Kette** von Spezialisten zusammen.
+ *
+ * Ein Auftrag wie „bau die Webseite und prüfe sie auf Sicherheit" braucht mehr
+ * als eine Rolle. Die Auswahl bleibt deterministisch: bewerten, pro Fachbereich
+ * den Besten nehmen, entlang des Wertstroms ordnen. Damit ist die Kette
+ * erklärbar — jeder Schritt trägt seine Begründung.
+ *
+ * Mehrere Spezialisten **desselben** Fachbereichs kommen nicht zusammen zum
+ * Zug: Zwei Backend-Entwickler nacheinander verdoppeln nur die Kosten.
+ */
+export function planTeam(
+	prompt: string,
+	profile: AgentProfile,
+	agents: AgentCandidate[],
+	opts: TeamPlanOptions = {},
+): TeamStep[] {
+	const maxSteps = Math.max(1, opts.maxSteps ?? 4)
+	const minScore = opts.minScore ?? MIN_AGENT_SCORE
+	const scored = scoreAgents(prompt, profile, agents)
+	const byId = new Map(agents.map((a) => [a.agentId, a]))
+
+	const bestProDisziplin = new Map<string, TeamStep>()
+	for (const s of scored) {
+		if (s.score < minScore) {
+			continue
+		}
+		const candidate = byId.get(s.agentId)
+		// Spezialisten ohne Fachbereich (selbst angelegte) bilden je einen
+		// eigenen „Bereich" — sie sollen sich nicht gegenseitig verdrängen.
+		const key = candidate?.discipline ?? `eigen:${s.agentId}`
+		if (!bestProDisziplin.has(key)) {
+			bestProDisziplin.set(key, {
+				agentId: s.agentId,
+				name: s.name,
+				discipline: candidate?.discipline,
+				score: s.score,
+				reasons: s.reasons,
+			})
+		}
+	}
+
+	const rang = (step: TeamStep): number => {
+		const i = step.discipline ? DISCIPLINE_ORDER.indexOf(step.discipline) : -1
+		// Unbekannte Bereiche hinten einsortieren, aber vor nichts stehen lassen.
+		return i >= 0 ? i : DISCIPLINE_ORDER.length
+	}
+
+	return [...bestProDisziplin.values()]
+		.sort((a, b) => b.score - a.score)
+		.slice(0, maxSteps)
+		.sort((a, b) => rang(a) - rang(b) || b.score - a.score || a.name.localeCompare(b.name))
 }

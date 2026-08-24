@@ -32,6 +32,7 @@ import {
 	latestAgentSelection,
 	listAgents,
 	listExecutionsByTask,
+	listTasks,
 	saveAgentDoc,
 	updateAgent,
 	updateInstance,
@@ -323,5 +324,50 @@ describe("M9: Model-Voreinstellungen aus init.md", () => {
 
 		saveAgentDoc(db, agentCode, "init", "")
 		expect(getAgent(db, agentCode)?.modelSettings).toBeNull()
+	})
+})
+
+/**
+ * Kette: Ein Auftrag, mehrere Spezialisten nacheinander. Der zweite Schritt
+ * muss automatisch starten und die Vorarbeit des ersten kennen — sonst
+ * beantwortet jeder Schritt dieselbe Frage von vorn.
+ */
+describe("engine: Spezialisten-Kette", () => {
+	it("startet den nächsten Schritt und reicht das Ergebnis weiter", async () => {
+		const erster = createAgent(db, { name: "Ketten-Erster", systemPrompt: "A" })
+		const zweiter = createAgent(db, { name: "Ketten-Zweiter", systemPrompt: "B" })
+
+		const task = createTask(db, {
+			title: "Kette",
+			prompt: "Ursprungsauftrag der Kette",
+			assignmentMode: "agent",
+			agentId: erster.id,
+			metadata: { chain: { agentIds: [erster.id, zweiter.id], index: 0 } },
+		})
+		await engine.runTask(task)
+
+		// Der Core hat eine Folge-Task angelegt — mit dem zweiten Spezialisten …
+		const folge = listTasks(db).find(
+			(t) => t.id !== task.id && t.metadata.chain?.index === 1 && t.agentId === zweiter.id,
+		)
+		expect(folge).toBeDefined()
+		// … dem ursprünglichen Ziel und der Vorarbeit im Prompt.
+		expect(folge?.prompt).toContain("Ursprungsauftrag der Kette")
+		expect(folge?.prompt).toContain("Vorarbeit aus Schritt 1")
+		expect(folge?.metadata.chain?.agentIds).toEqual([erster.id, zweiter.id])
+	})
+
+	it("endet nach dem letzten Schritt", async () => {
+		const einzig = createAgent(db, { name: "Ketten-Letzter", systemPrompt: "C" })
+		const vorher = listTasks(db).length
+		const task = createTask(db, {
+			prompt: "Letzter Schritt",
+			assignmentMode: "agent",
+			agentId: einzig.id,
+			metadata: { chain: { agentIds: [einzig.id], index: 0 } },
+		})
+		await engine.runTask(task)
+		// Nur die Task selbst ist dazugekommen, keine Fortsetzung.
+		expect(listTasks(db).length).toBe(vorher + 1)
 	})
 })

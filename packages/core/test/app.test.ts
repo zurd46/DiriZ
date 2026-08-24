@@ -288,6 +288,31 @@ describe("api: Version", () => {
 	})
 })
 
+describe("api: Team-Planung", () => {
+	it("stellt für einen mehrteiligen Auftrag eine Kette entlang des Wertstroms zusammen", async () => {
+		await app.inject({ method: "POST", url: "/api/agents/catalog" })
+		const res = await app.inject({
+			method: "POST",
+			url: "/api/team/plan",
+			payload: {
+				prompt: "Entwirf die REST-API, implementiere den Endpoint im Backend und prüfe ihn auf SQL-Injection",
+			},
+		})
+		expect(res.statusCode).toBe(200)
+		const steps = (res.json() as { steps: { agentId: string; discipline?: string }[] }).steps
+		expect(steps.length).toBeGreaterThan(1)
+		// Entwurf vor Umsetzung vor Prüfung — nicht nach Punktzahl sortiert.
+		const bereiche = steps.map((s) => s.discipline)
+		expect(bereiche.indexOf("Architektur & Design")).toBeLessThan(bereiche.indexOf("Qualität"))
+		expect(new Set(bereiche).size).toBe(bereiche.length)
+	})
+
+	it("weist einen leeren Prompt ab", async () => {
+		const res = await app.inject({ method: "POST", url: "/api/team/plan", payload: { prompt: "  " } })
+		expect(res.statusCode).toBe(400)
+	})
+})
+
 describe("api: Chat-Verlauf", () => {
 	it("gruppiert Chat-Nachrichten zu Gesprächen — der Verlauf lebt in der Datenbank", async () => {
 		const chatId = "chat-test-1"

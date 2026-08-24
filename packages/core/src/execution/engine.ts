@@ -47,6 +47,7 @@ import {
 	appendChunk,
 	appendToolCall,
 	createExecution,
+	createTask,
 	getAgent,
 	getAgentDoc,
 	getExecution,
@@ -214,6 +215,64 @@ export class ExecutionEngine {
 		const raw = stored?.maxSteps
 		return {
 			maxSteps: typeof raw === "number" && Number.isInteger(raw) && raw >= 0 ? raw : MAX_AGENT_STEPS,
+		}
+	}
+
+	/**
+	 * Startet den nächsten Spezialisten einer Kette.
+	 *
+	 * Jeder Schritt ist eine eigene Task — dadurch bekommt er seine eigene
+	 * Ausführung, seinen eigenen Diff und seinen eigenen Eintrag im Verlauf.
+	 * Der nächste sieht das Ergebnis des vorigen als Vorarbeit; er soll darauf
+	 * aufbauen, nicht dieselbe Frage noch einmal beantworten.
+	 *
+	 * Abgebrochen wird still: Scheitert ein Schritt, endet die Kette dort —
+	 * einen Fehler weiterzureichen hiesse, auf falschem Fundament weiterzubauen.
+	 */
+	private startNextChainStep(task: Task, ergebnis: string): void {
+		const chain = task.metadata.chain
+		if (!chain) {
+			return
+		}
+		const next = chain.agentIds[chain.index + 1]
+		if (!next) {
+			return
+		}
+		const agent = getAgent(this.deps.db, next)
+		if (!agent?.enabled) {
+			this.deps.log("warn", "agents", `Kette endet: Spezialist ${next} fehlt oder ist deaktiviert`)
+			return
+		}
+		const ziel = chain.goal ?? task.prompt
+		const vorarbeit = ergebnis.trim().slice(0, 6000)
+		const folge = createTask(this.deps.db, {
+			title: task.title,
+			prompt: [
+				`Ursprünglicher Auftrag:\n${ziel}`,
+				"",
+				`Vorarbeit aus Schritt ${chain.index + 1}:\n${vorarbeit || "(keine Textantwort)"}`,
+				"",
+				"Deine Aufgabe: Bau darauf auf und erledige den Teil, für den du zuständig bist. " +
+					"Wiederhole die Vorarbeit nicht, sondern ergänze oder korrigiere sie.",
+			].join("\n"),
+			metadata: {
+				...task.metadata,
+				chain: { ...chain, index: chain.index + 1, goal: ziel },
+			},
+			assignmentMode: "agent",
+			agentId: next,
+			repoId: task.repoId ?? null,
+			baseBranch: task.baseBranch ?? null,
+		})
+		this.deps.emit({ event: "task.created", data: { taskId: folge.id } })
+		this.deps.log(
+			"info",
+			"agents",
+			`Kette: Schritt ${chain.index + 2}/${chain.agentIds.length} an ${agent.name} (Task ${folge.id})`,
+		)
+		const accepted = this.start(folge.id)
+		if (!accepted.accepted) {
+			this.deps.log("warn", "agents", `Kette pausiert: ${accepted.reason}`)
 		}
 	}
 
@@ -1074,6 +1133,7 @@ export class ExecutionEngine {
 		registry.recordSuccess(choice.instance.providerId)
 		feedback.record(choice.instance.id, true)
 		await this.autoCommit(task)
+		this.startNextChainStep(task, fullText)
 		log(
 			"info",
 			"engine",

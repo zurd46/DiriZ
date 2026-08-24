@@ -116,12 +116,19 @@ interface State {
 	live: Record<string, LiveRun>
 	taskDetails: Record<string, TaskDetail>
 	lastError?: string
+	/**
+	 * Der Core kennt eine Route nicht, die diese Oberfläche aufruft — er fährt
+	 * älteren Code. Wird beim ersten Vorkommen gesetzt und bleibt stehen, bis
+	 * der Server neu startet (die Verbindung bricht dabei ohnehin ab).
+	 */
+	coreOutdated: boolean
 	toasts: Toast[]
 	/** Version des laufenden Cores — deckt veraltete Prozesse sofort auf. */
 	version: { version: string; schemaVersion: number; builtAt?: string } | null
 
 	setConnected(connected: boolean): void
 	setLastError(message?: string): void
+	setCoreOutdated(outdated: boolean): void
 	notify(kind: Toast["kind"], message: string): void
 	dismissToast(id: number): void
 	refreshVersion(): Promise<void>
@@ -154,10 +161,11 @@ export const useStore = create<State>((set, get) => ({
 	live: {},
 	taskDetails: {},
 	lastError: undefined,
+	coreOutdated: false,
 	toasts: [],
 	version: null,
 
-	setConnected: (connected) => set({ connected }),
+	setConnected: (connected) => set(connected ? { connected, coreOutdated: false } : { connected }),
 
 	// Jeder Fehler wird zusätzlich als Toast sichtbar — vorher konnte eine
 	// Fehlermeldung in einer Ansicht liegen, die gerade niemand ansieht.
@@ -167,6 +175,8 @@ export const useStore = create<State>((set, get) => ({
 			get().notify("error", message)
 		}
 	},
+
+	setCoreOutdated: (outdated) => set({ coreOutdated: outdated }),
 
 	notify: (kind, message) =>
 		set((state) => {

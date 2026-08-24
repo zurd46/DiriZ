@@ -19,6 +19,7 @@ import {
 } from "./components/icons.js"
 import Onboarding, { shouldShowOnboarding } from "./components/Onboarding.js"
 import Toasts from "./components/Toasts.js"
+import { setMissingRouteHandler } from "./lib/api.js"
 import { ROUTE_TITLES, type Route, useRoute } from "./lib/router.js"
 import { connectStream } from "./lib/sse.js"
 import { useStore } from "./store.js"
@@ -89,6 +90,10 @@ export default function App() {
 		void state.refreshMetrics()
 		void state.refreshSettings()
 		void state.refreshVersion()
+		// Einmal einhängen: Jeder API-Aufruf, der auf eine unbekannte Route
+		// trifft, macht den veralteten Core sichtbar — ganz gleich, aus welcher
+		// Ansicht er kam.
+		setMissingRouteHandler(() => useStore.getState().setCoreOutdated(true))
 		const handle = connectStream(handleStreamEvent, setConnected)
 		const metricsTimer = setInterval(() => useStore.getState().refreshMetrics(), 15_000)
 		const logsTimer = setInterval(() => useStore.getState().refreshLogs(), 10_000)
@@ -101,13 +106,7 @@ export default function App() {
 
 	const runningTasks = tasks.filter((t) => t.running).length
 
-	/**
-	 * Läuft der Core mit älterem Code als diese Oberfläche? Dann fehlen ihm
-	 * Routen, die es hier längst gibt — der Nutzer sähe sonst nur „Route
-	 * existiert nicht“ und hätte keine Ahnung, woran es liegt.
-	 */
-	const staleCore =
-		version?.builtAt !== undefined && new Date(version.builtAt).getTime() < new Date(__BUILD_TIME__).getTime()
+	const coreOutdated = useStore((s) => s.coreOutdated)
 	const counts: Partial<Record<Route, number>> = { tasks: runningTasks }
 
 	const go = (to: Route) => {
@@ -185,14 +184,13 @@ export default function App() {
 					<span>{ROUTE_TITLES[route]}</span>
 				</button>
 
-				{staleCore && (
+				{coreOutdated && (
 					<div className="banner warn" role="alert">
 						<IconAlert size={17} />
 						<span className="banner-text">
-							Der Core läuft mit einem <strong>älteren Stand</strong> als diese Oberfläche (Core{" "}
-							{new Date(version?.builtAt ?? "").toLocaleTimeString("de-CH")}, Oberfläche{" "}
-							{new Date(__BUILD_TIME__).toLocaleTimeString("de-CH")}). Neuere Routen fehlen ihm — starte ihn
-							neu mit <code>npm run serve</code>.
+							Der Core kennt eine Funktion nicht, die diese Oberfläche aufruft — er läuft mit älterem Code
+							(Stand {version?.builtAt ? new Date(version.builtAt).toLocaleTimeString("de-CH") : "unbekannt"}
+							). Ein Neustart des Cores behebt das.
 						</span>
 					</div>
 				)}

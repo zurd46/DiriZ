@@ -41,7 +41,29 @@ function readVersion(): string {
  */
 function readBuiltAt(): string | undefined {
 	try {
-		return fs.statSync(import.meta.filename).mtime.toISOString()
+		// Jüngste Datei im eigenen Verzeichnisbaum statt der eigenen: `tsc`
+		// schreibt unveränderte Dateien nicht neu, sonst meldete der Core den
+		// Stand von `version.js` — und der ist oft Stunden alt, obwohl gerade
+		// erst gebaut wurde.
+		const root = path.resolve(import.meta.dirname, "..")
+		let newest = 0
+		const walk = (dir: string, depth: number): void => {
+			if (depth > 3) {
+				return
+			}
+			for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+				const full = path.join(dir, entry.name)
+				if (entry.isDirectory()) {
+					walk(full, depth + 1)
+					// `.ts` zählt mit: Im Entwicklungsbetrieb läuft der Core direkt aus
+					// den Quellen, dort gibt es keine `.js`-Dateien.
+				} else if (entry.name.endsWith(".js") || entry.name.endsWith(".ts")) {
+					newest = Math.max(newest, fs.statSync(full).mtimeMs)
+				}
+			}
+		}
+		walk(root, 0)
+		return newest > 0 ? new Date(newest).toISOString() : undefined
 	} catch {
 		return undefined
 	}

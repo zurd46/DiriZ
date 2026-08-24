@@ -16,10 +16,23 @@ export class ApiError extends Error {
 		this.name = "ApiError"
 	}
 
+	/** Der Server kennt den Pfad nicht — er fährt älteren Code als diese Oberfläche. */
+	missingRoute = false
+
 	/** Kein Server erreichbar — anders zu behandeln als ein 4xx/5xx. */
 	get offline(): boolean {
 		return this.status === 0
 	}
+}
+
+/**
+ * Rückruf für „Route existiert nicht“. Der API-Client kennt den Store nicht
+ * (und soll ihn nicht kennen) — die App hängt sich hier einmal ein.
+ */
+let onMissingRoute: (() => void) | undefined
+
+export function setMissingRouteHandler(handler: () => void): void {
+	onMissingRoute = handler
 }
 
 /** Adresse des Cores — für die Fehlermeldung, wenn er nicht antwortet. */
@@ -45,15 +58,29 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 	}
 	if (!res.ok) {
 		let message = `HTTP ${res.status}`
+		let missingRoute = false
 		try {
-			const body = (await res.json()) as { error?: string }
+			const body = (await res.json()) as { error?: string; message?: string }
 			if (body.error) {
 				message = body.error
+			}
+			// Fastify meldet unbekannte Pfade als 404 mit genau diesem Wortlaut.
+			// Das ist der einzige verlässliche Hinweis darauf, dass der Server
+			// älteren Code fährt als diese Oberfläche — ein Zeitstempel-Vergleich
+			// schlüge auch bei einem reinen Oberflächen-Build an.
+			missingRoute = res.status === 404 && /Route .* existiert nicht/.test(body.message ?? body.error ?? "")
+			if (missingRoute) {
+				message = `Der Core kennt diese Funktion nicht (${path}) — er läuft mit älterem Code.`
 			}
 		} catch {
 			// Antwort hatte kein JSON.
 		}
-		throw new ApiError(message, res.status)
+		const error = new ApiError(message, res.status)
+		error.missingRoute = missingRoute
+		if (missingRoute) {
+			onMissingRoute?.()
+		}
+		throw error
 	}
 	if (res.status === 204) {
 		return undefined as T

@@ -27,6 +27,11 @@ export interface ScoringWeights {
 	contextFit: number
 	capabilityMatch: number
 	qualityPrior: number
+	/**
+	 * Eignung laut `llm.md`: Stärken und Schwächen des Modells gegen den
+	 * Prompt. 0 = das Modell taugt laut Datenblatt ausdrücklich nicht dafür.
+	 */
+	specFit?: number
 	loadScore: number
 	costScore: number
 	latencyScore: number

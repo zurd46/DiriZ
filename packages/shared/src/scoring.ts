@@ -14,18 +14,25 @@ import type { Capability } from "./types.js"
  * Default-Gewichte aus dem Plan (§6.2):
  *
  * ```
- * score = 0.30 · contextFit
- *       + 0.30 · capabilityMatch
- *       + 0.20 · qualityPrior
+ * score = 0.25 · contextFit
+ *       + 0.25 · capabilityMatch
+ *       + 0.18 · qualityPrior
+ *       + 0.12 · specFit
  *       + 0.08 · loadScore
  *       + 0.07 · costScore
  *       + 0.05 · latencyScore
  * ```
+ *
+ * `specFit` kam mit dem `llm.md` dazu: Stärken und Schwächen, die im
+ * Datenblatt eines Modells stehen, sollen die Auswahl auch tatsächlich
+ * bewegen. Das Gewicht stammt aus `contextFit`/`capabilityMatch`/`qualityPrior`
+ * — die Summe bleibt 1.
  */
 export const DEFAULT_WEIGHTS: ScoringWeights = {
-	contextFit: 0.3,
-	capabilityMatch: 0.3,
-	qualityPrior: 0.2,
+	contextFit: 0.25,
+	capabilityMatch: 0.25,
+	qualityPrior: 0.18,
+	specFit: 0.12,
 	loadScore: 0.08,
 	costScore: 0.07,
 	latencyScore: 0.05,
@@ -41,6 +48,7 @@ export function costAwareWeights(base: ScoringWeights = DEFAULT_WEIGHTS): Scorin
 		contextFit: scale(base.contextFit),
 		capabilityMatch: scale(base.capabilityMatch),
 		qualityPrior: scale(base.qualityPrior),
+		specFit: scale(base.specFit ?? 0),
 		loadScore: scale(base.loadScore),
 		costScore: cost,
 		latencyScore: scale(base.latencyScore),
@@ -51,6 +59,7 @@ export function costAwareWeights(base: ScoringWeights = DEFAULT_WEIGHTS): Scorin
 /** Summiert die Gewichte und renormiert auf 1 (für benutzerdefinierte Gewichte). */
 export function normalizeWeights(weights: ScoringWeights): ScoringWeights {
 	const hostLoad = weights.hostLoad ?? 0
+	const specFit = weights.specFit ?? 0
 	const sum =
 		weights.contextFit +
 		weights.capabilityMatch +
@@ -58,6 +67,7 @@ export function normalizeWeights(weights: ScoringWeights): ScoringWeights {
 		weights.loadScore +
 		weights.costScore +
 		weights.latencyScore +
+		specFit +
 		hostLoad
 	if (sum <= 0) {
 		return { ...DEFAULT_WEIGHTS }
@@ -66,6 +76,7 @@ export function normalizeWeights(weights: ScoringWeights): ScoringWeights {
 		contextFit: weights.contextFit / sum,
 		capabilityMatch: weights.capabilityMatch / sum,
 		qualityPrior: weights.qualityPrior / sum,
+		specFit: specFit / sum,
 		loadScore: weights.loadScore / sum,
 		costScore: weights.costScore / sum,
 		latencyScore: weights.latencyScore / sum,

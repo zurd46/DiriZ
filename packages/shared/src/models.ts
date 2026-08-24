@@ -1,98 +1,124 @@
 /**
- * Modell-Katalog: wofür ein LLM taugt.
+ * Modell-Katalog & `llm.md` — das technische Datenblatt eines LLM.
  *
- * Ein Provider meldet bei der Discovery nur seinen Modellnamen — sonst nichts.
- * Damit steht in `plan.md` einer frisch entdeckten LLM-Instanz bisher die
- * unausgefüllte Vorlage („Wofür wird dieses Modell eingesetzt?"), und
- * `extractDirective` wirft genau die als Platzhalter wieder weg: Das Modell
- * bekommt also **keine** Deklaration, und das Routing sieht ein Modell ohne
- * Fähigkeiten.
+ * Ein Spezialist bekommt einen Auftrag (`plan.md`: Auftrag, Vorgehen,
+ * Leitplanken). Ein **Modell** bekommt keinen Auftrag — es hat Eigenschaften.
+ * Die stehen in `llm.md`, und die Orchestrierung rechnet sie ein:
  *
- * Dieses Modul schliesst die Lücke. Es kennt die verbreiteten Modell-Familien
- * (lokal wie Cloud) und leitet aus dem Modellnamen ein Profil ab: Auftrag,
- * Stärken, Einsatz, Leitplanken, Fähigkeiten und sinnvolle Startwerte für
- * `init.md`. Was der Name nicht hergibt, ergänzen Heuristiken über
- * Parameterzahl, Kontextfenster, Quantisierung und Preis.
+ * | Zeile im `llm.md`      | Wirkung im System                                   |
+ * |------------------------|-----------------------------------------------------|
+ * | `Fähigkeiten`          | hartes Gate + Capability-Achse (30 % des Scores)     |
+ * | `Kontext-Fenster`      | hartes Gate + Context-Fit-Achse (30 %)               |
+ * | `Qualitätsklasse`      | Startwert der Qualitäts-Achse (20 %), bis Feedback   |
+ * |                        | aus echten Ausführungen ihn ablöst                   |
+ * | `Gut für` / `Nicht …`  | Begründung für Menschen; kein automatischer Effekt   |
  *
- * Wie der Team-Katalog ist das eine **Vorlage, kein Gesetz**: Der Core schreibt
- * das Profil beim Anlegen einmal in die Dokumente; danach ist es ein ganz
- * normales, bearbeitbares `plan.md`.
+ * Woher der Inhalt kommt: Ein Provider meldet bei der Discovery nur einen
+ * Modellnamen. Dieses Modul erkennt daran die Familie (lokal wie Cloud) und
+ * schreibt ein ausgefülltes Datenblatt — ergänzt um das, was Parameterzahl,
+ * Kontextfenster, Quantisierung und Preis verraten. Das ist eine **Vermutung**
+ * und als solche gekennzeichnet; korrigiert wird sie durch Bearbeiten des
+ * Dokuments, das damit zur Quelle der Wahrheit wird.
  *
  * Beim Erweitern: Die Reihenfolge in `MODEL_FAMILIES` entscheidet — spezifische
- * Regeln (Coder, Vision, Reasoning) stehen **vor** den Familien-Regeln, sonst
- * gewinnt „qwen" gegen „qwen2.5-coder".
+ * Regeln (Embedding, Vision, Coder, Reasoning) stehen **vor** den Familien,
+ * sonst gewinnt „qwen" gegen „qwen3-coder".
  */
 
 import { type AgentDocKind, renderInitDoc } from "./docs.js"
 import type { Capability, ModelSettings } from "./types.js"
 
-/** Was ein Modell taugt — die Vorlage für die Dokumente einer LLM-Instanz. */
+/** Wie gut die Ausgaben erfahrungsgemäß sind — Startwert der Qualitäts-Achse. */
+export type ModelQuality = "hoch" | "mittel" | "niedrig"
+
+/** Wie schnell das Modell antwortet — Notiz für die Auswahl von Hand. */
+export type ModelSpeed = "schnell" | "mittel" | "langsam"
+
+/** Qualitätsklasse → Startwert (`basisPrior`) der Qualitäts-Achse im Routing. */
+export const QUALITY_PRIOR: Record<ModelQuality, number> = {
+	hoch: 0.75,
+	mittel: 0.6,
+	niedrig: 0.45,
+}
+
+/** Das Datenblatt einer Modell-Familie. */
 export interface ModelProfile {
-	/** Erkannte Familie, z. B. „Qwen-Coder". `Unbekannt`, wenn nur Heuristik griff. */
+	/** Erkannte Familie, z. B. „Code-Modell". */
 	family: string
-	/** `plan.md` §1 — wofür dieses Modell eingesetzt wird (ein Satz). */
-	mission: string
-	/** `plan.md` §1 — wofür es gerufen wird; zugleich die Kurzfassung in der UI. */
-	strengths: string[]
-	/** `plan.md` §2 — wie man es einsetzt, damit es seine Stärke ausspielt. */
-	usage: string[]
-	/** `plan.md` §3 — wo es abfällt und was es deshalb nicht tun soll. */
-	limits: string[]
-	/** Fähigkeiten für das Routing-Gate (`scoreAgents`, `policies`). */
+	/** Ein Satz: was für ein Modell das ist. */
+	purpose: string
+	/** `## Gut für` — wofür es taugt. */
+	goodFor: string[]
+	/** `## Nicht geeignet für` — wo es abfällt. */
+	notFor: string[]
+	/** `## Hinweise` — wie man es einsetzt. */
+	notes: string[]
+	/** `## Fähigkeiten` — wirksam: hartes Routing-Gate. */
 	capabilities: Capability[]
+	quality: ModelQuality
+	speed: ModelSpeed
 	/** Startwerte für `init.md`. */
 	settings: ModelSettings
 }
 
-/** Eine Familien-Regel: Namensmuster → Profil. */
+/** Eine Familien-Regel: Namensmuster → Datenblatt. */
 export interface ModelFamilyRule {
 	/** Geprüft gegen `"<modelId> <displayName>"` in Kleinschreibung. */
 	test: RegExp
 	profile: ModelProfile
 }
 
-/** Was über ein Modell bekannt ist, wenn das Profil gesucht wird. */
+/** Was über ein Modell bekannt ist, wenn das Datenblatt entsteht. */
 export interface ModelIdentity {
 	modelId: string
 	displayName?: string
 	contextWindow?: number
-	/** Vom Provider gemeldete Fähigkeiten — sie schlagen die Vermutung. */
+	/** Vom Provider gemeldete Fähigkeiten — gemessen schlägt geraten. */
 	capabilities?: Capability[]
+	languages?: string[]
 	quantization?: string
 	/** Nur Cloud (USD je Million Token). */
 	pricePerMTok?: { in: number; out: number }
 }
 
+/** Das, was `parseLlmDoc` aus einem Datenblatt herausliest. */
+export interface ModelSpec {
+	family?: string
+	parameters?: number
+	contextWindow?: number
+	quantization?: string
+	languages: string[]
+	capabilities: Capability[]
+	quality?: ModelQuality
+	speed?: ModelSpeed
+	goodFor: string[]
+	notFor: string[]
+}
+
+const CAPABILITY_VALUES: Capability[] = ["code", "reasoning", "longform", "vision", "tools", "json"]
+
 /* ------------------------------- Der Katalog --------------------------------- */
 
-/**
- * Die Familien, nach Spezifität geordnet. Erste Übereinstimmung gewinnt.
- *
- * Die Texte sind bewusst in der Anrede formuliert: Der `plan.md`-Inhalt landet
- * über `composeSystemPrompt` als verbindliche Arbeitsanweisung im System-Prompt
- * — dort ist „Formuliere knapp" nützlich, „Das Modell ist knapp" nicht.
- */
+/** Die Familien, nach Spezifität geordnet. Erste Übereinstimmung gewinnt. */
 export const MODEL_FAMILIES: ModelFamilyRule[] = [
 	{
 		// Zuerst, weil `bge-m3`, `e5` & Co. sonst als Chat-Modelle durchgehen.
 		test: /embed|bge-|gte-|e5-|minilm|arctic-embed|sentence-transformer|text-embedding/,
 		profile: {
 			family: "Embedding-Modell",
-			mission:
-				"Du bist ein Einbettungs-Modell: Du wandelst Text in Vektoren um und führst keine Unterhaltung.",
-			strengths: [
-				"Vektoren für Ähnlichkeitssuche, Clustering und RAG-Retrieval",
-				"sehr schnell und sehr günstig pro Dokument",
+			purpose: "Wandelt Text in Vektoren um. Kein Chat-Modell — es beantwortet keine Fragen.",
+			goodFor: [
+				"Ähnlichkeitssuche, Clustering, RAG-Retrieval",
+				"sehr schnelle, sehr günstige Massenverarbeitung",
 			],
-			usage: [
-				"Nur für Einbettungen aufrufen — Chunking und Suche passieren ausserhalb.",
-				"Denselben Modellstand für Index und Abfrage verwenden, sonst passen die Vektoren nicht zusammen.",
-			],
-			limits: [
-				"Beantworte keine Fragen und schreibe keinen Fliesstext — dafür fehlt dem Modell der Chat-Kopf.",
-				"Nicht ins Routing für Aufträge aufnehmen; es liefert dort unbrauchbare Ausgaben.",
+			notFor: ["Aufträge jeder Art — die Ausgabe ist unbrauchbar", "Fliesstext, Code, Analyse"],
+			notes: [
+				"Für Index und Abfrage denselben Modellstand verwenden, sonst passen die Vektoren nicht zusammen.",
+				"Im Routing deaktiviert lassen (Modell im Rechner-Tab abschalten).",
 			],
 			capabilities: [],
+			quality: "niedrig",
+			speed: "schnell",
 			settings: { temperature: 0, maxTokens: 512 },
 		},
 	},
@@ -100,21 +126,13 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 		test: /rerank/,
 		profile: {
 			family: "Reranker",
-			mission:
-				"Du bist ein Reranker: Du sortierst gefundene Textstellen nach Relevanz zu einer Frage — mehr nicht.",
-			strengths: [
-				"Trefferlisten aus der Vektorsuche nachschärfen",
-				"kurze Laufzeit pro Paar (Frage, Stelle)",
-			],
-			usage: [
-				"Immer als zweite Stufe nach einer Vektorsuche einsetzen.",
-				"Nur Paare (Frage, Textstelle) übergeben und eine Rangfolge zurückgeben.",
-			],
-			limits: [
-				"Schreibe keine Antworten und fasse nichts zusammen.",
-				"Nicht als Chat-Modell ins Routing aufnehmen.",
-			],
+			purpose: "Sortiert gefundene Textstellen nach Relevanz zu einer Frage. Kein Chat-Modell.",
+			goodFor: ["Trefferlisten aus der Vektorsuche nachschärfen"],
+			notFor: ["Aufträge jeder Art", "Antworten formulieren, zusammenfassen"],
+			notes: ["Immer als zweite Stufe nach einer Vektorsuche einsetzen."],
 			capabilities: [],
+			quality: "niedrig",
+			speed: "schnell",
 			settings: { temperature: 0, maxTokens: 512 },
 		},
 	},
@@ -122,70 +140,66 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 		test: /sqlcoder|sql-coder|nsql/,
 		profile: {
 			family: "SQL-Spezialist",
-			mission: "Du bist auf SQL spezialisiert: Du übersetzt Fragen in Abfragen gegen ein gegebenes Schema.",
-			strengths: [
+			purpose: "Übersetzt Fragen in SQL-Abfragen gegen ein mitgegebenes Schema.",
+			goodFor: [
 				"SELECT-Abfragen aus natürlicher Sprache",
 				"Joins, Aggregate, Fensterfunktionen",
-				"Abfragen an ein vorgegebenes Schema anpassen",
+				"vorhandene Abfragen an ein Schema anpassen",
 			],
-			usage: [
-				"Immer das vollständige Schema (Tabellen, Spalten, Typen) mitgeben — ohne Schema rät das Modell Spaltennamen.",
-				"Den SQL-Dialekt nennen (PostgreSQL, SQLite, MySQL …).",
-				"Nur die Abfrage ausgeben, dazu eine Zeile, was sie liefert.",
-			],
-			limits: [
-				"Keine schreibenden Anweisungen (INSERT/UPDATE/DELETE/DROP) ohne ausdrückliche Aufforderung.",
-				"Keine allgemeinen Programmier- oder Fliesstext-Aufgaben — dafür ist ein anderes Modell zuständig.",
+			notFor: ["allgemeine Programmieraufgaben", "Fliesstext und Analyse"],
+			notes: [
+				"Ohne vollständiges Schema (Tabellen, Spalten, Typen) rät das Modell Spaltennamen.",
+				"SQL-Dialekt im Prompt nennen (PostgreSQL, SQLite, MySQL …).",
 			],
 			capabilities: ["code"],
+			quality: "mittel",
+			speed: "schnell",
 			settings: { temperature: 0.1, maxTokens: 2048 },
 		},
 	},
 	{
-		test: /llava|bakllava|moondream|minicpm-v|internvl|pixtral|[-\s]vl\b|vl-|vision|florence|granite.*vision/,
+		test: /llava|bakllava|moondream|minicpm-v|internvl|pixtral|[-\s]vl\b|vl-|vision|florence/,
 		profile: {
 			family: "Vision-Modell",
-			mission:
-				"Du bist ein Bild-und-Text-Modell: Du beschreibst, liest und beurteilst Bildinhalte und beantwortest Fragen dazu.",
-			strengths: [
+			purpose: "Versteht Bilder und Text zugleich: beschreibt, liest und beurteilt Bildinhalte.",
+			goodFor: [
 				"Screenshots und Oberflächen beschreiben (UI-Review, Fehlerbilder)",
 				"Text aus Bildern lesen (OCR-artige Aufgaben)",
 				"Diagramme, Tabellen und Skizzen erklären",
 			],
-			usage: [
-				"Bild plus konkrete Frage übergeben — offene Aufforderungen liefern nur eine Bildbeschreibung.",
-				"Bei Text im Bild wörtlich zitieren, statt sinngemäss wiederzugeben.",
-				"Unlesbare oder abgeschnittene Stellen ausdrücklich als solche benennen.",
-			],
-			limits: [
-				"Rate nichts, was im Bild nicht zu sehen ist — nicht erkennbar heisst \u201enicht erkennbar\u201c.",
-				"Reine Textaufgaben laufen besser auf einem allgemeinen Modell.",
+			notFor: ["reine Textaufgaben — dort ist ein Allzweck-Modell besser", "lange Fliesstexte"],
+			notes: [
+				"Bild plus konkrete Frage übergeben; offene Aufforderungen liefern nur eine Bildbeschreibung.",
+				"Nicht erkennbare Stellen benennen lassen, statt sie raten zu lassen.",
 			],
 			capabilities: ["vision"],
+			quality: "mittel",
+			speed: "mittel",
 			settings: { temperature: 0.3, maxTokens: 2048 },
 		},
 	},
 	{
-		test: /coder|codellama|code-llama|starcoder|codegemma|codestral|stable-code|magicoder|wizardcoder|granite-code|codeqwen|codegeex|opencoder/,
+		test: /coder|codellama|code-llama|starcoder|codegemma|codestral|stable-code|magicoder|wizardcoder|granite-code|codeqwen|codegeex|opencoder|devstral/,
 		profile: {
 			family: "Code-Modell",
-			mission: "Du bist ein auf Quellcode trainiertes Modell: Du schreibst, ergänzt und reparierst Code.",
-			strengths: [
+			purpose: "Auf Quellcode trainiert: schreibt, ergänzt, erklärt und repariert Programme.",
+			goodFor: [
 				"Funktionen und Module aus einer Beschreibung schreiben",
 				"Fehlersuche, Refactoring, Tests nachziehen",
 				"Code erklären und in eine andere Sprache übertragen",
-				"strukturierte Ausgaben (JSON, Diff, Patch)",
+				"strukturierte Ausgaben: JSON, Diff, Patch",
 			],
-			usage: [
-				"Vollständige, lauffähige Dateien oder Blöcke ausgeben — mit Dateipfad darüber.",
-				"Vorhandene Konventionen des gezeigten Codes übernehmen statt eigene einzuführen.",
-				"Annahmen über nicht gezeigte Stellen benennen, statt sie zu erfinden.",
+			notFor: [
+				"lange Fliesstexte und freies Formulieren",
+				"Faktenfragen — das Weltwissen ist zugunsten von Code beschnitten",
 			],
-			limits: [
-				"Keine Bibliotheken, APIs oder Flags erfinden — unbekannt heisst offen.",
-				"Kein ausschweifender Fliesstext; die Erklärung bleibt kurz, der Code steht im Mittelpunkt.",
+			notes: [
+				"Vollständige Dateien mit Pfad übergeben statt Ausschnitte; das Modell hält sich an gezeigte Konventionen.",
+				"Niedrige Temperatur (0.1–0.3) — Kreativität ist hier ein Fehler.",
 			],
 			capabilities: ["code", "json"],
+			quality: "hoch",
+			speed: "mittel",
 			settings: { temperature: 0.2, maxTokens: 4096 },
 		},
 	},
@@ -193,24 +207,24 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 		test: /deepseek-?r1|(^|[-\s/])r1[-\s]|qwq|marco-o1|magistral|reasoner|thinking|phi-4-reasoning|(^|\/)o[134](-|$)/,
 		profile: {
 			family: "Reasoning-Modell",
-			mission:
-				"Du bist ein Reasoning-Modell: Du denkst eine Aufgabe erst vollständig durch und antwortest dann.",
-			strengths: [
+			purpose: "Denkt eine Aufgabe sichtbar durch, bevor es antwortet — Genauigkeit vor Tempo.",
+			goodFor: [
 				"mehrstufige Analysen, Mathematik, Logik",
 				"Architektur- und Trade-off-Entscheidungen begründen",
-				"schwierige Fehlersuche, bei der die Ursache nicht offensichtlich ist",
+				"schwierige Fehlersuche ohne offensichtliche Ursache",
 				"Pläne prüfen und Lücken darin finden",
 			],
-			usage: [
-				"Genug Zeit und Token einräumen — die Denkphase braucht Platz, kurze Limits schneiden die Antwort ab.",
-				"Am Ende eine klare, kurze Schlussfolgerung liefern; die Herleitung bleibt darüber.",
-				"Bei Unsicherheit die Alternativen mit ihren Konsequenzen nennen statt nur eine Variante.",
+			notFor: [
+				"einfache oder häufige Aufträge — die Denkphase kostet Zeit und Token",
+				"knappe Antworten unter Zeitdruck",
 			],
-			limits: [
-				"Nicht für einfache, schnelle Aufgaben verwenden — das kostet nur Zeit.",
-				"Die Denkphase ist kein Ergebnis: Sie ersetzt weder Code noch Entscheidung.",
+			notes: [
+				"Max-Tokens grosszügig setzen: Zu kleine Limits schneiden die Antwort mitten in der Denkphase ab.",
+				"Temperatur um 0.6 lassen — niedriger bringt es aus dem Tritt.",
 			],
 			capabilities: ["reasoning", "longform"],
+			quality: "hoch",
+			speed: "langsam",
 			settings: { temperature: 0.6, maxTokens: 8192 },
 		},
 	},
@@ -218,21 +232,17 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 		test: /gpt-oss/,
 		profile: {
 			family: "GPT-OSS",
-			mission: "Du bist ein offenes GPT-Modell mit einstellbarer Denktiefe und solider Werkzeugnutzung.",
-			strengths: [
-				"Werkzeug- und Funktionsaufrufe (agentische Aufträge)",
-				"Analyse und Code auf gutem Niveau — lokal betrieben",
+			purpose: "Offenes GPT-Modell mit einstellbarer Denktiefe und verlässlicher Werkzeugnutzung.",
+			goodFor: [
+				"agentische Aufträge mit Werkzeug- und Funktionsaufrufen",
+				"Analyse und Code auf gutem Niveau, lokal betrieben",
 				"strukturierte Ausgaben, JSON",
 			],
-			usage: [
-				"Denktiefe zur Aufgabe wählen: knapp für Routine, hoch für Analyse.",
-				"Werkzeuge nutzen, statt Ergebnisse zu vermuten.",
-			],
-			limits: [
-				"Kein Wissen über Ereignisse nach dem Trainingsstand — Aktuelles nachschlagen.",
-				"Bei sehr grossen Kontexten auf die belegte GPU achten.",
-			],
+			notFor: ["Fragen zu aktuellen Ereignissen", "Betrieb auf kleiner Hardware"],
+			notes: ["Denktiefe zur Aufgabe wählen: knapp für Routine, hoch für Analyse."],
 			capabilities: ["reasoning", "code", "tools", "json"],
+			quality: "hoch",
+			speed: "mittel",
 			settings: { temperature: 0.7, maxTokens: 4096 },
 		},
 	},
@@ -240,22 +250,18 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 		test: /qwen/,
 		profile: {
 			family: "Qwen",
-			mission: "Du bist ein vielseitiges Allzweck-Modell mit starker Mehrsprachigkeit und gutem Code-Anteil.",
-			strengths: [
-				"allgemeine Aufgaben: erklären, zusammenfassen, umformulieren",
+			purpose: "Vielseitiges Allzweck-Modell mit starker Mehrsprachigkeit und solidem Code-Anteil.",
+			goodFor: [
+				"allgemeine Aufträge: erklären, zusammenfassen, umformulieren",
 				"Code und strukturierte Ausgaben (JSON)",
 				"Deutsch, Englisch und weitere Sprachen, auch Übersetzung",
-				"Werkzeugaufrufe in den neueren Ständen",
+				"Werkzeugaufrufe (ab Qwen 2.5)",
 			],
-			usage: [
-				"Aufgabe und gewünschte Ergebnisform klar benennen — das Modell hält sich gut an Formatvorgaben.",
-				"Für Code die Zielsprache und Version nennen.",
-			],
-			limits: [
-				"Nicht als Faktenquelle für Aktuelles verwenden.",
-				"Bei sehr langen Ketten von Schlussfolgerungen ein Reasoning-Modell vorziehen.",
-			],
+			notFor: ["Faktenfragen zu aktuellen Ereignissen", "sehr lange Ketten von Schlussfolgerungen"],
+			notes: ["Hält sich gut an Formatvorgaben — gewünschte Ergebnisform ausdrücklich nennen."],
 			capabilities: ["reasoning", "code", "json"],
+			quality: "hoch",
+			speed: "mittel",
 			settings: { temperature: 0.7, maxTokens: 4096 },
 		},
 	},
@@ -263,67 +269,54 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 		test: /llama[-\s]?[34]|llama3|meta-llama/,
 		profile: {
 			family: "Llama",
-			mission:
-				"Du bist ein solides Allzweck-Modell für Alltagsaufträge: erklären, entwerfen, formulieren, einfacher Code.",
-			strengths: [
+			purpose: "Solides Allzweck-Modell für Alltagsaufträge: erklären, entwerfen, formulieren.",
+			goodFor: [
 				"Unterhaltung, Erklärungen, Zusammenfassungen",
 				"Entwürfe für Texte, Konzepte und einfache Programme",
 				"Werkzeugaufrufe (ab 3.1) und JSON-Ausgaben",
 			],
-			usage: [
-				"Kurz und konkret anweisen; ein Beispiel für die Ergebnisform hilft spürbar.",
-				"Auf Deutsch antworten lassen, aber technische Begriffe englisch belassen.",
-			],
-			limits: [
-				"Bei anspruchsvollem Code oder tiefer Analyse ein Code- bzw. Reasoning-Modell vorziehen.",
-				"Kein Wissen über Aktuelles — Fakten belegen oder als offen kennzeichnen.",
-			],
+			notFor: ["anspruchsvoller Code", "tiefe mehrstufige Analyse", "Aktuelles"],
+			notes: ["Ein Beispiel für die gewünschte Ergebnisform hebt die Trefferquote spürbar."],
 			capabilities: ["reasoning", "tools", "json"],
+			quality: "mittel",
+			speed: "schnell",
 			settings: { temperature: 0.7, maxTokens: 4096 },
 		},
 	},
 	{
 		test: /mixtral/,
 		profile: {
-			family: "Mixtral (MoE)",
-			mission: "Du bist ein Mixture-of-Experts-Modell: breites Wissen bei moderater Rechenlast pro Antwort.",
-			strengths: [
+			family: "Mixtral (Mixture of Experts)",
+			purpose: "Breites Wissen bei moderater Rechenlast pro Antwort — dafür hoher Speicherbedarf.",
+			goodFor: [
 				"lange Texte verfassen und redigieren",
 				"europäische Sprachen, Übersetzung",
-				"allgemeine Analyse und Zusammenfassung grosser Eingaben",
+				"Analyse grosser Eingaben",
 			],
-			usage: [
-				"Gut für Aufträge mit viel Eingabetext — Kontextfenster ausnutzen.",
-				"Struktur vorgeben (Abschnitte, Reihenfolge), sonst schweift die Antwort aus.",
-			],
-			limits: [
-				"Hoher Speicherbedarf trotz moderater Rechenzeit — auf die belegte GPU achten.",
-				"Bei Code ein spezialisiertes Modell vorziehen.",
-			],
+			notFor: ["Code auf Spezialisten-Niveau", "Rechner mit knappem Speicher"],
+			notes: ["Struktur vorgeben (Abschnitte, Reihenfolge), sonst schweift die Antwort aus."],
 			capabilities: ["longform", "reasoning"],
+			quality: "mittel",
+			speed: "mittel",
 			settings: { temperature: 0.7, maxTokens: 4096 },
 		},
 	},
 	{
-		test: /mistral|ministral|nemo|devstral/,
+		test: /mistral|ministral|nemo/,
 		profile: {
 			family: "Mistral",
-			mission: "Du bist ein schnelles, sparsames Allzweck-Modell für kurze, klare Antworten.",
-			strengths: [
-				"schnelle Antworten bei kleinem Ressourcenbedarf",
+			purpose: "Schnelles, sparsames Allzweck-Modell für kurze, klare Antworten.",
+			goodFor: [
+				"häufige Routineaufträge mit knapper Antwort",
 				"Zusammenfassen, Umformulieren, Klassifizieren",
 				"Werkzeugaufrufe und JSON",
 				"Französisch, Deutsch, Englisch",
 			],
-			usage: [
-				"Für kurze, häufige Aufträge einsetzen — dort spielt es seine Geschwindigkeit aus.",
-				"Ergebnisform knapp vorgeben; es hält sich gut daran.",
-			],
-			limits: [
-				"Keine tiefen, mehrstufigen Analysen — dafür ist ein grösseres Modell zuständig.",
-				"Bei sehr langen Eingaben Qualität stichprobenartig prüfen.",
-			],
+			notFor: ["tiefe, mehrstufige Analysen", "sehr lange Eingaben"],
+			notes: ["Spielt seinen Vorteil bei vielen kurzen Aufträgen aus, nicht bei einem grossen."],
 			capabilities: ["tools", "json", "reasoning"],
+			quality: "mittel",
+			speed: "schnell",
 			settings: { temperature: 0.6, maxTokens: 3072 },
 		},
 	},
@@ -331,21 +324,17 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 		test: /gemma/,
 		profile: {
 			family: "Gemma",
-			mission: "Du bist ein kompaktes Modell für knappe, gut formulierte Antworten.",
-			strengths: [
+			purpose: "Kompaktes Modell für knappe, sauber formulierte Antworten.",
+			goodFor: [
 				"kurze Erklärungen und Zusammenfassungen",
-				"sauberer Sprachstil, auch auf Deutsch",
-				"günstig im Betrieb, läuft auf kleiner Hardware",
+				"guter Sprachstil, auch auf Deutsch",
+				"Betrieb auf kleiner Hardware",
 			],
-			usage: [
-				"Eine Aufgabe pro Anfrage — verkettete Aufträge verwässern das Ergebnis.",
-				"Länge und Form ausdrücklich vorgeben.",
-			],
-			limits: [
-				"Schwach bei Werkzeugaufrufen und langen Ketten von Schlussfolgerungen.",
-				"Für umfangreichen Code ein Code-Modell verwenden.",
-			],
+			notFor: ["Werkzeugaufrufe", "umfangreicher Code", "lange Ketten von Schlussfolgerungen"],
+			notes: ["Eine Aufgabe pro Anfrage; verkettete Aufträge verwässern das Ergebnis."],
 			capabilities: ["reasoning"],
+			quality: "mittel",
+			speed: "schnell",
 			settings: { temperature: 0.7, maxTokens: 2048 },
 		},
 	},
@@ -353,21 +342,17 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 		test: /phi-?[34]|phi3|phi4/,
 		profile: {
 			family: "Phi",
-			mission: "Du bist ein kleines Modell mit auffällig guter Logik für seine Grösse — knapp und sachlich.",
-			strengths: [
+			purpose: "Kleines Modell mit auffällig guter Logik für seine Grösse — knapp und sachlich.",
+			goodFor: [
 				"Logik- und Mathematikaufgaben im kleinen Rahmen",
 				"strukturierte, kurze Antworten",
 				"sehr geringer Ressourcenbedarf",
 			],
-			usage: [
-				"Aufgaben klein schneiden; Schritt für Schritt statt alles auf einmal.",
-				"Auf Englisch trainiert — deutsche Antworten prüfen, wenn Formulierung zählt.",
-			],
-			limits: [
-				"Wenig Weltwissen — keine Faktenfragen ohne Beleg.",
-				"Kein Werkzeugeinsatz und keine langen Texte.",
-			],
+			notFor: ["Faktenfragen — wenig Weltwissen", "Werkzeugaufrufe", "lange Texte"],
+			notes: ["Vorwiegend auf Englisch trainiert; deutsche Ausgaben gegenlesen."],
 			capabilities: ["reasoning"],
+			quality: "mittel",
+			speed: "schnell",
 			settings: { temperature: 0.4, maxTokens: 2048 },
 		},
 	},
@@ -375,19 +360,17 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 		test: /granite/,
 		profile: {
 			family: "Granite",
-			mission:
-				"Du bist ein auf Unternehmensaufgaben zugeschnittenes Modell: RAG, Werkzeuge, strukturierte Ausgaben.",
-			strengths: [
+			purpose: "Auf Unternehmensaufgaben zugeschnitten: RAG, Werkzeuge, feste Ausgabeschemata.",
+			goodFor: [
 				"Antworten strikt aus mitgelieferten Dokumenten (RAG)",
 				"Werkzeug- und Funktionsaufrufe",
-				"JSON und feste Ausgabeschemata",
+				"JSON nach Schema",
 			],
-			usage: [
-				"Quellen mitgeben und ausdrücklich verlangen, dass nur daraus geantwortet wird.",
-				"Fehlende Angaben als Lücke melden statt zu ergänzen.",
-			],
-			limits: ["Kein freies Weltwissen — ohne Quellen keine Faktenaussage.", "Kein kreatives Schreiben."],
+			notFor: ["freies Weltwissen ohne Quellen", "kreatives Schreiben"],
+			notes: ["Quellen mitgeben und verlangen, dass nur daraus geantwortet wird."],
 			capabilities: ["tools", "json", "longform"],
+			quality: "mittel",
+			speed: "mittel",
 			settings: { temperature: 0.4, maxTokens: 4096 },
 		},
 	},
@@ -395,38 +378,35 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 		test: /command-r|cohere/,
 		profile: {
 			family: "Command R",
-			mission:
-				"Du bist auf RAG und Werkzeugnutzung ausgelegt: Du antwortest belegt und rufst Werkzeuge auf, statt zu raten.",
-			strengths: [
+			purpose: "Auf RAG und Werkzeugnutzung ausgelegt: antwortet belegt statt aus dem Gedächtnis.",
+			goodFor: [
 				"belegte Antworten mit Quellenangabe aus grossem Kontext",
 				"mehrstufige Werkzeugaufrufe",
 				"Mehrsprachigkeit",
 			],
-			usage: [
-				"Dokumente mitgeben und Zitate mit Fundstelle verlangen.",
-				"Bei fehlender Quelle die Lücke benennen.",
-			],
-			limits: ["Kein kreatives Schreiben.", "Ohne Quellen keine Faktenaussage."],
+			notFor: ["kreatives Schreiben", "Faktenaussagen ohne mitgegebene Quellen"],
+			notes: ["Zitate mit Fundstelle verlangen; fehlende Belege als Lücke melden lassen."],
 			capabilities: ["tools", "longform", "json"],
+			quality: "hoch",
+			speed: "mittel",
 			settings: { temperature: 0.4, maxTokens: 4096 },
 		},
 	},
 	{
 		test: /aya|nllb|madlad|towerinstruct/,
 		profile: {
-			family: "Mehrsprachigkeit",
-			mission: "Du bist auf Sprachen und Übersetzung spezialisiert.",
-			strengths: [
+			family: "Übersetzungs-Modell",
+			purpose: "Auf Sprachen und Übersetzung spezialisiert.",
+			goodFor: [
 				"Übersetzung in und aus vielen Sprachen",
 				"Ton und Register beim Übersetzen halten",
 				"mehrsprachige Zusammenfassungen",
 			],
-			usage: [
-				"Ausgangs- und Zielsprache nennen, dazu den gewünschten Ton (formal/locker).",
-				"Fachbegriffe, die unübersetzt bleiben sollen, vorab auflisten.",
-			],
-			limits: ["Kein Code, keine tiefe Analyse.", "Fachtexte durch eine Fachperson prüfen lassen."],
+			notFor: ["Code", "tiefe Analyse"],
+			notes: ["Ausgangs- und Zielsprache sowie den Ton nennen; feste Fachbegriffe vorab auflisten."],
 			capabilities: ["longform"],
+			quality: "mittel",
+			speed: "schnell",
 			settings: { temperature: 0.4, maxTokens: 4096 },
 		},
 	},
@@ -434,41 +414,27 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 		test: /dolphin|hermes|nous-|openchat|zephyr|vicuna|orca|neural-chat|solar|tulu/,
 		profile: {
 			family: "Community-Feintuning",
-			mission:
-				"Du bist ein auf Anweisungstreue feinabgestimmtes Chat-Modell: Du hältst dich eng an Format und Rolle.",
-			strengths: [
-				"Rollen- und Formatvorgaben genau einhalten",
-				"Unterhaltung und Entwürfe",
-				"oft gute JSON-Treue",
-			],
-			usage: [
-				"Rolle und Ausgabeform präzise vorgeben — daraus zieht dieses Modell seinen Vorteil.",
-				"Ergebnisse stichprobenartig prüfen; Feintunings schwanken in der Qualität.",
-			],
-			limits: [
-				"Herkunft der Trainingsdaten ist selten dokumentiert — nicht für regulierte Inhalte.",
-				"Keine Faktenquelle.",
-			],
+			purpose: "Auf Anweisungstreue feinabgestimmtes Chat-Modell: hält sich eng an Rolle und Format.",
+			goodFor: ["genaue Rollen- und Formatvorgaben", "Unterhaltung und Entwürfe", "JSON-Treue"],
+			notFor: ["regulierte Inhalte — Trainingsdaten selten dokumentiert", "Faktenfragen"],
+			notes: ["Qualität schwankt je nach Feintuning; erste Ergebnisse stichprobenartig prüfen."],
 			capabilities: ["json", "reasoning"],
+			quality: "mittel",
+			speed: "schnell",
 			settings: { temperature: 0.7, maxTokens: 3072 },
 		},
 	},
 	{
-		test: /yi-|glm|internlm|baichuan|ernie/,
+		test: /yi-|glm|internlm|baichuan|ernie|kimi|moonshot/,
 		profile: {
 			family: "Allzweck (asiatische Familien)",
-			mission: "Du bist ein Allzweck-Modell mit grossem Kontextfenster und breitem Wissen.",
-			strengths: [
-				"lange Eingaben verarbeiten",
-				"Zusammenfassung und Analyse",
-				"Chinesisch und Englisch besonders stark",
-			],
-			usage: [
-				"Deutsche Ausgaben gegenlesen — die Sprachqualität schwankt.",
-				"Kontextfenster für Dokumentanalysen nutzen.",
-			],
-			limits: ["Nicht für deutschen Feinschliff.", "Keine Faktenquelle für Aktuelles."],
+			purpose: "Allzweck-Modell mit grossem Kontextfenster und breitem Wissen.",
+			goodFor: ["lange Eingaben verarbeiten", "Zusammenfassung und Analyse", "Chinesisch und Englisch"],
+			notFor: ["deutscher Feinschliff — Sprachqualität schwankt", "Aktuelles"],
+			notes: ["Kontextfenster für Dokumentanalysen nutzen; deutsche Ausgaben gegenlesen."],
 			capabilities: ["longform", "reasoning"],
+			quality: "mittel",
+			speed: "mittel",
 			settings: { temperature: 0.7, maxTokens: 4096 },
 		},
 	},
@@ -476,116 +442,116 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 		test: /deepseek/,
 		profile: {
 			family: "DeepSeek",
-			mission: "Du bist ein leistungsfähiges Allzweck-Modell mit besonderer Stärke bei Code und Analyse.",
-			strengths: [
+			purpose: "Leistungsfähiges Allzweck-Modell mit besonderer Stärke bei Code und Analyse.",
+			goodFor: [
 				"Code schreiben, prüfen und erklären",
 				"technische Analyse und Mathematik",
-				"gutes Preis-Leistungs-Verhältnis",
+				"gutes Verhältnis von Leistung zu Kosten",
 			],
-			usage: [
-				"Technische Aufträge mit vollständigem Kontext übergeben.",
-				"Ergebnisform vorgeben (Diff, Datei, JSON).",
-			],
-			limits: ["Kein Wissen über Aktuelles.", "Deutsche Formulierungen gegenlesen."],
+			notFor: ["Aktuelles", "deutschen Feinschliff ohne Gegenlesen"],
+			notes: ["Technische Aufträge mit vollständigem Kontext und klarer Ergebnisform übergeben."],
 			capabilities: ["code", "reasoning", "json"],
+			quality: "hoch",
+			speed: "mittel",
 			settings: { temperature: 0.4, maxTokens: 4096 },
 		},
 	},
 	{
 		test: /(^|\/)gpt-[45]|chatgpt/,
 		profile: {
-			family: "OpenAI GPT",
-			mission:
-				"Du bist ein starkes Allzweck-Modell aus der Cloud: breites Wissen, zuverlässige Werkzeugnutzung, saubere Formate.",
-			strengths: [
+			family: "OpenAI GPT (Cloud)",
+			purpose: "Starkes Allzweck-Modell aus der Cloud: breites Wissen, verlässliche Werkzeugnutzung.",
+			goodFor: [
 				"anspruchsvolle Analyse, Code und Fliesstext",
 				"Werkzeug- und Funktionsaufrufe, strukturierte Ausgaben",
 				"gutes Deutsch ohne Nachbearbeitung",
 			],
-			usage: [
-				"Für Aufträge einsetzen, an denen lokale Modelle scheitern — sonst lokal bleiben.",
-				"Kontext knapp halten: Jedes Token kostet.",
+			notFor: [
+				"vertrauliche Daten ohne Freigabe — Privacy-Modus `allow-cloud` nötig",
+				"Massenaufträge, die lokal genauso gut laufen",
 			],
-			limits: [
-				"Cloud-Modell: keine vertraulichen Daten ohne Freigabe (`allow-cloud`).",
-				"Kosten pro Auftrag im Blick behalten.",
-			],
+			notes: ["Kontext knapp halten: Jedes Token kostet."],
 			capabilities: ["reasoning", "code", "tools", "json", "longform"],
+			quality: "hoch",
+			speed: "mittel",
 			settings: { temperature: 0.7, maxTokens: 4096 },
 		},
 	},
 	{
 		test: /claude/,
 		profile: {
-			family: "Anthropic Claude",
-			mission:
-				"Du bist ein starkes Allzweck-Modell aus der Cloud mit besonderer Stärke bei langen Texten und Code.",
-			strengths: [
+			family: "Anthropic Claude (Cloud)",
+			purpose: "Starkes Cloud-Modell mit besonderer Stärke bei langen Texten, Code und Agentik.",
+			goodFor: [
 				"grosse Kontexte: ganze Dateien und Dokumente am Stück",
 				"Code schreiben und überarbeiten, agentische Abläufe",
 				"präzises, gut formuliertes Deutsch",
 			],
-			usage: [
-				"Ganze Dateien statt Ausschnitte übergeben — das Kontextfenster trägt es.",
-				"Ergebnisform und Umfang klar vorgeben.",
-			],
-			limits: [
-				"Cloud-Modell: keine vertraulichen Daten ohne Freigabe (`allow-cloud`).",
-				"Kosten pro Auftrag im Blick behalten.",
-			],
+			notFor: ["vertrauliche Daten ohne Freigabe (`allow-cloud`)", "Massenaufträge aus Kostengründen"],
+			notes: ["Ganze Dateien statt Ausschnitte übergeben — das Kontextfenster trägt es."],
 			capabilities: ["reasoning", "code", "tools", "json", "longform"],
+			quality: "hoch",
+			speed: "mittel",
 			settings: { temperature: 0.7, maxTokens: 4096 },
 		},
 	},
 	{
-		test: /gemini|gemma-?pro/,
+		test: /gemini/,
 		profile: {
-			family: "Google Gemini",
-			mission: "Du bist ein Cloud-Modell mit sehr grossem Kontextfenster und Bildverständnis.",
-			strengths: [
+			family: "Google Gemini (Cloud)",
+			purpose: "Cloud-Modell mit sehr grossem Kontextfenster und Bildverständnis.",
+			goodFor: [
 				"sehr lange Eingaben (ganze Repositories, Bücher)",
 				"Bild- und Dokumentanalyse",
-				"schnelle, günstige Varianten für Routine",
+				"günstige schnelle Varianten für Routine",
 			],
-			usage: [
-				"Grosse Dokumentmengen am Stück analysieren lassen.",
-				"Für Routine die schnelle Variante wählen, für Analyse die grosse.",
-			],
-			limits: [
-				"Cloud-Modell: keine vertraulichen Daten ohne Freigabe (`allow-cloud`).",
-				"Ausgabeformate schwanken — Format ausdrücklich vorgeben.",
-			],
+			notFor: ["vertrauliche Daten ohne Freigabe (`allow-cloud`)", "feste Ausgabeformate ohne Vorgabe"],
+			notes: ["Für Routine die schnelle Variante wählen, für Analyse die grosse."],
 			capabilities: ["longform", "vision", "reasoning", "json"],
+			quality: "hoch",
+			speed: "schnell",
 			settings: { temperature: 0.7, maxTokens: 4096 },
 		},
 	},
 	{
 		test: /sonar|perplexity/,
 		profile: {
-			family: "Web-Recherche",
-			mission: "Du recherchierst im Web und antwortest mit Quellenangabe.",
-			strengths: ["aktuelle Informationen inklusive Fundstellen", "Faktencheck und Marktüberblick"],
-			usage: ["Frage eng stellen und Quellenangabe verlangen.", "Zeitraum nennen, wenn Aktualität zählt."],
-			limits: [
-				"Cloud-Modell mit Web-Zugriff: keine vertraulichen Daten in der Anfrage.",
-				"Kein Code und keine lange Analyse.",
-			],
+			family: "Web-Recherche (Cloud)",
+			purpose: "Recherchiert im Web und antwortet mit Quellenangabe.",
+			goodFor: ["aktuelle Informationen samt Fundstellen", "Faktencheck, Marktüberblick"],
+			notFor: ["vertrauliche Daten — die Anfrage geht ins Web", "Code und lange Analyse"],
+			notes: ["Frage eng stellen, Zeitraum nennen, Quellenangabe verlangen."],
 			capabilities: ["longform"],
+			quality: "mittel",
+			speed: "mittel",
 			settings: { temperature: 0.3, maxTokens: 3072 },
 		},
 	},
 	{
 		test: /grok/,
 		profile: {
-			family: "xAI Grok",
-			mission: "Du bist ein Cloud-Allzweckmodell mit grossem Kontext und lockerem Ton.",
-			strengths: ["allgemeine Aufgaben und Code", "grosses Kontextfenster"],
-			usage: ["Ton ausdrücklich vorgeben, wenn es sachlich bleiben soll."],
-			limits: [
-				"Cloud-Modell: keine vertraulichen Daten ohne Freigabe (`allow-cloud`).",
-				"Ausgaben auf Sachlichkeit prüfen.",
-			],
+			family: "xAI Grok (Cloud)",
+			purpose: "Cloud-Allzweckmodell mit grossem Kontext und lockerem Ton.",
+			goodFor: ["allgemeine Aufträge und Code", "grosses Kontextfenster"],
+			notFor: ["vertrauliche Daten ohne Freigabe (`allow-cloud`)", "streng sachliche Ausgaben ohne Vorgabe"],
+			notes: ["Ton ausdrücklich vorgeben, wenn es nüchtern bleiben soll."],
 			capabilities: ["reasoning", "code", "longform"],
+			quality: "hoch",
+			speed: "mittel",
+			settings: { temperature: 0.7, maxTokens: 4096 },
+		},
+	},
+	{
+		test: /nemotron|nvidia/,
+		profile: {
+			family: "Nemotron",
+			purpose: "Auf Durchsatz optimiertes Allzweck-Modell mit gutem Anweisungsverhalten.",
+			goodFor: ["allgemeine Aufträge", "Werkzeugaufrufe", "Code auf mittlerem Niveau"],
+			notFor: ["Aktuelles", "sehr lange Ketten von Schlussfolgerungen"],
+			notes: ["Ergebnisform ausdrücklich vorgeben."],
+			capabilities: ["reasoning", "tools", "json"],
+			quality: "mittel",
+			speed: "schnell",
 			settings: { temperature: 0.7, maxTokens: 4096 },
 		},
 	},
@@ -594,21 +560,15 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 /** Wenn keine Familie greift — ehrlich unbestimmt statt falsch behauptet. */
 const GENERIC_PROFILE: ModelProfile = {
 	family: "Unbekannte Familie",
-	mission:
-		"Du bist ein allgemeines Sprachmodell. Der Zuschnitt dieses Modells ist im System nicht hinterlegt.",
-	strengths: [
-		"allgemeine Textaufgaben: erklären, zusammenfassen, umformulieren",
-		"Entwürfe, die anschliessend geprüft werden",
-	],
-	usage: [
-		"Aufgabe, Kontext und gewünschte Ergebnisform ausdrücklich benennen.",
-		"Ergebnisse der ersten Aufträge prüfen und dieses `plan.md` danach schärfen.",
-	],
-	limits: [
-		"Bis das Profil geprüft ist: keine Aufträge, bei denen ein Fehler teuer wird.",
-		"Keine Faktenaussage ohne Beleg.",
+	purpose: "Allgemeines Sprachmodell. Der Zuschnitt ist DiriZ nicht bekannt und sollte geprüft werden.",
+	goodFor: ["allgemeine Textaufgaben: erklären, zusammenfassen, umformulieren", "Entwürfe zum Nachprüfen"],
+	notFor: ["Aufträge, bei denen ein Fehler teuer wird — solange dieses Datenblatt ungeprüft ist"],
+	notes: [
+		"Erste Aufträge beobachten und dieses Dokument danach schärfen: Fähigkeiten und Qualitätsklasse wirken sofort im Routing.",
 	],
 	capabilities: [],
+	quality: "mittel",
+	speed: "mittel",
 	settings: { temperature: 0.7, maxTokens: 4096 },
 }
 
@@ -616,7 +576,7 @@ const GENERIC_PROFILE: ModelProfile = {
 
 /**
  * Parameterzahl in Milliarden aus dem Namen — `8b`, `1.5b`, `8x7b` (→ 56),
- * `120b`. `undefined`, wenn der Name nichts hergibt (Cloud-Modelle).
+ * `30b-a3b` (→ 30). `undefined`, wenn der Name nichts hergibt (Cloud).
  */
 export function parameterCount(name: string): number | undefined {
 	const m = name.toLowerCase().match(/(?:^|[^a-z0-9.])(\d+(?:\.\d+)?)(?:x(\d+(?:\.\d+)?))?\s*b(?![a-z0-9])/)
@@ -629,40 +589,54 @@ export function parameterCount(name: string): number | undefined {
 	return Number.isFinite(value) && value > 0 ? value : undefined
 }
 
-/** Grobe Klasse nach Parameterzahl — bestimmt, wie viel man dem Modell zumutet. */
-function sizeNote(params: number): { strength?: string; limit?: string } {
+/** Grössenklasse → was man dem Modell zumuten kann. */
+function sizeNote(params: number): { goodFor: string; notFor: string; quality: ModelQuality; speed: ModelSpeed } {
 	if (params <= 4) {
 		return {
-			strength: `sehr klein (${params} Mrd. Parameter) — schnell und sparsam, gut für Routine und Vorfilter`,
-			limit: "Aufträge klein schneiden: mehrstufige Analysen und lange Texte überfordern dieses Modell.",
+			goodFor: `sehr klein (${params} Mrd. Parameter): schnelle Routine, Vorfilter, Klassifikation`,
+			notFor: "mehrstufige Analysen und lange Texte — dafür fehlt die Kapazität",
+			quality: "niedrig",
+			speed: "schnell",
 		}
 	}
 	if (params <= 15) {
 		return {
-			strength: `mittlere Grösse (${params} Mrd. Parameter) — guter Kompromiss aus Tempo und Qualität`,
-			limit: "Bei schwierigen Aufträgen die Antwort gegenprüfen oder ein grösseres Modell wählen.",
+			goodFor: `mittlere Grösse (${params} Mrd. Parameter): guter Kompromiss aus Tempo und Qualität`,
+			notFor: "Aufträge, bei denen die erste Antwort ungeprüft übernommen wird",
+			quality: "mittel",
+			speed: "schnell",
 		}
 	}
 	if (params <= 40) {
 		return {
-			strength: `gross (${params} Mrd. Parameter) — belastbar auch bei anspruchsvollen Aufträgen`,
-			limit: "Braucht viel Speicher; parallele Aufträge auf demselben Rechner meiden.",
+			goodFor: `gross (${params} Mrd. Parameter): belastbar auch bei anspruchsvollen Aufträgen`,
+			notFor: "parallele Aufträge auf demselben Rechner — der Speicher reicht selten für zwei",
+			quality: "hoch",
+			speed: "mittel",
 		}
 	}
 	return {
-		strength: `sehr gross (${params} Mrd. Parameter) — höchste Qualität dieses Rechners`,
-		limit: "Langsam und speicherhungrig: nur für Aufträge, die es wirklich brauchen.",
+		goodFor: `sehr gross (${params} Mrd. Parameter): höchste Qualität auf diesem Rechner`,
+		notFor: "Aufträge unter Zeitdruck — Ladezeit und Rechenzeit sind erheblich",
+		quality: "hoch",
+		speed: "langsam",
 	}
 }
 
 /** Quantisierung → was sie in der Praxis bedeutet. */
-function quantizationLimit(quantization: string): string | undefined {
+function quantizationNote(quantization: string): { note: string; downgrade: boolean } | undefined {
 	const q = quantization.toLowerCase()
 	if (/q2|q3|iq[123]/.test(q)) {
-		return `Stark quantisiert (${quantization}): Ausgaben werden ungenauer — Zahlen, Namen und Code nachprüfen.`
+		return {
+			note: `Stark quantisiert (${quantization}): Ausgaben werden ungenauer — Zahlen, Namen und Code nachprüfen.`,
+			downgrade: true,
+		}
 	}
 	if (/q4/.test(q)) {
-		return `Quantisiert (${quantization}): guter Kompromiss, bei exakten Zahlen und Zitaten trotzdem nachprüfen.`
+		return {
+			note: `Quantisiert (${quantization}): guter Kompromiss; bei exakten Zahlen und Zitaten trotzdem nachprüfen.`,
+			downgrade: false,
+		}
 	}
 	return undefined
 }
@@ -678,54 +652,64 @@ function withUnique<T>(list: T[], ...additions: (T | undefined)[]): T[] {
 	return out
 }
 
+/** Eine Stufe schlechter — für stark quantisierte oder sehr kleine Modelle. */
+function downgrade(quality: ModelQuality): ModelQuality {
+	return quality === "hoch" ? "mittel" : "niedrig"
+}
+
 /**
- * Das Profil zu einem Modell: Familie über den Namen, danach ergänzt um das,
- * was Parameterzahl, Kontextfenster, Quantisierung und Preis verraten.
+ * Das Datenblatt zu einem Modell: Familie über den Namen, danach ergänzt um
+ * das, was Parameterzahl, Kontextfenster, Quantisierung und Preis verraten.
  *
  * Vom Provider gemeldete Fähigkeiten gewinnen immer — sie sind gemessen, das
  * Profil ist geraten.
  */
 export function profileForModel(identity: ModelIdentity): ModelProfile {
 	const haystack = `${identity.modelId} ${identity.displayName ?? ""}`.toLowerCase()
-	const matched = MODEL_FAMILIES.find((rule) => rule.test.test(haystack))?.profile
-	const base = matched ?? GENERIC_PROFILE
+	const base = MODEL_FAMILIES.find((rule) => rule.test.test(haystack))?.profile ?? GENERIC_PROFILE
+	const isTool = base.capabilities.length === 0 && base.quality === "niedrig" // Embedding/Reranker
 
-	const strengths = [...base.strengths]
-	const limits = [...base.limits]
+	const goodFor = [...base.goodFor]
+	const notFor = [...base.notFor]
+	const notes = [...base.notes]
 	let capabilities = [...base.capabilities]
+	let quality = base.quality
+	let speed = base.speed
 
 	const params = parameterCount(haystack)
-	if (params !== undefined) {
+	if (params !== undefined && !isTool) {
 		const note = sizeNote(params)
-		strengths.push(...(note.strength ? [note.strength] : []))
-		limits.push(...(note.limit ? [note.limit] : []))
+		goodFor.push(note.goodFor)
+		notFor.push(note.notFor)
+		speed = note.speed
+		// Die Familie sagt, wofür das Modell taugt; die Grösse begrenzt es.
+		if (note.quality === "niedrig" || (note.quality === "mittel" && quality === "hoch")) {
+			quality = note.quality
+		}
 	}
 
 	const ctx = identity.contextWindow
-	if (ctx !== undefined && ctx > 0) {
+	if (ctx !== undefined && ctx > 0 && !isTool) {
 		if (ctx >= 32768) {
-			strengths.push(
-				`grosses Kontextfenster (${Math.round(ctx / 1024)}k Token) — ganze Dateien und Dokumente am Stück`,
-			)
+			goodFor.push(`grosses Kontextfenster (${kTokens(ctx)}): ganze Dateien und Dokumente am Stück`)
 			capabilities = withUnique(capabilities, "longform")
 		} else if (ctx <= 8192) {
-			limits.push(
-				`Kleines Kontextfenster (${Math.round(ctx / 1024)}k Token): lange Eingaben vorher kürzen oder aufteilen.`,
-			)
+			notFor.push(`lange Eingaben — das Kontextfenster fasst nur ${kTokens(ctx)}`)
 			capabilities = capabilities.filter((c) => c !== "longform")
 		}
 	}
 
-	const quantLimit = identity.quantization ? quantizationLimit(identity.quantization) : undefined
-	if (quantLimit) {
-		limits.push(quantLimit)
+	const quant = identity.quantization ? quantizationNote(identity.quantization) : undefined
+	if (quant) {
+		notes.push(quant.note)
+		if (quant.downgrade) {
+			quality = downgrade(quality)
+		}
 	}
 
 	const price = identity.pricePerMTok
 	if (price && (price.in > 0 || price.out > 0)) {
-		limits.push(
-			`Kostet Geld (${price.in} $ ein / ${price.out} $ aus je Mio. Token): Kontext knapp halten, Routine lokal erledigen.`,
-		)
+		notes.push("Kostet Geld: Kontext knapp halten und Routine lokal erledigen.")
 	}
 
 	// Gemessen schlägt geraten.
@@ -733,81 +717,239 @@ export function profileForModel(identity: ModelIdentity): ModelProfile {
 		capabilities = withUnique(capabilities, ...identity.capabilities)
 	}
 
-	return { ...base, strengths, limits, capabilities, settings: { ...base.settings } }
+	return { ...base, goodFor, notFor, notes, capabilities, quality, speed, settings: { ...base.settings } }
+}
+
+function kTokens(contextWindow: number): string {
+	return contextWindow >= 1024 ? `${Math.round(contextWindow / 1024)}k Token` : `${contextWindow} Token`
+}
+
+/* --------------------------------- llm.md ------------------------------------ */
+
+/**
+ * Schreibt das Datenblatt. Aufbau und Schlüsselwörter sind der Kontrakt mit
+ * `parseLlmDoc`: `parseLlmDoc(renderLlmDoc(x))` liefert die Angaben zurück.
+ */
+export function renderLlmDoc(identity: ModelIdentity, isoDate: string): string {
+	const profile = profileForModel(identity)
+	const name = identity.displayName || identity.modelId
+	const params = parameterCount(`${identity.modelId} ${identity.displayName ?? ""}`)
+	const price = identity.pricePerMTok
+
+	const lines: string[] = [
+		`# llm.md — ${name}`,
+		"",
+		`**Erstellt am:** ${isoDate.slice(0, 10)}`,
+		"",
+		"Technisches Datenblatt dieses Modells. DiriZ liest es aus und rechnet es in die",
+		"Orchestrierung ein: **Fähigkeiten** und **Kontext-Fenster** sind harte Gates,",
+		"die **Qualitätsklasse** ist der Startwert der Qualitäts-Achse. Die Angaben unten",
+		"stammen aus dem Modell-Katalog und sind eine Vermutung anhand des Modellnamens —",
+		"korrigiere sie hier, sobald du das Modell im Einsatz gesehen hast.",
+		"",
+		"## Steckbrief",
+		"",
+		`- Modell-ID: ${identity.modelId}`,
+		`- Familie: ${profile.family}`,
+	]
+	if (params !== undefined) {
+		lines.push(`- Parameter: ${params} Mrd.`)
+	}
+	lines.push(`- Kontext-Fenster: ${identity.contextWindow ?? "—"}`)
+	if (identity.quantization) {
+		lines.push(`- Quantisierung: ${identity.quantization}`)
+	}
+	lines.push(
+		`- Preis: ${price && (price.in > 0 || price.out > 0) ? `${price.in} $ ein / ${price.out} $ aus je Mio. Token` : "lokal (keine Kosten)"}`,
+	)
+	if (identity.languages?.length) {
+		lines.push(`- Sprachen: ${identity.languages.join(", ")}`)
+	}
+	lines.push(
+		`- Qualitätsklasse: ${profile.quality}`,
+		`- Tempo: ${profile.speed}`,
+		"",
+		"## Zweck",
+		"",
+		profile.purpose,
+		"",
+		"## Fähigkeiten",
+		"",
+	)
+	lines.push(
+		...(profile.capabilities.length > 0
+			? profile.capabilities.map((c) => `- ${c}`)
+			: ["- keine (dieses Modell beantwortet keine Aufträge)"]),
+	)
+	lines.push(
+		"",
+		"## Gut für",
+		"",
+		...profile.goodFor.map((s) => `- ${s}`),
+		"",
+		"## Nicht geeignet für",
+		"",
+		...profile.notFor.map((s) => `- ${s}`),
+		"",
+		"## Hinweise",
+		"",
+		...profile.notes.map((s) => `- ${s}`),
+		"",
+	)
+	return lines.join("\n")
+}
+
+/* ------------------------------ Parser (wirksam) ----------------------------- */
+
+function normalizeKey(key: string): string {
+	return key
+		.toLowerCase()
+		.replace(/\(.*?\)/g, "")
+		.replace(/[^a-zäöüß0-9]/g, "")
+}
+
+/** Entfernt Listenpunkt, Fettung und Backticks. */
+function stripMarkdown(line: string): string {
+	return line
+		.replace(/^\s*(?:[-*+]|\d+\.)\s+/, "")
+		.replace(/[*_`]/g, "")
+		.replace(/^#+\s*/, "")
+		.trim()
+}
+
+function isEmptyValue(raw: string): boolean {
+	const v = raw.trim()
+	return v.length === 0 || /^[-—–?]$/.test(v) || /^\{\{.*\}\}$/.test(v) || /^(keine?|unbekannt)$/i.test(v)
+}
+
+/** „32768", „32k", „128 000" → Zahl. */
+function parseNumber(raw: string): number | undefined {
+	const cleaned = raw.trim().replace(/[\s'.](?=\d{3}\b)/g, "").replace(/,(?=\d)/, ".")
+	const m = cleaned.match(/^(-?\d+(?:\.\d+)?)\s*([kK])?/)
+	if (!m) {
+		return undefined
+	}
+	const value = Number(m[1]) * (m[2] ? 1024 : 1)
+	return Number.isFinite(value) ? value : undefined
+}
+
+const SECTION_KEYS: Record<string, "capabilities" | "goodFor" | "notFor"> = {
+	fähigkeiten: "capabilities",
+	fahigkeiten: "capabilities",
+	capabilities: "capabilities",
+	gutfür: "goodFor",
+	gutfur: "goodFor",
+	geeignetfür: "goodFor",
+	geeignetfur: "goodFor",
+	stärken: "goodFor",
+	starken: "goodFor",
+	nichtgeeignetfür: "notFor",
+	nichtgeeignetfur: "notFor",
+	nichtgutfür: "notFor",
+	nichtgutfur: "notFor",
+	schwächen: "notFor",
+	schwachen: "notFor",
+	grenzen: "notFor",
+}
+
+/**
+ * Liest das Datenblatt zurück.
+ *
+ * Erkannt wird jede Zeile `Schlüssel: Wert` im Steckbrief sowie die
+ * Aufzählungen unter `## Fähigkeiten`, `## Gut für` und
+ * `## Nicht geeignet für`. Alles andere ist Fliesstext und wird ignoriert —
+ * das Dokument bleibt für Menschen frei beschreibbar.
+ */
+export function parseLlmDoc(markdown: string): ModelSpec {
+	const spec: ModelSpec = { languages: [], capabilities: [], goodFor: [], notFor: [] }
+	let section: "capabilities" | "goodFor" | "notFor" | undefined
+
+	for (const rawLine of (markdown ?? "").split(/\r?\n/)) {
+		const heading = rawLine.match(/^\s*#{1,6}\s+(.*)$/)
+		if (heading) {
+			section = SECTION_KEYS[normalizeKey(heading[1] ?? "")]
+			continue
+		}
+
+		const line = stripMarkdown(rawLine)
+		if (line.length === 0) {
+			continue
+		}
+
+		const pair = line.match(/^([^:=]{1,40})\s*[:=]\s*(.*)$/)
+		if (pair && !isEmptyValue(pair[2] ?? "")) {
+			const key = normalizeKey(pair[1] ?? "")
+			const value = (pair[2] ?? "").trim()
+			if (key === "familie" || key === "family") {
+				spec.family = value
+			} else if (key === "parameter" || key === "parameters") {
+				spec.parameters = parseNumber(value)
+			} else if (key === "kontextfenster" || key === "kontext" || key === "contextwindow") {
+				spec.contextWindow = parseNumber(value)
+			} else if (key === "quantisierung" || key === "quantization") {
+				spec.quantization = value
+			} else if (key === "sprachen" || key === "languages") {
+				spec.languages = value.split(",").map((x) => x.trim()).filter((x) => x.length > 0)
+			} else if (key === "qualitätsklasse" || key === "qualitatsklasse" || key === "qualität" || key === "qualitat") {
+				const q = value.toLowerCase()
+				spec.quality = q.startsWith("hoch") ? "hoch" : q.startsWith("niedrig") ? "niedrig" : "mittel"
+			} else if (key === "tempo" || key === "speed") {
+				const s = value.toLowerCase()
+				spec.speed = s.startsWith("schnell") ? "schnell" : s.startsWith("langsam") ? "langsam" : "mittel"
+			} else if (key === "fähigkeiten" || key === "fahigkeiten" || key === "capabilities") {
+				// Auch die Einzeiler-Schreibweise „Fähigkeiten: code, json".
+				for (const part of value.split(",")) {
+					const cap = part.trim().toLowerCase() as Capability
+					if (CAPABILITY_VALUES.includes(cap) && !spec.capabilities.includes(cap)) {
+						spec.capabilities.push(cap)
+					}
+				}
+			}
+			// Ein `Schlüssel: Wert` beendet keine Aufzählung — Steckbrief und
+			// Abschnitte stehen nie im selben Block.
+			continue
+		}
+
+		if (!section) {
+			continue
+		}
+		if (section === "capabilities") {
+			const cap = line.toLowerCase().split(/[\s,(]/)[0] as Capability
+			if (CAPABILITY_VALUES.includes(cap) && !spec.capabilities.includes(cap)) {
+				spec.capabilities.push(cap)
+			}
+			continue
+		}
+		if (!isEmptyValue(line)) {
+			spec[section].push(line)
+		}
+	}
+	return spec
+}
+
+/** Startwert der Qualitäts-Achse aus dem Datenblatt (Default: `mittel`). */
+export function qualityPriorOf(spec: ModelSpec | undefined): number {
+	return QUALITY_PRIOR[spec?.quality ?? "mittel"]
 }
 
 /* -------------------------------- Dokumente ---------------------------------- */
 
-/** Kopfzeile mit den harten Fakten — steht im `plan.md` über dem Auftrag. */
-function profileFacts(identity: ModelIdentity, profile: ModelProfile): string {
-	const parts = [profile.family]
-	const params = parameterCount(`${identity.modelId} ${identity.displayName ?? ""}`)
-	if (params !== undefined) {
-		parts.push(`${params} Mrd. Parameter`)
-	}
-	if (identity.contextWindow) {
-		parts.push(`${Math.round(identity.contextWindow / 1024)}k Kontext`)
-	}
-	if (identity.quantization) {
-		parts.push(identity.quantization)
-	}
-	if (identity.pricePerMTok && (identity.pricePerMTok.in > 0 || identity.pricePerMTok.out > 0)) {
-		parts.push(`${identity.pricePerMTok.in}/${identity.pricePerMTok.out} $ je Mio. Token`)
-	}
-	return parts.join(" · ")
-}
-
 /**
- * `plan.md` einer LLM-Instanz — dieselbe Gliederung wie die Vorlage
- * (`defaultDoc`), aber ausgefüllt. `extractDirective` macht daraus die
- * verbindliche Arbeitsanweisung im System-Prompt.
+ * Die Startdokumente einer LLM-Instanz — befüllt statt leere Vorlage.
+ * Das `changelog.md` hält fest, dass das Profil geraten und ungeprüft ist.
  */
-export function renderInstancePlan(identity: ModelIdentity, isoDate: string): string {
-	const profile = profileForModel(identity)
-	const name = identity.displayName || identity.modelId
-	return [
-		`# plan.md — ${name}`,
-		"",
-		`**Erstellt am:** ${isoDate.slice(0, 10)}`,
-		"",
-		`Profil: ${profileFacts(identity, profile)}`,
-		"",
-		"## 1. Auftrag",
-		"",
-		profile.mission,
-		"",
-		"Dafür wird dieses Modell gerufen:",
-		"",
-		...profile.strengths.map((s) => `- ${s}`),
-		"",
-		"## 2. Vorgehen",
-		"",
-		...profile.usage.map((s) => `- ${s}`),
-		"",
-		"## 3. Leitplanken",
-		"",
-		...profile.limits.map((s) => `- ${s}`),
-		"",
-	].join("\n")
-}
-
-/**
- * Die drei Startdokumente einer LLM-Instanz — befüllt statt Vorlage.
- * `changelog.md` hält fest, woher das Profil stammt: Es ist geraten, und wer
- * es später korrigiert, soll sehen, dass es niemand geprüft hat.
- */
-export function instanceProfileDocs(identity: ModelIdentity, isoDate: string): Record<AgentDocKind, string> {
+export function instanceDocs(identity: ModelIdentity, isoDate: string): Partial<Record<AgentDocKind, string>> {
 	const profile = profileForModel(identity)
 	const name = identity.displayName || identity.modelId
 	const day = isoDate.slice(0, 10)
 	return {
-		plan: renderInstancePlan(identity, isoDate),
+		llm: renderLlmDoc(identity, isoDate),
 		changelog: [
 			`# changelog.md — ${name}`,
 			"",
 			"Änderungsprotokoll (neueste Einträge oben).",
 			"",
-			`- ${day} — Modell angelegt, Profil „${profile.family}" aus dem Modell-Katalog übernommen (ungeprüft)`,
+			`- ${day} — Modell entdeckt, Datenblatt „${profile.family}" aus dem Modell-Katalog übernommen (ungeprüft)`,
 			"",
 		].join("\n"),
 		init: renderInitDoc(profile.settings, name),

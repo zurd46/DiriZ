@@ -3220,15 +3220,39 @@ pre.code {
 	font-size: var(--fs-sm);
 }
 
-/* Fester Fuss der Spalte — nicht mehr klebend, dadurch keine Überlappung. */
+/*
+ * Fester Fuss der Spalte — nicht mehr klebend, dadurch keine Überlappung.
+ * Bewusst flach gehalten: Jede Zeile hier fehlt dem Verlauf. Die Erklärung
+ * zur Zielwahl steckt deshalb im Tooltip, und Senden sitzt neben der Eingabe
+ * statt in einer eigenen Zeile darunter.
+ */
 .chat-composer {
 	flex: none;
 	display: flex;
 	flex-direction: column;
 	gap: var(--sp-2);
-	margin-top: var(--sp-4);
-	padding: var(--sp-3) var(--sp-4);
+	margin-top: var(--sp-3);
+	padding: var(--sp-3);
 	background: var(--surface);
+}
+
+.chat-input-row {
+	display: flex;
+	align-items: stretch;
+	gap: var(--sp-2);
+}
+
+.chat-input-row textarea {
+	flex: 1;
+	min-height: 52px;
+	max-height: 180px;
+	resize: vertical;
+}
+
+.chat-send {
+	flex: none;
+	align-self: stretch;
+	padding-inline: var(--sp-4);
 }
 
 .chat-targets {
@@ -3250,6 +3274,11 @@ pre.code {
 	display: flex;
 	justify-content: flex-end;
 	gap: var(--sp-2);
+}
+
+.chat-targets .btn.sm {
+	padding: 3px var(--sp-3);
+	font-size: var(--fs-sm);
 }
 
 .btn.sm {

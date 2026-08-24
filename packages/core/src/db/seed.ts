@@ -28,6 +28,7 @@ import type { Db } from "./connection.js"
 import {
 	createAgent,
 	createSwarm,
+	deleteAgent,
 	getAgent,
 	getSetting,
 	getSwarm,
@@ -71,6 +72,45 @@ function seedAgent(db: Db, bp: AgentBlueprint, now: string): void {
 		enabled: true,
 		docs: blueprintDocs(bp, now),
 	})
+}
+
+/**
+ * Entfernt Katalog-Spezialisten, die es im Katalog nicht mehr gibt.
+ *
+ * Angefasst wird nur, was **nie bearbeitet** wurde und an **keiner Task**
+ * hängt — alles andere gehört dem Nutzer, auch wenn der Katalog es nicht mehr
+ * vorsieht. Ohne diesen Schritt bliebe ein einmal verkleinertes Team für immer
+ * gross: Das Seeding legt nur an, es räumt nicht auf.
+ */
+export function retireCatalogAgents(db: Db): string[] {
+	const gueltig = new Set(SOFTWARE_TEAM.map((bp) => blueprintAgentId(bp.slug)))
+	const entfernt: string[] = []
+	for (const agent of listAgents(db)) {
+		if (!agent.id.startsWith("agent-") || gueltig.has(agent.id)) {
+			continue
+		}
+		if (agent.updatedAt !== agent.createdAt) {
+			continue
+		}
+		const benutzt = (
+			db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE agent_id = ?").get(agent.id) as { n: number }
+		).n
+		if (benutzt > 0) {
+			continue
+		}
+		deleteAgent(db, agent.id)
+		entfernt.push(agent.name)
+	}
+	if (entfernt.length > 0) {
+		// Verwaiste Mitglieder aus allen Swarms werfen — auch aus selbst gebauten.
+		for (const swarm of listSwarms(db)) {
+			const rest = swarm.agentIds.filter((id) => getAgent(db, id) !== undefined)
+			if (rest.length !== swarm.agentIds.length) {
+				updateSwarm(db, swarm.id, { agentIds: rest })
+			}
+		}
+	}
+	return entfernt
 }
 
 /**

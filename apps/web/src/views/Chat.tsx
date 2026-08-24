@@ -633,8 +633,6 @@ export default function Chat() {
 		setInput("")
 	}
 
-	const activeTarget = TARGETS.find((t) => t.id === target)
-
 	return (
 		<div className="fade-in chat-view">
 			<div className="page-head">
@@ -904,9 +902,12 @@ export default function Chat() {
 								<button
 									key={t.id}
 									type="button"
-									className={`btn ${target === t.id ? "primary" : ""}`}
+									className={`btn sm ${target === t.id ? "primary" : ""}`}
 									onClick={() => setTarget(t.id)}
 									aria-pressed={target === t.id}
+									// Die Erklärung als Tooltip statt als Dauerzeile: Sie kostete
+									// drei Zeilen Höhe und sagte immer dasselbe.
+									title={t.hint}
 								>
 									{t.id === "answer" && <IconChat size={14} />}
 									{t.id === "workspace" && <IconWorkspace size={14} />}
@@ -942,7 +943,6 @@ export default function Chat() {
 								Verlauf mitsenden
 							</label>
 						</div>
-						{activeTarget && <p className="field-hint">{activeTarget.hint}</p>}
 						{target === "answer" && NEEDS_FILES.test(input) && (
 							<div className="chat-nudge">
 								<IconAlert size={14} />
@@ -960,24 +960,25 @@ export default function Chat() {
 								</button>
 							</div>
 						)}
-						<textarea
-							value={input}
-							onChange={(e) => setInput(e.target.value)}
-							onKeyDown={(e) => {
-								if (e.key === "Enter" && !e.shiftKey) {
-									e.preventDefault()
-									void send()
-								}
-							}}
-							rows={2}
-							placeholder="Aufgabe beschreiben … (Enter sendet, Umschalt+Enter macht eine neue Zeile)"
-						/>
-						<div className="chat-actions">
+						<div className="chat-input-row">
+							<textarea
+								value={input}
+								onChange={(e) => setInput(e.target.value)}
+								onKeyDown={(e) => {
+									if (e.key === "Enter" && !e.shiftKey) {
+										e.preventDefault()
+										void send()
+									}
+								}}
+								rows={2}
+								placeholder="Aufgabe beschreiben … (Enter sendet, Umschalt+Enter neue Zeile)"
+							/>
 							<button
 								type="button"
-								className="btn primary"
+								className="btn primary chat-send"
 								onClick={() => void send()}
 								disabled={busy || !connected || input.trim().length === 0}
+								title="Senden (Enter)"
 							>
 								<IconPlay size={14} />
 								Senden

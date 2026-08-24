@@ -12,7 +12,12 @@ import { loadConfig } from "./config.js"
 import { openDatabase } from "./db/connection.js"
 import { migrate } from "./db/migrate.js"
 import { getRepo, getSetting, persistLog, providerApiKeyEnc, setTaskRepo } from "./db/repositories.js"
-import { refreshCatalogAgents, refreshCatalogSwarms, seedTeamCatalog } from "./db/seed.js"
+import {
+	refreshCatalogAgents,
+	refreshCatalogSwarms,
+	retireCatalogAgents,
+	seedTeamCatalog,
+} from "./db/seed.js"
 import { EventBus } from "./execution/bus.js"
 import { ExecutionEngine } from "./execution/engine.js"
 import { taskWorktreePath } from "./execution/worktree.js"
@@ -31,6 +36,7 @@ async function main(): Promise<void> {
 	const seeded = seedTeamCatalog(db)
 	refreshCatalogSwarms(db)
 	const refreshedAgents = refreshCatalogAgents(db)
+	const retiredAgents = retireCatalogAgents(db)
 	const secret = loadOrCreateSecret(config.dataDir)
 
 	const bus = new EventBus()
@@ -158,6 +164,13 @@ async function main(): Promise<void> {
 		"core",
 		`DiriZ Core läuft auf http://${config.host}:${config.port} (Schema v${schemaVersion}, Data: ${config.dataDir})`,
 	)
+	if (retiredAgents.length > 0) {
+		log(
+			"info",
+			"core",
+			`Team-Katalog: ${retiredAgents.length} nicht mehr vorgesehene(r) Spezialist(en) entfernt`,
+		)
+	}
 	if (refreshedAgents.length > 0) {
 		log("info", "core", `Team-Katalog: ${refreshedAgents.length} unveränderte Spezialist(en) aktualisiert`)
 	}

@@ -9,7 +9,45 @@
  * **fett**, *kursiv*, `Code` und Links.
  */
 
-import type { ReactNode } from "react"
+import { type ReactNode, useState } from "react"
+
+/* -------------------------------- Code-Block -------------------------------- */
+
+/**
+ * Code bekommt einen eigenen Rahmen mit Sprache und Kopier-Knopf. Ohne den
+ * Knopf markiert man Code in einem scrollenden Verlauf von Hand — und erwischt
+ * regelmässig zu viel oder zu wenig.
+ */
+function CodeBlock({ lang, code }: { lang?: string; code: string }) {
+	const [copied, setCopied] = useState(false)
+
+	const copy = () => {
+		navigator.clipboard
+			?.writeText(code)
+			.then(() => {
+				setCopied(true)
+				setTimeout(() => setCopied(false), 1500)
+			})
+			.catch(() => {
+				// Ohne Zwischenablage-Recht (z. B. unsicherer Kontext) bleibt der
+				// Code sichtbar und markierbar — kein Grund für eine Fehlermeldung.
+			})
+	}
+
+	return (
+		<div className="code-block">
+			<div className="code-head">
+				<span className="code-lang">{lang ?? "Code"}</span>
+				<button type="button" className="btn ghost sm" onClick={copy}>
+					{copied ? "kopiert" : "kopieren"}
+				</button>
+			</div>
+			<pre className="md-pre">
+				<code>{code}</code>
+			</pre>
+		</div>
+	)
+}
 
 /* --------------------------------- Inline ----------------------------------- */
 
@@ -116,11 +154,7 @@ export default function Markdown({ source }: { source: string }) {
 		const fenceMatch = raw.match(/^\s*```(.*)$/)
 		if (fenceMatch) {
 			if (fence) {
-				blocks.push(
-					<pre key={`c-${blocks.length}`} className="md-pre">
-						<code>{fence.lines.join("\n")}</code>
-					</pre>,
-				)
+				blocks.push(<CodeBlock key={`c-${blocks.length}`} lang={fence.lang} code={fence.lines.join("\n")} />)
 				fence = null
 			} else {
 				flushAll()
@@ -201,12 +235,9 @@ export default function Markdown({ source }: { source: string }) {
 		paragraph.push(raw.trim())
 	}
 
+	// Noch offener Code-Block (Stream läuft mitten im Block) — trotzdem zeigen.
 	if (fence) {
-		blocks.push(
-			<pre key={`c-${blocks.length}`} className="md-pre">
-				<code>{fence.lines.join("\n")}</code>
-			</pre>,
-		)
+		blocks.push(<CodeBlock key={`c-${blocks.length}`} lang={fence.lang} code={fence.lines.join("\n")} />)
 	}
 	flushAll()
 

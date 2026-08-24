@@ -276,6 +276,38 @@ describe("api: Settings, Export & Import", () => {
 	})
 })
 
+describe("api: Chat-Verlauf", () => {
+	it("gruppiert Chat-Nachrichten zu Gesprächen — der Verlauf lebt in der Datenbank", async () => {
+		const chatId = "chat-test-1"
+		for (const prompt of ["Erste Frage", "Zweite Frage"]) {
+			const res = await app.inject({
+				method: "POST",
+				url: "/api/tasks",
+				payload: { title: prompt, prompt, metadata: { chatId, privacy: "local-only" } },
+			})
+			expect(res.statusCode).toBe(201)
+		}
+		// Eine Task ohne chatId gehört zu keinem Gespräch.
+		await app.inject({ method: "POST", url: "/api/tasks", payload: { prompt: "Ohne Chat" } })
+
+		const res = await app.inject({ method: "GET", url: "/api/chats" })
+		expect(res.statusCode).toBe(200)
+		const chats = res.json() as { chatId: string; title: string; turns: { prompt: string }[] }[]
+		const chat = chats.find((c) => c.chatId === chatId)
+		expect(chat).toBeDefined()
+		expect(chat?.title).toBe("Erste Frage")
+		// Innerhalb eines Gesprächs chronologisch — sonst läse es sich rückwärts.
+		expect(chat?.turns.map((t) => t.prompt)).toEqual(["Erste Frage", "Zweite Frage"])
+		expect(chats.every((c) => c.chatId)).toBe(true)
+	})
+
+	it("filtert auf ein einzelnes Gespräch", async () => {
+		const res = await app.inject({ method: "GET", url: "/api/chats?chatId=chat-test-1" })
+		const chats = res.json() as { chatId: string }[]
+		expect(chats.map((c) => c.chatId)).toEqual(["chat-test-1"])
+	})
+})
+
 describe("api: Parallelitäts- und GPU-Grenzen", () => {
 	it("liefert Vorgaben und speichert geänderte Grenzen", async () => {
 		const before = await app.inject({ method: "GET", url: "/api/settings" })

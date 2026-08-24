@@ -24,6 +24,12 @@ export interface TaskMetadata {
 	preferredModelId?: string
 	/** M8 Agentik: Modell darf Datei-Tools (read/write/list) in der Sandbox nutzen. */
 	agentMode?: boolean
+	/**
+	 * Gesprächs-ID der Chat-Ansicht. Jede Chat-Nachricht ist eine gewöhnliche
+	 * Task; diese ID fasst sie zu einem Gespräch zusammen. Damit ist der
+	 * Verlauf die Datenbank selbst — nichts wird im Browser dupliziert.
+	 */
+	chatId?: string
 }
 
 export interface Task {

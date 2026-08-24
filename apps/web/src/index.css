@@ -2906,6 +2906,186 @@ pre.code {
 	min-height: calc(100vh - 140px);
 }
 
+/* Verlauf links, Unterhaltung rechts — unter 900 px gestapelt. */
+.chat-layout {
+	flex: 1;
+	display: grid;
+	grid-template-columns: 240px minmax(0, 1fr);
+	gap: var(--sp-4);
+	min-height: 0;
+}
+
+@media (max-width: 900px) {
+	.chat-layout {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.chat-history {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-1);
+	max-height: calc(100vh - 220px);
+	overflow-y: auto;
+	padding-right: var(--sp-1);
+	border-right: 1px solid var(--border-soft);
+}
+
+@media (max-width: 900px) {
+	.chat-history {
+		max-height: 200px;
+		border-right: none;
+		border-bottom: 1px solid var(--border-soft);
+	}
+}
+
+.chat-history-head {
+	font-size: var(--fs-xs);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--muted);
+	padding: var(--sp-2) var(--sp-2) var(--sp-1);
+}
+
+.chat-history-item {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	text-align: left;
+	background: none;
+	border: 1px solid transparent;
+	border-radius: var(--r-md);
+	padding: var(--sp-2);
+	color: var(--text);
+	cursor: pointer;
+	font: inherit;
+}
+
+.chat-history-item:hover {
+	background: var(--surface-hover);
+}
+
+.chat-history-item.active {
+	background: var(--accent-soft);
+	border-color: var(--accent-line);
+}
+
+.chat-history-title {
+	font-size: var(--fs-md);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.chat-history-meta {
+	font-size: var(--fs-xs);
+	color: var(--muted);
+}
+
+.chat-main {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+/* Was gerade passiert — Ladephase, Schreiben, Tempo. */
+.chat-phase {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-2);
+	font-size: var(--fs-sm);
+	color: var(--muted);
+	margin-bottom: var(--sp-2);
+}
+
+.chat-phase .field-hint {
+	flex-basis: 100%;
+	margin: 0;
+}
+
+.dot-pulse {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--accent);
+	animation: dot-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+	0%,
+	100% {
+		opacity: 0.25;
+		transform: scale(0.8);
+	}
+	50% {
+		opacity: 1;
+		transform: scale(1.15);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.dot-pulse {
+		animation: none;
+		opacity: 0.8;
+	}
+}
+
+/* Rechner und Modell, die gerade rechnen. */
+.chat-worker {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-family: var(--mono);
+	font-size: var(--fs-xs);
+	color: var(--muted);
+	text-transform: none;
+	letter-spacing: 0;
+}
+
+.chat-answer {
+	border-top: 1px solid var(--border-soft);
+	padding-top: var(--sp-3);
+}
+
+.chat-answer.streaming::after {
+	content: "▌";
+	color: var(--accent);
+	animation: dot-pulse 1s steps(2) infinite;
+}
+
+/* Code im Chat: eigener Rahmen, Sprache benannt, kopierbar. */
+.code-block {
+	border: 1px solid var(--border);
+	border-radius: var(--r-md);
+	overflow: hidden;
+	margin: var(--sp-3) 0;
+	background: var(--bg-soft);
+}
+
+.code-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sp-2);
+	padding: var(--sp-1) var(--sp-2);
+	border-bottom: 1px solid var(--border-soft);
+	background: var(--surface);
+}
+
+.code-lang {
+	font-family: var(--mono);
+	font-size: var(--fs-xs);
+	color: var(--muted);
+}
+
+.code-block .md-pre {
+	margin: 0;
+	border: none;
+	border-radius: 0;
+	max-height: 460px;
+}
+
 .chat-log {
 	flex: 1;
 	display: flex;

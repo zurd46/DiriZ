@@ -11,10 +11,13 @@ import {
 	createTask,
 	getAgent,
 	getExecution,
+	getInstance,
+	getProvider,
 	getSwarm,
 	getTask,
 	latestAgentSelection,
 	latestDecision,
+	listChatTasks,
 	listExecutionsByTask,
 	listFilesByTask,
 	listTasks,
@@ -97,6 +100,76 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 		const task = createTask(ctx.db, { title, prompt, metadata, assignmentMode, agentId, swarmId, overrides })
 		ctx.bus.emit({ event: "task.created", data: { taskId: task.id } })
 		return reply.code(201).send(task)
+	})
+
+	/* ---------------------------------- Chats ---------------------------------- */
+
+	/**
+	 * Der Chat-Verlauf, nach Gesprächen gruppiert.
+	 *
+	 * Der Verlauf **ist** die Datenbank: Jede Chat-Nachricht ist eine Task, die
+	 * `chatId` in ihren Metadaten fasst sie zu einem Gespräch zusammen. Damit
+	 * überlebt der Verlauf Neuladen, Browserwechsel und Neustart — und bleibt
+	 * unter „Tasks“ mit Routing-Entscheidung nachvollziehbar.
+	 */
+	app.get<{ Querystring: { chatId?: string; limit?: string } }>("/api/chats", (req) => {
+		const tasks = listChatTasks(ctx.db, req.query.chatId)
+		const chats = new Map<
+			string,
+			{
+				chatId: string
+				title: string
+				createdAt: string
+				updatedAt: string
+				turns: unknown[]
+			}
+		>()
+
+		for (const task of tasks) {
+			const chatId = task.metadata.chatId
+			if (!chatId) {
+				continue
+			}
+			const executions = listExecutionsByTask(ctx.db, task.id)
+			const last = executions.at(-1)
+			const selection = latestAgentSelection(ctx.db, task.id)
+			const instance = last?.instanceId ? getInstance(ctx.db, last.instanceId) : undefined
+			const provider = instance ? getProvider(ctx.db, instance.providerId) : undefined
+			const turn = {
+				taskId: task.id,
+				prompt: task.prompt,
+				title: task.title,
+				status: task.status,
+				createdAt: task.createdAt,
+				agentMode: task.metadata.agentMode === true,
+				repoId: task.repoId ?? null,
+				agentName: selection?.agentName ?? null,
+				agentReason: selection?.reason ?? null,
+				modelName: instance?.displayName ?? null,
+				providerLabel: provider?.label ?? null,
+				answer: last?.output ?? "",
+				error: last?.error ?? null,
+				files: listFilesByTask(ctx.db, task.id).map((f) => ({ relPath: f.relPath, size: f.size })),
+			}
+			const entry = chats.get(chatId)
+			if (entry) {
+				entry.turns.push(turn)
+				entry.updatedAt = task.createdAt
+			} else {
+				chats.set(chatId, {
+					chatId,
+					// Der erste Satz benennt das Gespräch — wie in jedem Chat-Programm.
+					title: task.title?.trim() || task.prompt.split(/\r?\n/)[0]?.slice(0, 70) || "Chat",
+					createdAt: task.createdAt,
+					updatedAt: task.createdAt,
+					turns: [turn],
+				})
+			}
+		}
+
+		// Neueste Gespräche zuerst — der Verlauf innerhalb eines Gesprächs bleibt
+		// chronologisch, sonst läse sich die Unterhaltung rückwärts.
+		return [...chats.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 	})
 
 	app.get<{ Params: { id: string } }>("/api/tasks/:id", (req, reply) => {

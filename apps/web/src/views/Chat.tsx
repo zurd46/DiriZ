@@ -1,21 +1,22 @@
 /**
- * Chat — der einfache Einstieg: Aufgabe beschreiben, das System sucht den
- * passenden Spezialisten und arbeitet.
+ * Chat — der einfache Einstieg: Aufgabe beschreiben, DiriZ sucht den passenden
+ * Spezialisten und arbeitet.
  *
- * Die Ansicht ist bewusst dünn: Sie legt pro Nachricht eine ganz normale Task
- * an (`assignmentMode: "auto"`), startet sie und zeigt den Live-Stream. Alles
- * Weitere — Spezialisten-Zuordnung, Routing, Failover, Dateien — macht die
- * Engine. Damit gibt es keinen zweiten Ausführungsweg, der auseinanderdriften
- * könnte; jede Chat-Nachricht ist unter „Tasks“ vollständig nachvollziehbar.
+ * Zwei Entwurfsentscheidungen tragen die Ansicht:
  *
- * Das Ziel entscheidet, was der Spezialist anfassen darf:
- * - **Antwort**: nur Text, kein Dateizugriff.
- * - **Projekt anlegen**: Agentik-Modus im Workspace — er darf Dateien schreiben.
- * - **Repository ändern**: Agentik-Modus in einem Git-Worktree des Repos.
+ * 1. **Keine zweite Ausführungsschiene.** Jede Nachricht ist eine ganz normale
+ *    Task (`assignmentMode: "auto"`). Zuordnung, Routing, Failover und Dateien
+ *    macht die Engine — die Ansicht zeigt nur, was passiert.
+ * 2. **Der Verlauf ist die Datenbank.** Gespräche werden über `metadata.chatId`
+ *    zusammengefasst und aus `/api/chats` geladen. Nichts liegt nur im Browser,
+ *    also überlebt der Verlauf Neuladen, Browserwechsel und Neustart.
+ *
+ * Alles Laufende kommt live über den SSE-Stream: welcher Rechner rechnet, ob
+ * das Modell noch geladen wird, was es gerade schreibt, welche Dateien es anfasst.
  */
 
-import type { GitHubConnection, GitHubRepoSummary, Repo, Task } from "@diriz/shared"
-import { useCallback, useEffect, useRef, useState } from "react"
+import type { InstanceModel, Repo } from "@diriz/shared"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
 	IconAgents,
 	IconAlert,
@@ -23,10 +24,12 @@ import {
 	IconDoc,
 	IconGitBranch,
 	IconPlay,
+	IconPlus,
+	IconServer,
 	IconStop,
-	IconTrash,
 	IconWorkspace,
 } from "../components/icons.js"
+import Markdown from "../components/Markdown.js"
 import { api } from "../lib/api.js"
 import { useStore } from "../store.js"
 
@@ -39,26 +42,32 @@ const TARGETS: { id: Target; label: string; hint: string }[] = [
 	{
 		id: "repo",
 		label: "Repository ändern",
-		hint: "Arbeitet im Git-Worktree eines Repos — jedes Repository des verbundenen GitHub-Kontos ist wählbar, DiriZ bindet es beim Senden an",
+		hint: "Arbeitet im Git-Worktree eines verbundenen Repos — dafür muss es unter „GitHub“ angebunden sein (Token allein genügt nicht)",
 	},
 ]
 
+/** Eine Nachricht samt Antwort, so wie der Core sie zurückgibt. */
 interface Turn {
-	id: string
+	taskId: string
 	prompt: string
-	target: Target
-	repoLabel?: string
-	taskId?: string
-	status: "sending" | "running" | "done" | "failed"
-	error?: string
+	status: string
+	createdAt: string
+	agentMode: boolean
+	agentName: string | null
+	agentReason: string | null
+	modelName: string | null
+	providerLabel: string | null
+	answer: string
+	error: string | null
+	files: { relPath: string; size: number }[]
 }
 
-/** Zusatz hinter dem Namen, solange der lokale Klon noch nicht steht. */
-function cloneNote(repo: Repo): string {
-	if (repo.localPath) {
-		return ""
-	}
-	return repo.lastError ? " (Klon fehlgeschlagen)" : " (wird geklont …)"
+interface ChatSummary {
+	chatId: string
+	title: string
+	createdAt: string
+	updatedAt: string
+	turns: Turn[]
 }
 
 /** Titel aus der ersten Zeile — er benennt später auch den Git-Branch. */
@@ -82,111 +91,99 @@ function withHistory(prompt: string, history: { prompt: string; answer: string }
 	return lines.join("\n")
 }
 
+const seconds = (ms: number) => `${Math.max(0, Math.round(ms / 1000))} s`
+
 export default function Chat() {
 	const connected = useStore((s) => s.connected)
 	const live = useStore((s) => s.live)
-	const taskDetails = useStore((s) => s.taskDetails)
+	const providers = useStore((s) => s.providers)
 	const agents = useStore((s) => s.agents)
-	const loadDetail = useStore((s) => s.loadTaskDetail)
-	const refreshTasks = useStore((s) => s.refreshTasks)
 	const setLastError = useStore((s) => s.setLastError)
-	const notify = useStore((s) => s.notify)
 
-	const [turns, setTurns] = useState<Turn[]>([])
+	const [chats, setChats] = useState<ChatSummary[]>([])
+	const [chatId, setChatId] = useState<string>(() => crypto.randomUUID())
+	/** Optimistische Nachrichten, die der Server noch nicht kennt. */
+	const [pending, setPending] = useState<Turn[]>([])
 	const [input, setInput] = useState("")
 	const [target, setTarget] = useState<Target>("answer")
 	const [repos, setRepos] = useState<Repo[]>([])
-	const [available, setAvailable] = useState<GitHubRepoSummary[]>([])
-	const [ghConnected, setGhConnected] = useState<boolean | undefined>()
-	/** Gewählt wird über `owner/name` — das gibt es für angebundene wie für Konto-Repos. */
-	const [repoName, setRepoName] = useState("")
+	const [repoId, setRepoId] = useState("")
+	const [instances, setInstances] = useState<InstanceModel[]>([])
 	const [keepContext, setKeepContext] = useState(true)
 	const [busy, setBusy] = useState(false)
+	/** Sekundentakt — nur damit Wartezeiten mitlaufen. */
+	const [tick, setTick] = useState(0)
 	const endRef = useRef<HTMLDivElement>(null)
 
-	const loadRepos = useCallback(async () => {
+	const loadChats = useCallback(async () => {
 		try {
-			setRepos(await api.get<Repo[]>("/api/repos"))
-		} catch {
-			setRepos([])
+			setChats(await api.get<ChatSummary[]>("/api/chats"))
+		} catch (e) {
+			setLastError(e instanceof Error ? e.message : String(e))
 		}
-	}, [])
+	}, [setLastError])
 
 	useEffect(() => {
-		void loadRepos()
-	}, [loadRepos])
-
-	// Die Auswahl zeigt bewusst nicht nur bereits Angebundenes: Wer ein GitHub-Konto
-	// verbunden hat, findet hier jedes seiner Repositories — das Anbinden und Klonen
-	// erledigt DiriZ beim Senden. Erst laden, wenn das Ziel wirklich „Repository“ ist,
-	// sonst fragt jeder Chat-Aufruf ungefragt bei GitHub nach.
-	useEffect(() => {
-		if (target !== "repo" || ghConnected !== undefined) {
-			return
-		}
+		void loadChats()
 		api
-			.get<GitHubConnection>("/api/github")
-			.then(async (connection) => {
-				setGhConnected(connection.connected)
-				if (connection.connected) {
-					setAvailable(await api.get<GitHubRepoSummary[]>("/api/github/repos"))
-				}
-			})
-			.catch(() => setGhConnected(false))
-	}, [target, ghConnected])
+			.get<Repo[]>("/api/repos")
+			.then(setRepos)
+			.catch(() => setRepos([]))
+		api
+			.get<InstanceModel[]>("/api/instances")
+			.then(setInstances)
+			.catch(() => setInstances([]))
+	}, [loadChats])
 
-	// Ein frisch angebundenes Repository wird im Hintergrund geklont — bis dahin fehlt
-	// der lokale Pfad. Solange nachfragen, sonst bleibt die Auswahl auf altem Stand.
+	const current = chats.find((c) => c.chatId === chatId)
+	const serverTurns = useMemo(() => current?.turns ?? [], [current])
+	const turns = useMemo(() => {
+		const known = new Set(serverTurns.map((t) => t.taskId))
+		return [...serverTurns, ...pending.filter((t) => !known.has(t.taskId))]
+	}, [serverTurns, pending])
+
+	const running = turns.some((t) => t.status === "running" || t.status === "queued" || t.status === "routing")
+
+	// Uhr nur laufen lassen, solange wirklich etwas läuft.
 	useEffect(() => {
-		if (!repos.some((r) => !r.localPath && !r.lastError)) {
+		if (!running) {
 			return
 		}
-		const timer = setInterval(() => void loadRepos(), 2500)
-		return () => clearInterval(timer)
-	}, [repos, loadRepos])
+		const id = setInterval(() => setTick((n) => n + 1), 1000)
+		return () => clearInterval(id)
+	}, [running])
 
-	/**
-	 * Liefert die Repo-ID zum gewählten Namen — bindet an und klont, falls nötig.
-	 * Eine Task lässt sich nur an ein Repository pinnen, dessen Klon fertig ist.
-	 */
-	const ensureRepo = async (fullName: string): Promise<string> => {
-		let repo = repos.find((r) => r.fullName === fullName)
-		if (!repo) {
-			notify("info", `${fullName} wird angebunden …`)
-			try {
-				repo = await api.post<Repo>("/api/repos", { repo: fullName })
-			} catch (e) {
-				// Bereits verbunden (409): Dann fehlt es nur in unserer Liste.
-				const fresh = await api.get<Repo[]>("/api/repos")
-				setRepos(fresh)
-				repo = fresh.find((r) => r.fullName === fullName)
-				if (!repo) {
-					throw e
-				}
+	// Endet ein Lauf, holt sich die Ansicht die persistierte Antwort — genau
+	// einmal je Task. Ohne die Merkliste löste jeder Token ein Nachladen aus.
+	const reloaded = useRef(new Set<string>())
+	useEffect(() => {
+		for (const run of Object.values(live)) {
+			const done = run.status === "done" || run.status === "failed"
+			if (done && run.taskId && !reloaded.current.has(run.taskId)) {
+				reloaded.current.add(run.taskId)
+				void loadChats()
 			}
 		}
-		if (!repo.localPath) {
-			notify("info", `${fullName} wird geklont — das kann einen Moment dauern …`)
-			// `sync` hängt sich an einen bereits laufenden Klon, statt einen zweiten zu starten.
-			repo = await api.post<Repo>(`/api/repos/${repo.id}/sync`, {})
+	}, [live, loadChats])
+
+	useEffect(() => {
+		if (turns.length > 0) {
+			endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
 		}
-		await loadRepos()
-		return repo.id
-	}
+	}, [turns.length])
 
-	/** Live-Stream einer Task — die Zuordnung liefert `routing.decided`. */
-	const runOf = (taskId?: string) =>
-		taskId ? Object.values(live).find((r) => r.taskId === taskId) : undefined
+	const runOf = (taskId: string) => Object.values(live).find((r) => r.taskId === taskId)
+	const instanceOf = (id?: string) => instances.find((i) => i.id === id)
+	const providerLabel = (providerId?: string) => providers.find((p) => p.id === providerId)?.label
 
-	/** Antworttext: erst der Live-Stream, nach dem Lauf die persistierte Ausgabe. */
-	const answerOf = (turn: Turn): string => {
+	/** Wer rechnet gerade woran? Live aus dem Stream, sonst aus dem Verlauf. */
+	const workerOf = (turn: Turn): { model?: string; host?: string } => {
 		const run = runOf(turn.taskId)
-		if (run?.text) {
-			return run.text
+		const inst = instanceOf(run?.instanceId)
+		if (inst) {
+			return { model: inst.displayName, host: providerLabel(inst.providerId) }
 		}
-		const detail = turn.taskId ? taskDetails[turn.taskId] : undefined
-		const last = detail?.executions.at(-1)
-		return last?.output ?? ""
+		return { model: turn.modelName ?? undefined, host: turn.providerLabel ?? undefined }
 	}
 
 	const send = async () => {
@@ -194,44 +191,56 @@ export default function Chat() {
 		if (!text || busy) {
 			return
 		}
-		if (target === "repo" && !repoName) {
+		if (target === "repo" && !repoId) {
 			setLastError(
-				choices.length === 0
-					? "Kein Repository verfügbar — unter „GitHub“ ein Konto verbinden"
+				repos.length === 0
+					? "Kein Repository angebunden — unter „GitHub“ verbinden, dann erscheint es hier"
 					: "Bitte ein Repository wählen — oder Ziel auf „Projekt anlegen“ stellen",
 			)
 			return
 		}
-		const id = crypto.randomUUID()
-		const repoLabel = target === "repo" ? repoName : undefined
-		setTurns((t) => [...t, { id, prompt: text, target, repoLabel, status: "sending" }])
 		setInput("")
 		setBusy(true)
 		try {
-			// Vor der Task: Ein noch nicht angebundenes Repository erst verbinden und klonen —
-			// sonst entstünde eine Task, die sich anschließend nicht pinnen lässt.
-			const readyRepoId = target === "repo" ? await ensureRepo(repoName) : undefined
 			const history = turns
 				.filter((t) => t.status === "done")
-				.map((t) => ({ prompt: t.prompt, answer: answerOf(t) }))
-			const task = await api.post<Task>("/api/tasks", {
+				.map((t) => ({ prompt: t.prompt, answer: t.answer }))
+			const task = await api.post<{ id: string }>("/api/tasks", {
 				title: titleFrom(text),
 				prompt: keepContext ? withHistory(text, history) : text,
-				// Agentik-Modus: nur wenn der Spezialist wirklich Dateien anfassen soll.
-				metadata: { privacy: "local-only", mode: "auto", agentMode: target !== "answer" },
+				metadata: {
+					privacy: "local-only",
+					mode: "auto",
+					// Agentik-Modus: nur wenn der Spezialist Dateien anfassen soll.
+					agentMode: target !== "answer",
+					chatId,
+				},
 				assignmentMode: "auto",
 			})
-			if (readyRepoId) {
-				await api.put(`/api/tasks/${task.id}/repo`, { repoId: readyRepoId })
+			setPending((p) => [
+				...p,
+				{
+					taskId: task.id,
+					prompt: text,
+					status: "running",
+					createdAt: new Date().toISOString(),
+					agentMode: target !== "answer",
+					agentName: null,
+					agentReason: null,
+					modelName: null,
+					providerLabel: null,
+					answer: "",
+					error: null,
+					files: [],
+				},
+			])
+			if (target === "repo") {
+				await api.put(`/api/tasks/${task.id}/repo`, { repoId })
 			}
 			await api.post(`/api/tasks/${task.id}/start`)
-			setTurns((t) => t.map((x) => (x.id === id ? { ...x, taskId: task.id, status: "running" } : x)))
-			// Detail laden: Ab jetzt hält der Store es bei jedem Event aktuell —
-			// daher kommt der Name des gewählten Spezialisten.
-			void loadDetail(task.id)
+			await loadChats()
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e)
-			setTurns((t) => t.map((x) => (x.id === id ? { ...x, status: "failed", error: message } : x)))
 			setLastError(message)
 		} finally {
 			setBusy(false)
@@ -241,49 +250,19 @@ export default function Chat() {
 	const cancel = async (taskId: string) => {
 		try {
 			await api.post(`/api/tasks/${taskId}/cancel`)
-			await refreshTasks()
+			await loadChats()
 		} catch (e) {
 			setLastError(e instanceof Error ? e.message : String(e))
 		}
 	}
 
-	// Status aus dem Store nachziehen: Der Lauf endet über ein SSE-Event, nicht
-	// über eine Antwort auf unseren Aufruf.
-	useEffect(() => {
-		setTurns((t) =>
-			t.map((turn) => {
-				if (!turn.taskId || turn.status === "done" || turn.status === "failed") {
-					return turn
-				}
-				const run = Object.values(live).find((r) => r.taskId === turn.taskId)
-				if (run?.status === "done") {
-					return { ...turn, status: "done" }
-				}
-				if (run?.status === "failed") {
-					const detail = taskDetails[turn.taskId]
-					return { ...turn, status: "failed", error: detail?.executions.at(-1)?.error ?? "Lauf gescheitert" }
-				}
-				return turn
-			}),
-		)
-	}, [live, taskDetails])
-
-	// Neue Nachricht soll sichtbar sein, ohne dass man scrollen muss.
-	useEffect(() => {
-		if (turns.length > 0) {
-			endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
-		}
-	}, [turns.length])
+	const newChat = () => {
+		setChatId(crypto.randomUUID())
+		setPending([])
+		setInput("")
+	}
 
 	const activeTarget = TARGETS.find((t) => t.id === target)
-
-	/** Auswahl: angebundene Repositories zuerst, danach die übrigen des GitHub-Kontos. */
-	const choices = [
-		...repos.map((r) => ({ fullName: r.fullName, note: cloneNote(r) })),
-		...available
-			.filter((r) => !repos.some((c) => c.fullName === r.fullName))
-			.map((r) => ({ fullName: r.fullName, note: " (wird beim Senden angebunden)" })),
-	]
 
 	return (
 		<div className="fade-in chat-view">
@@ -294,6 +273,12 @@ export default function Chat() {
 						Beschreib die Aufgabe. DiriZ wählt automatisch den passenden Spezialisten aus {agents.length} und
 						arbeitet damit — antworten, ein Projekt anlegen oder ein Repository ändern.
 					</p>
+				</div>
+				<div className="page-actions">
+					<button type="button" className="btn" onClick={newChat}>
+						<IconPlus size={15} />
+						Neuer Chat
+					</button>
 				</div>
 			</div>
 
@@ -307,162 +292,229 @@ export default function Chat() {
 				</div>
 			)}
 
-			<div className="chat-log">
-				{turns.length === 0 && (
-					<div className="empty">
-						<span className="icon-chip">
-							<IconChat size={20} />
-						</span>
-						<div className="empty-title">Noch keine Nachricht</div>
-						<p>
-							Zum Beispiel: „Schreib eine React-Komponente für das Login-Formular“, „Der Import stürzt mit
-							einer Exception ab, finde die Ursache“ oder „Prüfe die Anmeldung auf SQL-Injection“.
-						</p>
-					</div>
-				)}
-
-				{turns.map((turn) => {
-					const detail = turn.taskId ? taskDetails[turn.taskId] : undefined
-					const run = runOf(turn.taskId)
-					const answer = answerOf(turn)
-					const agentName = detail?.agentSelection?.agentName
-					const reason = detail?.agentSelection?.reason
-					const files = detail?.files ?? []
-					const toolOps = run?.toolOps ?? []
-					return (
-						<div key={turn.id} className="chat-turn">
-							<div className="chat-msg user">
-								<div className="chat-role">Du</div>
-								<div className="chat-body">{turn.prompt}</div>
-								<div className="chat-meta">
-									<span className="pill no-dot">{TARGETS.find((t) => t.id === turn.target)?.label}</span>
-									{turn.repoLabel && <span className="pill no-dot">{turn.repoLabel}</span>}
-								</div>
-							</div>
-
-							<div className="chat-msg agent">
-								<div className="chat-role">
-									<IconAgents size={14} />
-									{agentName ?? (turn.status === "sending" ? "wird zugeordnet …" : "Spezialist")}
-									<span className={`pill ${turn.status}`}>{turn.status}</span>
-									{turn.status === "running" && turn.taskId && (
-										<button
-											type="button"
-											className="btn ghost sm"
-											onClick={() => void cancel(turn.taskId as string)}
-										>
-											<IconStop size={13} />
-											Abbrechen
-										</button>
-									)}
-								</div>
-								{reason && <div className="chat-reason">{reason}</div>}
-								{run && run.failovers.length > 0 && (
-									<div className="chat-reason">Failover: {run.failovers.join(" · ")}</div>
-								)}
-								{toolOps.length > 0 && (
-									<ul className="chat-tools">
-										{toolOps.map((op) => (
-											<li key={op.id} className={op.ok ? "ok" : "err"}>
-												<IconDoc size={12} /> {op.name} — {op.argsSummary}
-											</li>
-										))}
-									</ul>
-								)}
-								{answer ? (
-									<pre className={`output ${turn.status === "running" ? "live-cursor" : ""}`}>{answer}</pre>
-								) : (
-									turn.status !== "failed" && <div className="chat-waiting">arbeitet …</div>
-								)}
-								{turn.error && <div className="chat-error">{turn.error}</div>}
-								{files.length > 0 && (
-									<div className="chat-files">
-										<strong>Dateien:</strong>{" "}
-										{files.map((f) => (
-											<span key={f.relPath} className="pill no-dot">
-												{f.relPath}
-											</span>
-										))}
-									</div>
-								)}
-							</div>
-						</div>
-					)
-				})}
-				<div ref={endRef} />
-			</div>
-
-			<div className="chat-composer card">
-				<div className="chat-targets">
-					{TARGETS.map((t) => (
+			<div className="chat-layout">
+				<aside className="chat-history" aria-label="Bisherige Gespräche">
+					<div className="chat-history-head">Verlauf</div>
+					{chats.length === 0 && <p className="field-hint">Noch keine Gespräche.</p>}
+					{chats.map((c) => (
 						<button
-							key={t.id}
+							key={c.chatId}
 							type="button"
-							className={`btn ${target === t.id ? "primary" : ""}`}
-							onClick={() => setTarget(t.id)}
-							aria-pressed={target === t.id}
+							className={`chat-history-item ${c.chatId === chatId ? "active" : ""}`}
+							onClick={() => {
+								setChatId(c.chatId)
+								setPending([])
+							}}
 						>
-							{t.id === "answer" && <IconChat size={14} />}
-							{t.id === "workspace" && <IconWorkspace size={14} />}
-							{t.id === "repo" && <IconGitBranch size={14} />}
-							{t.label}
+							<span className="chat-history-title">{c.title}</span>
+							<span className="chat-history-meta">
+								{c.turns.length} Nachricht{c.turns.length === 1 ? "" : "en"} ·{" "}
+								{new Date(c.updatedAt).toLocaleString("de-CH", {
+									day: "2-digit",
+									month: "2-digit",
+									hour: "2-digit",
+									minute: "2-digit",
+								})}
+							</span>
 						</button>
 					))}
-					{target === "repo" &&
-						(choices.length > 0 ? (
-							<select value={repoName} onChange={(e) => setRepoName(e.target.value)} aria-label="Repository">
-								<option value="">Repository wählen …</option>
-								{choices.map((c) => (
-									<option key={c.fullName} value={c.fullName}>
-										{c.fullName}
-										{c.note}
-									</option>
+				</aside>
+
+				<div className="chat-main">
+					<div className="chat-log">
+						{turns.length === 0 && (
+							<div className="empty">
+								<span className="icon-chip">
+									<IconChat size={20} />
+								</span>
+								<div className="empty-title">Noch keine Nachricht</div>
+								<p>
+									Zum Beispiel: „Ich möchte eine Webseite für eine Autogarage in Luzern“, „Der Import stürzt
+									mit einer Exception ab, finde die Ursache“ oder „Prüfe die Anmeldung auf SQL-Injection“.
+								</p>
+							</div>
+						)}
+
+						{turns.map((turn) => {
+							const run = runOf(turn.taskId)
+							const answer = run?.text || turn.answer
+							const worker = workerOf(turn)
+							const isRunning = run?.status === "running" || turn.status === "running"
+							const loading = isRunning && run !== undefined && run.firstDeltaAt === undefined
+							const loadMs =
+								run?.startedAt !== undefined ? (run.firstDeltaAt ?? Date.now()) - run.startedAt : undefined
+							const toolOps = run?.toolOps ?? []
+							const files = turn.files
+							return (
+								<div key={turn.taskId} className="chat-turn">
+									<div className="chat-msg user">
+										<div className="chat-role">Du</div>
+										<div className="chat-body">{turn.prompt}</div>
+									</div>
+
+									<div className="chat-msg agent">
+										<div className="chat-role">
+											<IconAgents size={14} />
+											<strong>
+												{turn.agentName ??
+													(isRunning && !run ? "Spezialist wird gewählt …" : "Freies Routing")}
+											</strong>
+											{worker.model && (
+												<span className="chat-worker">
+													<IconServer size={13} />
+													{worker.model}
+													{worker.host ? ` @ ${worker.host}` : ""}
+												</span>
+											)}
+											<span className={`pill ${turn.status}`}>{turn.status}</span>
+											{isRunning && (
+												<button
+													type="button"
+													className="btn ghost sm"
+													onClick={() => void cancel(turn.taskId)}
+												>
+													<IconStop size={13} />
+													Abbrechen
+												</button>
+											)}
+										</div>
+
+										{turn.agentReason && <div className="chat-reason">{turn.agentReason}</div>}
+
+										{/* Was passiert gerade? Ohne diese Zeile sieht ein Modell,
+										    das lädt, aus wie ein Programm, das hängt. */}
+										{isRunning && (
+											<div className="chat-phase" data-tick={tick}>
+												{loading ? (
+													<>
+														<span className="dot-pulse" />
+														Modell wird geladen{loadMs !== undefined ? ` … ${seconds(loadMs)}` : " …"}
+														<span className="field-hint">
+															Beim ersten Aufruf wandert das Modell in den Grafikspeicher — das dauert bei
+															grossen Modellen Minuten.
+														</span>
+													</>
+												) : (
+													<>
+														<span className="dot-pulse" />
+														schreibt … {run?.usage ? `${run.usage.tokensOut} Tokens` : ""}
+														{run?.usage?.tps ? ` · ${run.usage.tps.toFixed(1)} Tokens/s` : ""}
+														{loadMs !== undefined ? ` · Ladezeit ${seconds(loadMs)}` : ""}
+													</>
+												)}
+											</div>
+										)}
+
+										{run && run.failovers.length > 0 && (
+											<div className="chat-reason">Wechsel: {run.failovers.join(" · ")}</div>
+										)}
+
+										{toolOps.length > 0 && (
+											<ul className="chat-tools">
+												{toolOps.map((op) => (
+													<li key={op.id} className={op.ok ? "ok" : "err"}>
+														<IconDoc size={12} /> {op.name} — {op.argsSummary}
+													</li>
+												))}
+											</ul>
+										)}
+
+										{answer ? (
+											<div className={`chat-answer ${isRunning ? "streaming" : ""}`}>
+												<Markdown source={answer} />
+											</div>
+										) : (
+											turn.status === "failed" && null
+										)}
+
+										{turn.error && <div className="chat-error">{turn.error}</div>}
+
+										{files.length > 0 && (
+											<div className="chat-files">
+												<strong>Dateien:</strong>{" "}
+												{files.map((f) => (
+													<span key={f.relPath} className="pill no-dot">
+														{f.relPath}
+													</span>
+												))}
+											</div>
+										)}
+									</div>
+								</div>
+							)
+						})}
+						<div ref={endRef} />
+					</div>
+
+					<div className="chat-composer card">
+						<div className="chat-targets">
+							{TARGETS.map((t) => (
+								<button
+									key={t.id}
+									type="button"
+									className={`btn ${target === t.id ? "primary" : ""}`}
+									onClick={() => setTarget(t.id)}
+									aria-pressed={target === t.id}
+								>
+									{t.id === "answer" && <IconChat size={14} />}
+									{t.id === "workspace" && <IconWorkspace size={14} />}
+									{t.id === "repo" && <IconGitBranch size={14} />}
+									{t.label}
+								</button>
+							))}
+							{target === "repo" &&
+								(repos.length > 0 ? (
+									<select value={repoId} onChange={(e) => setRepoId(e.target.value)} aria-label="Repository">
+										<option value="">Repository wählen …</option>
+										{repos.map((r) => (
+											<option key={r.id} value={r.id} disabled={!r.localPath}>
+												{r.fullName}
+												{r.localPath ? "" : " (wird geklont)"}
+											</option>
+										))}
+									</select>
+								) : (
+									// Ohne diesen Hinweis steht hier nur eine leere Auswahl, und
+									// niemand erfährt, dass ein Repository erst angebunden werden muss.
+									<a className="btn" href="/github">
+										<IconGitBranch size={14} />
+										Kein Repository angebunden — jetzt verbinden
+									</a>
 								))}
-							</select>
-						) : (
-							// Ohne diesen Hinweis steht hier nur eine leere Auswahl, und niemand
-							// erfährt, dass zuerst ein GitHub-Konto verbunden werden muss.
-							<a className="btn" href="/github">
-								<IconGitBranch size={14} />
-								{ghConnected === false
-									? "Kein GitHub-Konto verbunden — jetzt verbinden"
-									: "Keine Repositories gefunden — GitHub öffnen"}
-							</a>
-						))}
-					<label className="chat-context">
-						<input type="checkbox" checked={keepContext} onChange={(e) => setKeepContext(e.target.checked)} />
-						Verlauf mitsenden
-					</label>
-				</div>
-				{activeTarget && <p className="field-hint">{activeTarget.hint}</p>}
-				<textarea
-					value={input}
-					onChange={(e) => setInput(e.target.value)}
-					onKeyDown={(e) => {
-						if (e.key === "Enter" && !e.shiftKey) {
-							e.preventDefault()
-							void send()
-						}
-					}}
-					rows={3}
-					placeholder="Aufgabe beschreiben … (Enter sendet, Umschalt+Enter macht eine neue Zeile)"
-				/>
-				<div className="chat-actions">
-					{turns.length > 0 && (
-						<button type="button" className="btn ghost" onClick={() => setTurns([])}>
-							<IconTrash size={14} />
-							Verlauf leeren
-						</button>
-					)}
-					<button
-						type="button"
-						className="btn primary"
-						onClick={() => void send()}
-						disabled={busy || !connected || input.trim().length === 0}
-					>
-						<IconPlay size={14} />
-						Senden
-					</button>
+							<label className="chat-context">
+								<input
+									type="checkbox"
+									checked={keepContext}
+									onChange={(e) => setKeepContext(e.target.checked)}
+								/>
+								Verlauf mitsenden
+							</label>
+						</div>
+						{activeTarget && <p className="field-hint">{activeTarget.hint}</p>}
+						<textarea
+							value={input}
+							onChange={(e) => setInput(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === "Enter" && !e.shiftKey) {
+									e.preventDefault()
+									void send()
+								}
+							}}
+							rows={3}
+							placeholder="Aufgabe beschreiben … (Enter sendet, Umschalt+Enter macht eine neue Zeile)"
+						/>
+						<div className="chat-actions">
+							<button
+								type="button"
+								className="btn primary"
+								onClick={() => void send()}
+								disabled={busy || !connected || input.trim().length === 0}
+							>
+								<IconPlay size={14} />
+								Senden
+							</button>
+						</div>
+					</div>
 				</div>
 			</div>
 		</div>

@@ -30,6 +30,16 @@ export interface LogLine {
 export interface LiveRun {
 	/** Task, zu der dieser Stream gehört — die Chat-Ansicht filtert danach. */
 	taskId?: string
+	/** Gewähltes Modell — daraus folgt auch der Rechner (Provider). */
+	instanceId?: string
+	/** Beginn des Laufs (ms). Ohne ihn liesse sich die Ladezeit nicht zeigen. */
+	startedAt?: number
+	/**
+	 * Ankunft des **ersten** Tokens (ms). Die Zeit davor ist die Ladephase:
+	 * Das Modell wandert in den Grafikspeicher, was Minuten dauern kann. Ohne
+	 * diese Marke sieht die Oberfläche aus, als hinge sie.
+	 */
+	firstDeltaAt?: number
 	text: string
 	status: "running" | "done" | "failed"
 	usage?: { tokensIn: number; tokensOut: number; tps: number; costUsd: number }
@@ -282,11 +292,18 @@ export const useStore = create<State>((set, get) => ({
 				void state.refreshSwarms()
 				break
 			case "routing.decided": {
-				const { executionId, taskId } = core.data
+				const { executionId, taskId, decision } = core.data
 				set((s) => ({
 					live: {
 						...s.live,
-						[executionId]: { taskId, text: "", status: "running", failovers: [] },
+						[executionId]: {
+							taskId,
+							instanceId: decision.chosenInstanceId,
+							startedAt: Date.now(),
+							text: "",
+							status: "running",
+							failovers: [],
+						},
 					},
 				}))
 				break
@@ -295,7 +312,16 @@ export const useStore = create<State>((set, get) => ({
 				const { executionId, delta } = core.data
 				set((s) => {
 					const run = s.live[executionId] ?? { text: "", status: "running" as const, failovers: [] }
-					return { live: { ...s.live, [executionId]: { ...run, text: run.text + delta } } }
+					return {
+						live: {
+							...s.live,
+							[executionId]: {
+								...run,
+								text: run.text + delta,
+								firstDeltaAt: run.firstDeltaAt ?? Date.now(),
+							},
+						},
+					}
 				})
 				break
 			}
@@ -314,7 +340,14 @@ export const useStore = create<State>((set, get) => ({
 					return {
 						live: {
 							...s.live,
-							[executionId]: { ...run, failovers: [...run.failovers, `${from} → ${to} (${reason})`] },
+							[executionId]: {
+								...run,
+								// Anderes Modell → neuer Ladevorgang. Die Uhr beginnt von vorn,
+								// sonst zeigte die Ansicht eine längst gescheiterte Wartezeit.
+								startedAt: Date.now(),
+								firstDeltaAt: undefined,
+								failovers: [...run.failovers, `${from} → ${to} (${reason})`],
+							},
 						},
 					}
 				})

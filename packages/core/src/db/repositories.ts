@@ -834,6 +834,7 @@ export function createTask(db: Db, input: TaskInput): Task {
 		preferredProviderId: input.metadata?.preferredProviderId,
 		preferredModelId: input.metadata?.preferredModelId,
 		agentMode: input.metadata?.agentMode,
+		chatId: input.metadata?.chatId,
 	}
 	const title = (input.title ?? "").trim() || input.prompt.slice(0, 60)
 	db.prepare(
@@ -874,6 +875,24 @@ export function listTasks(db: Db, opts?: { status?: TaskStatus; limit?: number }
 				.prepare("SELECT * FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?")
 				.all(opts.status, limit) as unknown as TaskRow[])
 		: (db.prepare("SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?").all(limit) as unknown as TaskRow[])
+	return rows.map(mapTask)
+}
+
+/**
+ * Alle Tasks eines Chat-Gesprächs, älteste zuerst — der Gesprächsverlauf.
+ *
+ * `chatId` steckt im Metadaten-JSON; ein LIKE darauf reicht, weil die ID eine
+ * UUID ist und sonst nirgends vorkommt. Ein eigener Index wäre erst bei
+ * zehntausenden Tasks nötig.
+ */
+export function listChatTasks(db: Db, chatId?: string, limit = 500): Task[] {
+	const rows = chatId
+		? (db
+				.prepare("SELECT * FROM tasks WHERE metadata_json LIKE ? ORDER BY created_at LIMIT ?")
+				.all(`%"chatId":"${chatId}"%`, limit) as unknown as TaskRow[])
+		: (db
+				.prepare("SELECT * FROM tasks WHERE metadata_json LIKE '%\"chatId\":%' ORDER BY created_at LIMIT ?")
+				.all(limit) as unknown as TaskRow[])
 	return rows.map(mapTask)
 }
 

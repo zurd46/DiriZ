@@ -20,6 +20,7 @@ import { openDatabase } from "../src/db/connection.js"
 import { migrate } from "../src/db/migrate.js"
 import {
 	createAgent,
+	createTask,
 	deleteAgent,
 	getAgent,
 	getAgentDoc,
@@ -28,7 +29,12 @@ import {
 	listSwarms,
 	updateAgent,
 } from "../src/db/repositories.js"
-import { refreshCatalogAgents, refreshCatalogSwarms, seedTeamCatalog } from "../src/db/seed.js"
+import {
+	refreshCatalogAgents,
+	refreshCatalogSwarms,
+	retireCatalogAgents,
+	seedTeamCatalog,
+} from "../src/db/seed.js"
 
 let dir: string
 let db: Db
@@ -174,6 +180,41 @@ describe("refreshCatalogAgents", () => {
 		expect(refreshCatalogAgents(db4)).toEqual([])
 
 		db4.close()
+		fs.rmSync(fresh, { recursive: true, force: true })
+	})
+})
+
+/**
+ * Ein verkleinerter Katalog muss auch bestehende Installationen verkleinern —
+ * aber nie auf Kosten eigener Arbeit.
+ */
+describe("retireCatalogAgents", () => {
+	it("entfernt nur unveränderte, ungenutzte Katalog-Spezialisten", () => {
+		const fresh = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-retire-"))
+		const db5 = openDatabase(fresh)
+		migrate(db5)
+		seedTeamCatalog(db5)
+
+		// Drei Spezialisten, die es im Katalog nicht (mehr) gibt.
+		const unberuehrt = createAgent(db5, { id: "agent-alt-frei", name: "Alt frei" })
+		const bearbeitet = createAgent(db5, { id: "agent-alt-bearbeitet", name: "Alt bearbeitet" })
+		const benutzt = createAgent(db5, { id: "agent-alt-benutzt", name: "Alt benutzt" })
+		updateAgent(db5, bearbeitet.id, { description: "von Hand angepasst" })
+		createTask(db5, { prompt: "läuft mit ihm", assignmentMode: "agent", agentId: benutzt.id })
+		const eigener = createAgent(db5, { name: "Ganz eigener" })
+
+		const entfernt = retireCatalogAgents(db5)
+
+		expect(entfernt).toEqual(["Alt frei"])
+		expect(getAgent(db5, unberuehrt.id)).toBeUndefined()
+		// Bearbeitet, benutzt oder gar nicht aus dem Katalog: bleibt.
+		expect(getAgent(db5, bearbeitet.id)).toBeDefined()
+		expect(getAgent(db5, benutzt.id)).toBeDefined()
+		expect(getAgent(db5, eigener.id)).toBeDefined()
+		// Und das Kernteam steht unangetastet.
+		expect(listAgents(db5).filter((a) => a.id.startsWith("agent-"))).toHaveLength(SOFTWARE_TEAM.length + 2)
+
+		db5.close()
 		fs.rmSync(fresh, { recursive: true, force: true })
 	})
 })

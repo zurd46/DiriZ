@@ -1521,6 +1521,13 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent | unde
 	if (!row) {
 		return undefined
 	}
+	// Eine Bearbeitung muss sich von der Anlage unterscheiden. Fällt beides in
+	// dieselbe Millisekunde, sähe der Spezialist später „unberührt" aus — und
+	// das Katalog-Aufräumen würde eine von Hand angepasste Rolle löschen.
+	let updatedAt = new Date().toISOString()
+	if (updatedAt <= row.created_at) {
+		updatedAt = new Date(new Date(row.created_at).getTime() + 1).toISOString()
+	}
 	db.prepare(
 		`UPDATE agents SET name = ?, description = ?, system_prompt = ?, required_capabilities = ?,
 			preferred_capabilities = ?, privacy = ?, pinned_provider_id = ?, pinned_instance_id = ?,
@@ -1540,7 +1547,7 @@ export function updateAgent(db: Db, id: string, patch: AgentPatch): Agent | unde
 				? null
 				: JSON.stringify(patch.modelSettings),
 		patch.enabled === undefined ? row.enabled : patch.enabled ? 1 : 0,
-		new Date().toISOString(),
+		updatedAt,
 		id,
 	)
 	return getAgent(db, id)

@@ -5,7 +5,7 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import type { CoreEvent } from "@diriz/shared"
+import { type CoreEvent, SOFTWARE_TEAM } from "@diriz/shared"
 import type { FastifyInstance } from "fastify"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { AppContext } from "../src/app.js"
@@ -193,7 +193,7 @@ describe("api: Team-Katalog", () => {
 		const before = await app.inject({ method: "GET", url: "/api/agents/catalog" })
 		expect(before.statusCode).toBe(200)
 		const catalog = before.json() as { agents: { slug: string; installed: boolean }[] }
-		expect(catalog.agents.length).toBeGreaterThan(20)
+		expect(catalog.agents.length).toBe(SOFTWARE_TEAM.length)
 		expect(catalog.agents.every((a) => !a.installed)).toBe(true)
 
 		const seeded = await app.inject({ method: "POST", url: "/api/agents/catalog" })

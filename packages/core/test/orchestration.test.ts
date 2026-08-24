@@ -82,16 +82,17 @@ describe("automatische Spezialisten-Zuordnung über den Katalog", () => {
 	})
 
 	it("straft Spezialisten ab, die Fähigkeiten fordern, die die Task nicht braucht", () => {
-		// Reine Textaufgabe: Der Redakteur (fordert `longform`) gewinnt gegen
-		// Code-Spezialisten, die `code` fordern und damit das Routing-Gate
-		// unnötig verengen würden.
-		const best = assign("Schreib ein Handbuch mit Anleitung und Beispielen")
-		expect(best.slug).toBe("technischer-redakteur")
-		const codeAgent = scoreAgents(
-			"Schreib ein Handbuch mit Anleitung und Beispielen",
-			extractProfile(createTask(db, { prompt: "Schreib ein Handbuch mit Anleitung und Beispielen" })),
+		// Reine Textaufgabe ohne technische Stichworte: Wer `code` als Pflicht
+		// fordert, verengt das Routing-Gate ohne Nutzen — und wird dafür
+		// abgewertet, statt allein über ein Zufallswort zu gewinnen.
+		const prompt = "Fasse die Ergebnisse für die Geschäftsleitung zusammen"
+		const scores = scoreAgents(
+			prompt,
+			extractProfile(createTask(db, { prompt })),
 			listAgents(db).map(toAgentCandidate),
-		).find((s) => s.agentId === blueprintAgentId("frontend-entwickler"))
-		expect(codeAgent?.reasons.join(" ")).toContain("Fordert ungenutzte Fähigkeiten")
+		)
+		const frontend = scores.find((s) => s.agentId === blueprintAgentId("frontend-entwickler"))
+		expect(frontend?.reasons.join(" ")).toContain("Fordert ungenutzte Fähigkeiten")
+		expect(frontend?.score).toBeLessThan(0)
 	})
 })

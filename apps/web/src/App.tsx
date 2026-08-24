@@ -4,6 +4,7 @@ import ErrorBoundary from "./components/ErrorBoundary.js"
 import type { IconProps } from "./components/icons.js"
 import {
 	IconAgents,
+	IconAlert,
 	IconChat,
 	IconDashboard,
 	IconDoc,
@@ -99,6 +100,14 @@ export default function App() {
 	}, [handleStreamEvent, setConnected])
 
 	const runningTasks = tasks.filter((t) => t.running).length
+
+	/**
+	 * Läuft der Core mit älterem Code als diese Oberfläche? Dann fehlen ihm
+	 * Routen, die es hier längst gibt — der Nutzer sähe sonst nur „Route
+	 * existiert nicht“ und hätte keine Ahnung, woran es liegt.
+	 */
+	const staleCore =
+		version?.builtAt !== undefined && new Date(version.builtAt).getTime() < new Date(__BUILD_TIME__).getTime()
 	const counts: Partial<Record<Route, number>> = { tasks: runningTasks }
 
 	const go = (to: Route) => {
@@ -175,6 +184,18 @@ export default function App() {
 					<IconMenu size={18} />
 					<span>{ROUTE_TITLES[route]}</span>
 				</button>
+
+				{staleCore && (
+					<div className="banner warn" role="alert">
+						<IconAlert size={17} />
+						<span className="banner-text">
+							Der Core läuft mit einem <strong>älteren Stand</strong> als diese Oberfläche (Core{" "}
+							{new Date(version?.builtAt ?? "").toLocaleTimeString("de-CH")}, Oberfläche{" "}
+							{new Date(__BUILD_TIME__).toLocaleTimeString("de-CH")}). Neuere Routen fehlen ihm — starte ihn
+							neu mit <code>npm run serve</code>.
+						</span>
+					</div>
+				)}
 
 				{/* Ein Fehler in einer Ansicht darf nie die ganze App abräumen. */}
 				<ErrorBoundary resetKey={route}>

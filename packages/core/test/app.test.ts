@@ -276,6 +276,18 @@ describe("api: Settings, Export & Import", () => {
 	})
 })
 
+describe("api: Version", () => {
+	it("meldet, wann der laufende Code gebaut wurde", async () => {
+		const res = await app.inject({ method: "GET", url: "/api/version" })
+		expect(res.statusCode).toBe(200)
+		const body = res.json() as { builtAt?: string; startedAt: string }
+		// Ohne diesen Zeitstempel bliebe ein weiterlaufender alter Prozess
+		// unsichtbar — er meldet dieselbe Versionsnummer wie der neue.
+		expect(body.builtAt).toBeTypeOf("string")
+		expect(Number.isNaN(Date.parse(body.builtAt ?? ""))).toBe(false)
+	})
+})
+
 describe("api: Chat-Verlauf", () => {
 	it("gruppiert Chat-Nachrichten zu Gesprächen — der Verlauf lebt in der Datenbank", async () => {
 		const chatId = "chat-test-1"

@@ -118,7 +118,7 @@ interface State {
 	lastError?: string
 	toasts: Toast[]
 	/** Version des laufenden Cores — deckt veraltete Prozesse sofort auf. */
-	version: { version: string; schemaVersion: number } | null
+	version: { version: string; schemaVersion: number; builtAt?: string } | null
 
 	setConnected(connected: boolean): void
 	setLastError(message?: string): void
@@ -185,7 +185,9 @@ export const useStore = create<State>((set, get) => ({
 
 	refreshVersion: async () => {
 		try {
-			const version = await api.get<{ version: string; schemaVersion: number }>("/api/version")
+			const version = await api.get<{ version: string; schemaVersion: number; builtAt?: string }>(
+				"/api/version",
+			)
 			set({ version })
 		} catch {
 			// Version ist Beiwerk — ein Fehler hier darf nichts blockieren.

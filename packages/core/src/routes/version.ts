@@ -31,8 +31,25 @@ function readVersion(): string {
 	return "0.0.0"
 }
 
+/**
+ * Wann wurde der **laufende** Code gebaut?
+ *
+ * Die Versionsnummer allein hilft nicht: Sie bleibt `0.1.0`, während sich der
+ * Code zwanzigmal ändert. Der Zeitstempel der eigenen Datei verrät dagegen
+ * sofort, ob hier noch ein Prozess von vor einer halben Stunde läuft — die
+ * häufigste Ursache für „Route existiert nicht“.
+ */
+function readBuiltAt(): string | undefined {
+	try {
+		return fs.statSync(import.meta.filename).mtime.toISOString()
+	} catch {
+		return undefined
+	}
+}
+
 const VERSION = readVersion()
 const STARTED_AT = new Date().toISOString()
+const BUILT_AT = readBuiltAt()
 
 export function registerVersion(app: FastifyInstance, ctx: AppContext): void {
 	app.get("/api/version", () => {
@@ -42,6 +59,7 @@ export function registerVersion(app: FastifyInstance, ctx: AppContext): void {
 			schemaVersion: getSetting<{ schemaVersion: number }>(ctx.db, "schema_version")?.schemaVersion ?? 0,
 			node: process.version,
 			startedAt: STARTED_AT,
+			builtAt: BUILT_AT,
 			uptimeSec: Math.round(process.uptime()),
 		}
 	})

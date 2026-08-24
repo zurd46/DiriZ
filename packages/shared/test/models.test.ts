@@ -103,11 +103,29 @@ describe("llm.md", () => {
 		expect(next).toContain("Eigene Notiz.")
 	})
 
-	it("legt Datenblatt, Changelog und init.md als Startdokumente an", () => {
+	it("legt genau ein Startdokument an — das Datenblatt", () => {
 		const docs = instanceDocs({ modelId: "phi4:14b", displayName: "Phi 4" }, DATE)
-		expect(Object.keys(docs).sort()).toEqual(["changelog", "init", "llm"])
-		expect(docs.changelog).toContain("ungeprüft")
-		expect(docs.init).toContain("Temperature")
+		expect(Object.keys(docs)).toEqual(["llm"])
+		// Die Model-Parameter stehen darin, nicht in einem eigenen `init.md`.
+		expect(docs.llm).toContain("## Voreinstellungen")
+		expect(parseLlmDoc(docs.llm ?? "").settings.temperature).toBeDefined()
+	})
+
+	it("trägt vorhandene Overrides ins Datenblatt, statt sie zu verlieren", () => {
+		const docs = instanceDocs(
+			{ modelId: "phi4:14b", displayName: "Phi 4", settings: { temperature: 0.05, maxTokens: 777 } },
+			DATE,
+		)
+		expect(parseLlmDoc(docs.llm ?? "").settings).toMatchObject({ temperature: 0.05, maxTokens: 777 })
+	})
+
+	it("schreibt geänderte Voreinstellungen zurück, ohne das Datenblatt zu zerstören", () => {
+		const md = renderLlmDoc({ modelId: "qwen3:8b", displayName: "Qwen3 8B", contextWindow: 32768 }, DATE)
+		const next = updateLlmDoc(md, { settings: { temperature: 0.42 } })
+		const spec = parseLlmDoc(next)
+		expect(spec.settings).toEqual({ temperature: 0.42 })
+		expect(spec.goodFor.length).toBeGreaterThan(0)
+		expect(spec.tools.length).toBe(3)
 	})
 })
 

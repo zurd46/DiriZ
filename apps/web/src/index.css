@@ -2471,6 +2471,16 @@ pre.code {
 	margin-top: var(--sp-5);
 }
 
+.model-doc-title {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-2);
+	margin-top: var(--sp-5);
+	padding-bottom: var(--sp-2);
+	border-bottom: 1px solid var(--border);
+	font-size: var(--fs-base);
+}
+
 .model-facts,
 .model-readout {
 	display: flex;

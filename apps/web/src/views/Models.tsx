@@ -3,8 +3,9 @@
  *
  * Eigene Ansicht, weil ein Modell etwas anderes ist als ein Spezialist. Der
  * Spezialist bekommt einen Auftrag; das Modell hat Eigenschaften — Fähigkeiten,
- * Kontext, Werkzeuge, Stärken und Schwächen. Genau die braucht die
- * Orchestrierung, um das richtige Modell zu wählen, und genau die stehen hier.
+ * Kontext, Werkzeuge, Stärken, Schwächen, Voreinstellungen. Genau die braucht
+ * die Orchestrierung, um das richtige Modell zu wählen, und genau die stehen
+ * hier — in **einem** Dokument, nicht in dreien.
  *
  * Was gespeichert wird, wirkt sofort: Fähigkeiten und Kontext-Fenster sind
  * harte Routing-Gates, „Gut für"/„Nicht geeignet für" bewegen die
@@ -16,9 +17,7 @@ import {
 	type AgentDocKind,
 	docKindsFor,
 	type InstanceModel,
-	parseInitDoc,
 	parseLlmDoc,
-	renderInitDoc,
 	renderLlmDoc,
 } from "@diriz/shared"
 import { useEffect, useMemo, useState } from "react"
@@ -52,14 +51,11 @@ interface ModelOwner {
 
 type ViewMode = "edit" | "split" | "preview"
 
-const HINTS: Record<AgentDocKind, string> = {
-	llm: "Wirksam: Fähigkeiten und Kontext-Fenster sind harte Routing-Gates, „Gut für“/„Nicht geeignet für“ bewegen die Eignungs-Achse, „Werkzeuge“ regelt den Agentik-Modus, die Qualitätsklasse den Startwert der Qualitäts-Achse.",
-	changelog: "Änderungsprotokoll — DiriZ hängt bei jeder Bearbeitung automatisch einen Eintrag an.",
-	init: "Wirksam: Zeilen der Form „Temperature: 0.3“ setzen die Voreinstellungen dieses Modells.",
-	plan: "",
-}
+/** Ein Modell führt genau ein Dokument — sein Datenblatt. */
+const KIND: AgentDocKind = docKindsFor("instance")[0] ?? "llm"
 
-const KINDS = docKindsFor("instance")
+const HINT =
+	"Alles hier ist wirksam: Fähigkeiten und Kontext-Fenster sind harte Routing-Gates, „Gut für“ und „Nicht geeignet für“ bewegen die Eignungs-Achse, „Werkzeuge“ regelt den Agentik-Modus, die Qualitätsklasse ist der Startwert der Qualitäts-Achse und „Voreinstellungen“ setzt Temperatur & Co."
 
 export default function Models() {
 	const setLastError = useStore((s) => s.setLastError)
@@ -68,7 +64,6 @@ export default function Models() {
 	const [models, setModels] = useState<ModelOwner[] | null>(null)
 	const [instances, setInstances] = useState<InstanceModel[]>([])
 	const [selectedId, setSelectedId] = useState<string | null>(null)
-	const [kind, setKind] = useState<AgentDocKind>("llm")
 	const [mode, setMode] = useState<ViewMode>("split")
 	const [query, setQuery] = useState("")
 	/** Entwürfe je `<modellId>:<kind>` — ungespeicherte Änderungen überleben den Wechsel. */
@@ -96,12 +91,12 @@ export default function Models() {
 
 	const selected = models?.find((m) => m.id === selectedId)
 	const instance = instances.find((i) => i.id === selectedId)
-	const draftKey = `${selectedId}:${kind}`
-	const stored = selected?.docs[kind] ?? ""
+	const draftKey = `${selectedId}`
+	const stored = selected?.docs[KIND] ?? ""
 	const content = drafts[draftKey] ?? stored
 	const dirty = selected !== undefined && content !== stored
-	const spec = kind === "llm" ? parseLlmDoc(content) : undefined
-	const parsedInit = kind === "init" ? Object.entries(parseInitDoc(content)) : []
+	const spec = parseLlmDoc(content)
+	const settings = Object.entries(spec.settings).filter(([, v]) => v !== undefined)
 
 	/** Gruppiert nach Rechner — dort liegen die Modelle physisch. */
 	const groups = useMemo(() => {
@@ -110,7 +105,7 @@ export default function Models() {
 			q.length === 0 ||
 			m.name.toLowerCase().includes(q) ||
 			(m.detail ?? "").toLowerCase().includes(q) ||
-			KINDS.some((k) => m.docs[k]?.toLowerCase().includes(q))
+			(m.docs[KIND] ?? "").toLowerCase().includes(q)
 		const byProvider = new Map<string, ModelOwner[]>()
 		for (const m of models?.filter(hit) ?? []) {
 			const key = m.providerLabel ?? "Ohne Rechner"
@@ -134,10 +129,10 @@ export default function Models() {
 		}
 		setBusy(true)
 		try {
-			await api.put(`${selected.basePath}/docs/${kind}`, { content })
+			await api.put(`${selected.basePath}/docs/${KIND}`, { content })
 			setModels(
 				(prev) =>
-					prev?.map((m) => (m.id === selected.id ? { ...m, docs: { ...m.docs, [kind]: content } } : m)) ??
+					prev?.map((m) => (m.id === selected.id ? { ...m, docs: { ...m.docs, [KIND]: content } } : m)) ??
 					prev,
 			)
 			reset()
@@ -296,29 +291,16 @@ export default function Models() {
 								</div>
 							)}
 
-							<div className="tabs">
-								{KINDS.map((k) => {
-									const kDirty =
-										drafts[`${selected.id}:${k}`] !== undefined &&
-										drafts[`${selected.id}:${k}`] !== selected.docs[k]
-									return (
-										<button
-											key={k}
-											type="button"
-											className={`tab ${kind === k ? "active" : ""}`}
-											onClick={() => setKind(k)}
-										>
-											<IconDoc size={14} />
-											{AGENT_DOC_FILES[k]}
-											{kDirty && <span className="dirty" title="ungespeicherte Änderungen" />}
-										</button>
-									)
-								})}
+							<div className="model-doc-title">
+								<IconDoc size={15} />
+								<strong>{AGENT_DOC_FILES[KIND]}</strong>
+								<span className="faint">— das einzige Dokument dieses Modells</span>
+								{dirty && <span className="dirty" title="ungespeicherte Änderungen" />}
 							</div>
 
 							<p className="hint" style={{ margin: "var(--sp-3) 0 0" }}>
 								<IconInfo size={14} />
-								<span>{HINTS[kind]}</span>
+								<span>{HINT}</span>
 							</p>
 
 							<div className={`docs-panes ${mode}`}>
@@ -327,8 +309,8 @@ export default function Models() {
 										className="mono docs-textarea"
 										value={content}
 										onChange={(e) => setContent(e.target.value)}
-										placeholder={`# ${AGENT_DOC_FILES[kind]}`}
-										aria-label={`${AGENT_DOC_FILES[kind]} von ${selected.name}`}
+										placeholder={`# ${AGENT_DOC_FILES[KIND]}`}
+										aria-label={`${AGENT_DOC_FILES[KIND]} von ${selected.name}`}
 										spellCheck={false}
 									/>
 								)}
@@ -339,8 +321,7 @@ export default function Models() {
 								)}
 							</div>
 
-							{spec && (
-								<div className="model-readout">
+							<div className="model-readout">
 									<span className="field-hint">Das Routing liest daraus:</span>
 									<span className={`badge ${spec.capabilities.length > 0 ? "accent" : "warn"}`}>
 										Fähigkeiten: {spec.capabilities.length > 0 ? spec.capabilities.join(", ") : "keine"}
@@ -355,18 +336,19 @@ export default function Models() {
 										Eignung: {spec.goodFor.length} Stärken / {spec.notFor.length} Schwächen
 									</span>
 								</div>
-							)}
 
-							{kind === "init" && parsedInit.length > 0 && (
 								<div className="model-readout">
-									<span className="field-hint">Erkannte Voreinstellungen:</span>
-									{parsedInit.map(([k, v]) => (
-										<span key={k} className="badge accent">
-											{k}: {Array.isArray(v) ? v.join(" | ") : String(v).slice(0, 40)}
-										</span>
-									))}
+									<span className="field-hint">Voreinstellungen:</span>
+									{settings.length === 0 ? (
+										<span className="faint text-sm">keine — es gelten die Werte des Rechners</span>
+									) : (
+										settings.map(([k, v]) => (
+											<span key={k} className="badge accent">
+												{k}: {Array.isArray(v) ? v.join(" | ") : String(v).slice(0, 40)}
+											</span>
+										))
+									)}
 								</div>
-							)}
 
 							<div className="row model-actions">
 								<button
@@ -381,7 +363,7 @@ export default function Models() {
 									<IconRefresh size={15} />
 									Zurücksetzen
 								</button>
-								{kind === "llm" && instance && (
+								{instance && (
 									<button
 										type="button"
 										className="btn"
@@ -390,17 +372,6 @@ export default function Models() {
 									>
 										<IconSparkles size={15} />
 										Aus Katalog erzeugen
-									</button>
-								)}
-								{kind === "init" && (
-									<button
-										type="button"
-										className="btn"
-										title="Format vereinheitlichen"
-										onClick={() => setContent(renderInitDoc(parseInitDoc(content), selected.name))}
-									>
-										<IconSparkles size={15} />
-										Aufräumen
 									</button>
 								)}
 								<span style={{ marginLeft: "auto" }} className="faint text-sm">

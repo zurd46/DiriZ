@@ -691,7 +691,7 @@ function AgentList(props: {
 								ownerKind="agent"
 								basePath={`/api/agents/${a.id}`}
 								ownerName={a.name}
-								onInitSaved={props.onSettingsChanged}
+								onEffectiveSaved={props.onSettingsChanged}
 								onClose={() => setDocsFor(null)}
 							/>
 						)}

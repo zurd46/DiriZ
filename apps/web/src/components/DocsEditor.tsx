@@ -34,7 +34,7 @@ interface DocResponse {
 
 const HINTS: Record<AgentDocKind, string> = {
 	plan: "Wirksam: Auftrag, Vorgehen und Leitplanken werden als verbindliche Arbeitsanweisung in den System-Prompt übernommen. Unausgefüllte Vorlagen-Zeilen ignoriert DiriZ.",
-	llm: "Wirksam: Datenblatt des Modells. Fähigkeiten und Kontext-Fenster sind harte Routing-Gates, die Qualitätsklasse ist der Startwert der Qualitäts-Achse, „Gut für“/„Nicht geeignet für“ bewegen die Eignungs-Achse.",
+	llm: "Wirksam: das Datenblatt dieses Modells. Fähigkeiten und Kontext-Fenster sind harte Routing-Gates, „Gut für“/„Nicht geeignet für“ bewegen die Eignungs-Achse, „Werkzeuge“ regelt den Agentik-Modus, „Voreinstellungen“ setzt Temperatur & Co.",
 	changelog: "Änderungsprotokoll — DiriZ hängt bei jeder Bearbeitung automatisch einen Eintrag an.",
 	init: "Wirksam: Zeilen der Form „Temperature: 0.3“ setzen die Voreinstellungen des LLM-Modells.",
 }
@@ -46,8 +46,12 @@ export default function DocsEditor(props: {
 	ownerKind: DocOwnerKind
 	/** Name für Überschriften und `init.md`-Aufräumen. */
 	ownerName: string
-	/** Wird nach dem Speichern von `init.md` gerufen (Settings neu laden). */
-	onInitSaved?: () => Promise<void> | void
+	/**
+	 * Wird gerufen, nachdem ein Dokument gespeichert wurde, das die
+	 * Model-Settings verändert (`init.md` beim Spezialisten/Rechner, `llm.md`
+	 * beim Modell) — abhängige Ansichten laden dann neu.
+	 */
+	onEffectiveSaved?: () => Promise<void> | void
 	onClose: () => void
 }) {
 	const onError = useStore((s) => s.setLastError)
@@ -84,8 +88,8 @@ export default function DocsEditor(props: {
 			await api.put(`${basePath}/docs/${kind}`, { content })
 			setDocs((prev) => ({ ...(prev ?? {}), [kind]: content }))
 			setSavedAt(new Date().toLocaleTimeString("de-DE"))
-			if (kind === "init") {
-				await props.onInitSaved?.()
+			if (kind === "init" || kind === "llm") {
+				await props.onEffectiveSaved?.()
 			}
 		} catch (e) {
 			onError(e instanceof Error ? e.message : String(e))

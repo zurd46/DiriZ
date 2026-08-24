@@ -117,7 +117,8 @@ describe("Dokument-Typen", () => {
 		// Ein Modell hat keinen Auftrag, ein Spezialist kein Datenblatt.
 		expect(docKindsFor("agent")).toEqual(["plan", "changelog", "init"])
 		expect(docKindsFor("provider")).toEqual(["plan", "changelog", "init"])
-		expect(docKindsFor("instance")).toEqual(["llm", "changelog", "init"])
+		// Ein Modell führt genau ein Dokument — sein Datenblatt.
+		expect(docKindsFor("instance")).toEqual(["llm"])
 	})
 })
 

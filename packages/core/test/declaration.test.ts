@@ -151,9 +151,10 @@ async function runAndCaptureSystemPrompt(agentId?: string): Promise<string | und
 }
 
 describe("Dokumente je LLM-Instanz", () => {
-	it("legt llm/changelog/init beim Entdecken eines Modells an — mit ausgefülltem Datenblatt", async () => {
-		// Ein Modell bekommt keinen Auftrag (`plan.md`), sondern ein Datenblatt.
-		expect(listInstanceDocs(db, instance.id).map((d) => d.kind)).toEqual(["llm", "changelog", "init"])
+	it("legt genau ein Dokument beim Entdecken eines Modells an — das Datenblatt", async () => {
+		// Ein Modell bekommt keinen Auftrag (`plan.md`), kein Änderungsprotokoll
+		// und kein eigenes `init.md` — nur sein Datenblatt.
+		expect(listInstanceDocs(db, instance.id).map((d) => d.kind)).toEqual(["llm"])
 		const res = await app.inject({ method: "GET", url: `/api/instances/${instance.id}/docs` })
 		expect(res.statusCode).toBe(200)
 		const docs = (res.json() as { docs: InstanceDoc[] }).docs
@@ -164,6 +165,8 @@ describe("Dokumente je LLM-Instanz", () => {
 		expect(llm).toContain("## Nicht geeignet für")
 		// Keine leere Vorlage: Der Katalog hat das Modell erkannt.
 		expect(llm).toContain("Familie: Qwen")
+		expect(llm).toContain("## Werkzeuge")
+		expect(llm).toContain("## Voreinstellungen")
 		expect(parseLlmDoc(llm).quality).toBeDefined()
 	})
 
@@ -201,11 +204,13 @@ describe("Dokumente je LLM-Instanz", () => {
 		expect(getInstance(db, instance.id)?.capabilities).toEqual(["code", "reasoning"])
 	})
 
-	it("`init.md` setzt die Model-Voreinstellungen der Instanz", async () => {
+	it("`## Voreinstellungen` im Datenblatt setzt die Model-Parameter", async () => {
 		const res = await app.inject({
 			method: "PUT",
-			url: `/api/instances/${instance.id}/docs/init`,
-			payload: { content: "- Temperature: 0.2\n- Max-Tokens: 1024\n" },
+			url: `/api/instances/${instance.id}/docs/llm`,
+			payload: {
+				content: "# llm.md\n\n## Voreinstellungen\n\n- Temperature: 0.2\n- Max-Tokens: 1024\n",
+			},
 		})
 		expect(res.statusCode).toBe(200)
 		expect((res.json() as { settings: Record<string, number> }).settings).toEqual({
@@ -214,12 +219,12 @@ describe("Dokumente je LLM-Instanz", () => {
 		})
 		expect(getInstance(db, instance.id)?.modelSettings).toEqual({ temperature: 0.2, maxTokens: 1024 })
 
-		// Zurücksetzen — leeres init.md räumt die Voreinstellungen ab.
-		saveInstanceDoc(db, instance.id, "init", "# init.md\n\nkeine Werte\n")
+		// Ohne Werte im Datenblatt gibt es keine Overrides mehr.
+		saveInstanceDoc(db, instance.id, "llm", "# llm.md\n\nkeine Werte\n")
 		expect(getInstance(db, instance.id)?.modelSettings).toBeNull()
 	})
 
-	it("PATCH schreibt init.md und einen Changelog-Eintrag", async () => {
+	it("PATCH schreibt die Voreinstellungen ins Datenblatt", async () => {
 		const res = await app.inject({
 			method: "PATCH",
 			url: `/api/instances/${instance.id}`,
@@ -227,15 +232,16 @@ describe("Dokumente je LLM-Instanz", () => {
 		})
 		expect(res.statusCode).toBe(200)
 		expect((res.json() as InstanceModel).modelSettings).toEqual({ temperature: 0.5 })
-		const docs = listInstanceDocs(db, instance.id)
-		expect(docs.find((d) => d.kind === "init")?.content).toContain("Temperature: 0.5")
-		expect(docs.find((d) => d.kind === "changelog")?.content).toContain("Bearbeitet: Model-Voreinstellungen")
+		const llm = listInstanceDocs(db, instance.id).find((d) => d.kind === "llm")?.content ?? ""
+		expect(llm).toContain("Temperature: 0.5")
+		expect(parseLlmDoc(llm).settings).toEqual({ temperature: 0.5 })
 		// Aufräumen für die Prompt-Tests.
-		saveInstanceDoc(db, instance.id, "init", "# init.md\n")
+		saveInstanceDoc(db, instance.id, "llm", "# llm.md\n")
 	})
 
-	it("übernimmt vorhandene Overrides einer Alt-Instanz ins init.md", () => {
-		// Instanz ohne Dokumente, aber mit Settings — wie vor Migration 0007.
+	it("übernimmt vorhandene Overrides einer Alt-Instanz ins Datenblatt", () => {
+		// Instanz ohne Dokumente, aber mit Settings — wie vor Migration 0007
+		// bzw. aus der Zeit, als die Parameter noch im `init.md` standen.
 		const legacy = upsertInstance(
 			db,
 			providerId,
@@ -247,10 +253,10 @@ describe("Dokumente je LLM-Instanz", () => {
 			JSON.stringify({ temperature: 0.9 }),
 			legacy.id,
 		)
-		const init = listInstanceDocs(db, legacy.id).find((d) => d.kind === "init")?.content ?? ""
-		expect(init).toContain("Temperature: 0.9")
+		const llm = listInstanceDocs(db, legacy.id).find((d) => d.kind === "llm")?.content ?? ""
+		expect(llm).toContain("Temperature: 0.9")
 		// Erneutes Speichern erhält die Werte, statt sie zu löschen.
-		saveInstanceDoc(db, legacy.id, "init", init)
+		saveInstanceDoc(db, legacy.id, "llm", llm)
 		expect(getInstance(db, legacy.id)?.modelSettings).toEqual({ temperature: 0.9 })
 	})
 
@@ -470,7 +476,7 @@ describe("Sammel-Endpunkt /api/docs", () => {
 				.map(([kind]) => kind)
 				.sort()
 			expect(kinds, owner.name).toEqual(
-				owner.kind === "instance" ? ["changelog", "init", "llm"] : ["changelog", "init", "plan"],
+				owner.kind === "instance" ? ["llm"] : ["changelog", "init", "plan"],
 			)
 		}
 	})

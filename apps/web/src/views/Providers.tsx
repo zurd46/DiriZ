@@ -648,8 +648,8 @@ export default function Providers() {
 													<button
 														type="button"
 														className={`icon-btn ${instDocs === inst.id ? "active" : ""}`}
-														aria-label={`Dokumente von ${inst.displayName}`}
-														title="plan.md, changelog.md und init.md dieser LLM-Instanz"
+														aria-label={`Datenblatt von ${inst.displayName}`}
+														title="llm.md — das Datenblatt dieses Modells (Fähigkeiten, Stärken, Werkzeuge, Voreinstellungen)"
 														onClick={() => setInstDocs(instDocs === inst.id ? null : inst.id)}
 													>
 														<IconDoc size={16} />
@@ -794,7 +794,7 @@ export default function Providers() {
 														ownerKind="instance"
 														basePath={`/api/instances/${inst.id}`}
 														ownerName={inst.displayName}
-														onInitSaved={async () => {
+														onEffectiveSaved={async () => {
 															if (expanded) await reloadInstances(expanded)
 														}}
 														onClose={() => setInstDocs(null)}

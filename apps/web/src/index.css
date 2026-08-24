@@ -2907,16 +2907,21 @@ pre.code {
 }
 
 /* Verlauf links, Unterhaltung rechts — unter 900 px gestapelt. */
+/* Ohne aufgeklappten Verlauf gehört die volle Breite der Unterhaltung. */
 .chat-layout {
 	flex: 1;
 	display: grid;
-	grid-template-columns: 240px minmax(0, 1fr);
+	grid-template-columns: minmax(0, 1fr);
 	gap: var(--sp-4);
 	min-height: 0;
 }
 
+.chat-layout.with-history {
+	grid-template-columns: 240px minmax(0, 1fr);
+}
+
 @media (max-width: 900px) {
-	.chat-layout {
+	.chat-layout.with-history {
 		grid-template-columns: minmax(0, 1fr);
 	}
 }
@@ -2947,27 +2952,47 @@ pre.code {
 	padding: var(--sp-2) var(--sp-2) var(--sp-1);
 }
 
+.chat-history-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: center;
+	border: 1px solid transparent;
+	border-radius: var(--r-md);
+}
+
+.chat-history-row:hover {
+	background: var(--surface-hover);
+}
+
+.chat-history-row.active {
+	background: var(--accent-soft);
+	border-color: var(--accent-line);
+}
+
 .chat-history-item {
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
+	min-width: 0;
 	text-align: left;
 	background: none;
-	border: 1px solid transparent;
-	border-radius: var(--r-md);
+	border: none;
 	padding: var(--sp-2);
 	color: var(--text);
 	cursor: pointer;
 	font: inherit;
 }
 
-.chat-history-item:hover {
-	background: var(--surface-hover);
+/* Der Löschknopf erscheint erst bei Zeigerkontakt oder Tastaturfokus —
+   sichtbar genug, um ihn zu finden, unauffällig genug, um nicht zu drängen. */
+.chat-history-del {
+	opacity: 0;
+	margin-right: var(--sp-1);
 }
 
-.chat-history-item.active {
-	background: var(--accent-soft);
-	border-color: var(--accent-line);
+.chat-history-row:hover .chat-history-del,
+.chat-history-del:focus-visible {
+	opacity: 1;
 }
 
 .chat-history-title {
@@ -3246,4 +3271,19 @@ pre.code {
 .limit-row .field-hint {
 	grid-area: hint;
 	margin: 0;
+}
+
+.chat-thoughts {
+	margin-bottom: var(--sp-2);
+	font-size: var(--fs-sm);
+	color: var(--muted);
+}
+
+.chat-thoughts summary {
+	cursor: pointer;
+}
+
+.chat-thoughts .output {
+	margin-top: var(--sp-2);
+	max-height: 220px;
 }

@@ -9,6 +9,7 @@ import type { AppContext } from "../app.js"
 import type { Db } from "../db/connection.js"
 import {
 	createTask,
+	deleteChat,
 	getAgent,
 	getExecution,
 	getInstance,
@@ -170,6 +171,24 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 		// Neueste Gespräche zuerst — der Verlauf innerhalb eines Gesprächs bleibt
 		// chronologisch, sonst läse sich die Unterhaltung rückwärts.
 		return [...chats.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+	})
+
+	/**
+	 * Ein Gespräch samt allen Nachrichten löschen. Läuft noch etwas, wird
+	 * abgelehnt statt heimlich abgebrochen — sonst verschwände eine Task, deren
+	 * Modell gerade Dateien schreibt.
+	 */
+	app.delete<{ Params: { chatId: string } }>("/api/chats/:chatId", (req, reply) => {
+		const tasks = listChatTasks(ctx.db, req.params.chatId)
+		if (tasks.length === 0) {
+			return reply.code(404).send({ error: "Gespräch nicht gefunden" })
+		}
+		const laufend = tasks.find((t) => ctx.engine.isRunning(t.id))
+		if (laufend) {
+			return reply.code(409).send({ error: "Im Gespräch läuft noch eine Aufgabe — bitte erst abbrechen" })
+		}
+		const deleted = deleteChat(ctx.db, req.params.chatId)
+		return { deleted }
 	})
 
 	app.get<{ Params: { id: string } }>("/api/tasks/:id", (req, reply) => {

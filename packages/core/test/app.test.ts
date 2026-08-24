@@ -306,6 +306,31 @@ describe("api: Chat-Verlauf", () => {
 		const chats = res.json() as { chatId: string }[]
 		expect(chats.map((c) => c.chatId)).toEqual(["chat-test-1"])
 	})
+
+	it("löscht ein Gespräch samt allen Nachrichten", async () => {
+		const chatId = "chat-zum-loeschen"
+		for (const prompt of ["A", "B"]) {
+			await app.inject({
+				method: "POST",
+				url: "/api/tasks",
+				payload: { prompt, metadata: { chatId } },
+			})
+		}
+		const del = await app.inject({ method: "DELETE", url: `/api/chats/${chatId}` })
+		expect(del.statusCode).toBe(200)
+		expect(del.json()).toEqual({ deleted: 2 })
+
+		const rest = await app.inject({ method: "GET", url: `/api/chats?chatId=${chatId}` })
+		expect(rest.json()).toEqual([])
+		// Andere Gespräche bleiben unberührt.
+		const alle = (await app.inject({ method: "GET", url: "/api/chats" })).json() as { chatId: string }[]
+		expect(alle.some((c) => c.chatId === "chat-test-1")).toBe(true)
+	})
+
+	it("meldet ein unbekanntes Gespräch als 404", async () => {
+		const res = await app.inject({ method: "DELETE", url: "/api/chats/gibt-es-nicht" })
+		expect(res.statusCode).toBe(404)
+	})
 })
 
 describe("api: Parallelitäts- und GPU-Grenzen", () => {

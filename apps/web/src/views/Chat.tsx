@@ -27,6 +27,7 @@ import {
 	IconPlus,
 	IconServer,
 	IconStop,
+	IconTrash,
 	IconWorkspace,
 } from "../components/icons.js"
 import Markdown from "../components/Markdown.js"
@@ -110,6 +111,18 @@ export default function Chat() {
 	const [repoId, setRepoId] = useState("")
 	const [instances, setInstances] = useState<InstanceModel[]>([])
 	const [keepContext, setKeepContext] = useState(true)
+	/**
+	 * Verlauf standardmässig zugeklappt — die Unterhaltung bekommt die Breite.
+	 * Die Wahl bleibt erhalten (localStorage), damit man sie nicht bei jedem
+	 * Aufruf neu treffen muss; ein blockierter Speicher ist kein Fehlerfall.
+	 */
+	const [historyOpen, setHistoryOpen] = useState(() => {
+		try {
+			return window.localStorage.getItem("diriz_chat_history") === "1"
+		} catch {
+			return false
+		}
+	})
 	const [busy, setBusy] = useState(false)
 	/** Sekundentakt — nur damit Wartezeiten mitlaufen. */
 	const [tick, setTick] = useState(0)
@@ -256,6 +269,34 @@ export default function Chat() {
 		}
 	}
 
+	/** Ein ganzes Gespräch löschen — mit Rückfrage, es ist unwiderruflich. */
+	const removeChat = async (chat: ChatSummary) => {
+		if (!window.confirm(`„${chat.title}“ mit ${chat.turns.length} Nachricht(en) endgültig löschen?`)) {
+			return
+		}
+		try {
+			await api.del(`/api/chats/${chat.chatId}`)
+			if (chat.chatId === chatId) {
+				setChatId(crypto.randomUUID())
+				setPending([])
+			}
+			await loadChats()
+		} catch (e) {
+			setLastError(e instanceof Error ? e.message : String(e))
+		}
+	}
+
+	const toggleHistory = () => {
+		setHistoryOpen((open) => {
+			try {
+				window.localStorage.setItem("diriz_chat_history", open ? "0" : "1")
+			} catch {
+				// Ohne Speicher gilt die Wahl eben nur für diese Sitzung.
+			}
+			return !open
+		})
+	}
+
 	const newChat = () => {
 		setChatId(crypto.randomUUID())
 		setPending([])
@@ -275,6 +316,16 @@ export default function Chat() {
 					</p>
 				</div>
 				<div className="page-actions">
+					<button
+						type="button"
+						className="btn"
+						onClick={toggleHistory}
+						aria-expanded={historyOpen}
+						aria-controls="chat-history"
+					>
+						<IconChat size={15} />
+						Verlauf{chats.length > 0 ? ` (${chats.length})` : ""}
+					</button>
 					<button type="button" className="btn" onClick={newChat}>
 						<IconPlus size={15} />
 						Neuer Chat
@@ -292,33 +343,45 @@ export default function Chat() {
 				</div>
 			)}
 
-			<div className="chat-layout">
-				<aside className="chat-history" aria-label="Bisherige Gespräche">
-					<div className="chat-history-head">Verlauf</div>
-					{chats.length === 0 && <p className="field-hint">Noch keine Gespräche.</p>}
-					{chats.map((c) => (
-						<button
-							key={c.chatId}
-							type="button"
-							className={`chat-history-item ${c.chatId === chatId ? "active" : ""}`}
-							onClick={() => {
-								setChatId(c.chatId)
-								setPending([])
-							}}
-						>
-							<span className="chat-history-title">{c.title}</span>
-							<span className="chat-history-meta">
-								{c.turns.length} Nachricht{c.turns.length === 1 ? "" : "en"} ·{" "}
-								{new Date(c.updatedAt).toLocaleString("de-CH", {
-									day: "2-digit",
-									month: "2-digit",
-									hour: "2-digit",
-									minute: "2-digit",
-								})}
-							</span>
-						</button>
-					))}
-				</aside>
+			<div className={`chat-layout ${historyOpen ? "with-history" : ""}`}>
+				{historyOpen && (
+					<aside className="chat-history" id="chat-history" aria-label="Bisherige Gespräche">
+						<div className="chat-history-head">Verlauf</div>
+						{chats.length === 0 && <p className="field-hint">Noch keine Gespräche.</p>}
+						{chats.map((c) => (
+							<div key={c.chatId} className={`chat-history-row ${c.chatId === chatId ? "active" : ""}`}>
+								<button
+									type="button"
+									className="chat-history-item"
+									onClick={() => {
+										setChatId(c.chatId)
+										setPending([])
+									}}
+								>
+									<span className="chat-history-title">{c.title}</span>
+									<span className="chat-history-meta">
+										{c.turns.length} Nachricht{c.turns.length === 1 ? "" : "en"} ·{" "}
+										{new Date(c.updatedAt).toLocaleString("de-CH", {
+											day: "2-digit",
+											month: "2-digit",
+											hour: "2-digit",
+											minute: "2-digit",
+										})}
+									</span>
+								</button>
+								<button
+									type="button"
+									className="btn ghost sm chat-history-del"
+									onClick={() => void removeChat(c)}
+									aria-label={`Gespräch „${c.title}“ löschen`}
+									title="Gespräch löschen"
+								>
+									<IconTrash size={13} />
+								</button>
+							</div>
+						))}
+					</aside>
+				)}
 
 				<div className="chat-main">
 					<div className="chat-log">
@@ -340,10 +403,14 @@ export default function Chat() {
 							const answer = run?.text || turn.answer
 							const worker = workerOf(turn)
 							const isRunning = run?.status === "running" || turn.status === "running"
-							const loading = isRunning && run !== undefined && run.firstDeltaAt === undefined
+							// „Lädt“ heisst: noch kein Lebenszeichen — kein Text, kein
+							// Tool-Aufruf, kein Gedankengang. Im Agentik-Modus beginnt ein
+							// Modell oft mit `list_files` und schreibt minutenlang keine Zeile.
+							const loading = isRunning && run !== undefined && run.firstActivityAt === undefined
 							const loadMs =
-								run?.startedAt !== undefined ? (run.firstDeltaAt ?? Date.now()) - run.startedAt : undefined
+								run?.startedAt !== undefined ? (run.firstActivityAt ?? Date.now()) - run.startedAt : undefined
 							const toolOps = run?.toolOps ?? []
+							const lastTool = toolOps.at(-1)
 							const files = turn.files
 							return (
 								<div key={turn.taskId} className="chat-turn">
@@ -397,7 +464,14 @@ export default function Chat() {
 												) : (
 													<>
 														<span className="dot-pulse" />
-														schreibt … {run?.usage ? `${run.usage.tokensOut} Tokens` : ""}
+														{run?.text
+															? "schreibt …"
+															: lastTool
+																? `arbeitet mit Dateien … ${lastTool.name}`
+																: run?.reasoning
+																	? "denkt nach …"
+																	: "arbeitet …"}
+														{run?.usage ? ` ${run.usage.tokensOut} Tokens` : ""}
 														{run?.usage?.tps ? ` · ${run.usage.tps.toFixed(1)} Tokens/s` : ""}
 														{loadMs !== undefined ? ` · Ladezeit ${seconds(loadMs)}` : ""}
 													</>
@@ -417,6 +491,13 @@ export default function Chat() {
 													</li>
 												))}
 											</ul>
+										)}
+
+										{run?.reasoning && (
+											<details className="chat-thoughts">
+												<summary>Gedankengang ({run.reasoning.length} Zeichen)</summary>
+												<pre className="output">{run.reasoning}</pre>
+											</details>
 										)}
 
 										{answer ? (

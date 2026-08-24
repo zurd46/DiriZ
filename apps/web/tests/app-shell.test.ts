@@ -146,6 +146,13 @@ test("Chat zeigt Eingabefeld, Zielwahl und Senden-Knopf", async ({ page }) => {
 	await eingabe.fill("Prüfe die Anmeldung auf SQL-Injection")
 	await expect(senden).toBeEnabled()
 
+	// Der Verlauf ist zugeklappt, damit die Unterhaltung die Breite bekommt.
+	await expect(page.locator("#chat-history")).toHaveCount(0)
+	await page.getByRole("button", { name: /^Verlauf/ }).click()
+	await expect(page.locator("#chat-history")).toBeVisible()
+	await page.getByRole("button", { name: /^Verlauf/ }).click()
+	await expect(page.locator("#chat-history")).toHaveCount(0)
+
 	// „Repository ändern“ blendet die Repo-Auswahl ein — solange keines
 	// angebunden ist, stattdessen den Weg dorthin. Eine leere Auswahl ohne
 	// Erklärung war der häufigste Stolperstein.

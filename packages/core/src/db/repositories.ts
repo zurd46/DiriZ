@@ -896,6 +896,17 @@ export function listChatTasks(db: Db, chatId?: string, limit = 500): Task[] {
 	return rows.map(mapTask)
 }
 
+/**
+ * Löscht ein ganzes Chat-Gespräch — alle seine Tasks.
+ *
+ * Executions, Chunks, Dateien, Routing-Entscheidungen und Agenten-Auswahlen
+ * hängen per `ON DELETE CASCADE` an der Task und verschwinden mit. Gibt die
+ * Anzahl gelöschter Tasks zurück.
+ */
+export function deleteChat(db: Db, chatId: string): number {
+	return db.prepare("DELETE FROM tasks WHERE metadata_json LIKE ?").run(`%"chatId":"${chatId}"%`).changes
+}
+
 export function getTask(db: Db, id: string): Task | undefined {
 	const row = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as unknown as TaskRow | undefined
 	return row ? mapTask(row) : undefined

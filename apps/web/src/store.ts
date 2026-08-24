@@ -35,12 +35,18 @@ export interface LiveRun {
 	/** Beginn des Laufs (ms). Ohne ihn liesse sich die Ladezeit nicht zeigen. */
 	startedAt?: number
 	/**
-	 * Ankunft des **ersten** Tokens (ms). Die Zeit davor ist die Ladephase:
-	 * Das Modell wandert in den Grafikspeicher, was Minuten dauern kann. Ohne
-	 * diese Marke sieht die Oberfläche aus, als hinge sie.
+	 * Erstes **Lebenszeichen** (ms) — Text, Tool-Aufruf oder Gedankengang.
+	 *
+	 * Die Zeit davor ist die Ladephase: Das Modell wandert in den
+	 * Grafikspeicher, was Minuten dauern kann. Bewusst nicht nur der erste
+	 * Text-Token: Im Agentik-Modus beginnt ein Modell oft mit `list_files` und
+	 * schreibt minutenlang keine Zeile — die Anzeige behauptete dann, es lade
+	 * noch, während es längst arbeitete.
 	 */
-	firstDeltaAt?: number
+	firstActivityAt?: number
 	text: string
+	/** Gedankengang eines Reasoning-Modells — getrennt vom Antworttext. */
+	reasoning?: string
 	status: "running" | "done" | "failed"
 	usage?: { tokensIn: number; tokensOut: number; tps: number; costUsd: number }
 	failovers: string[]
@@ -318,7 +324,24 @@ export const useStore = create<State>((set, get) => ({
 							[executionId]: {
 								...run,
 								text: run.text + delta,
-								firstDeltaAt: run.firstDeltaAt ?? Date.now(),
+								firstActivityAt: run.firstActivityAt ?? Date.now(),
+							},
+						},
+					}
+				})
+				break
+			}
+			case "execution.reasoning": {
+				const { executionId, delta } = core.data
+				set((s) => {
+					const run = s.live[executionId] ?? { text: "", status: "running" as const, failovers: [] }
+					return {
+						live: {
+							...s.live,
+							[executionId]: {
+								...run,
+								reasoning: (run.reasoning ?? "") + delta,
+								firstActivityAt: run.firstActivityAt ?? Date.now(),
 							},
 						},
 					}
@@ -345,7 +368,7 @@ export const useStore = create<State>((set, get) => ({
 								// Anderes Modell → neuer Ladevorgang. Die Uhr beginnt von vorn,
 								// sonst zeigte die Ansicht eine längst gescheiterte Wartezeit.
 								startedAt: Date.now(),
-								firstDeltaAt: undefined,
+								firstActivityAt: undefined,
 								failovers: [...run.failovers, `${from} → ${to} (${reason})`],
 							},
 						},
@@ -362,6 +385,7 @@ export const useStore = create<State>((set, get) => ({
 							...s.live,
 							[executionId]: {
 								...run,
+								firstActivityAt: run.firstActivityAt ?? Date.now(),
 								toolOps: [...(run.toolOps ?? []), { id: crypto.randomUUID(), name, argsSummary, ok }],
 							},
 						},

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/de/2.0
 
 ## Unreleased
 
+### Added
+- **Chat-Verlauf mit allen Gesprächen** — geladen aus `/api/chats`, gruppiert über `metadata.chatId`. Der Verlauf **ist** die Datenbank: Nichts liegt nur im Browser, also überlebt er Neuladen, Browserwechsel und Neustart und bleibt unter „Tasks" mit Routing-Entscheidung nachvollziehbar
+  - Gespräche lassen sich **löschen** (`DELETE /api/chats/:chatId`, mit Rückfrage). Läuft im Gespräch noch eine Aufgabe, wird abgelehnt statt heimlich abgebrochen
+  - Der Verlauf ist **zuklappbar und standardmässig zu**, damit die Unterhaltung die volle Breite bekommt; die Wahl bleibt erhalten
+  - „Neuer Chat" beginnt ein Gespräch, ohne das alte anzufassen
+- **Im Chat ist jederzeit sichtbar, wer woran arbeitet:** Spezialist, Modell **und Rechner** in der Kopfzeile, dazu eine Echtzeit-Phasenanzeige — „Modell wird geladen … 69 s" → „arbeitet mit Dateien … list_files" → „denkt nach …" → „schreibt … 340 Tokens · 35 Tokens/s · Ladezeit 12 s". Tool-Operationen, Failover-Wechsel und der Gedankengang (einklappbar) laufen live mit
+- **Code erscheint als Editor-Block:** eigener Rahmen, benannte Sprache, Kopier-Knopf; Antworten werden als Markdown gerendert statt als Rohtext
+- `execution.reasoning`: Gedankengang eines Reasoning-Modells als eigener Event- und Chunk-Typ — getrennt vom Antworttext
+
+### Fixed (Chat & Routing)
+- **Reasoning-Modelle lieferten leere Antworten:** Der OpenAI-kompatible Adapter las nur `delta.content`. Ein Modell, das seine Tokens im Gedankengang verbraucht (`reasoning_content`), erzeugte damit tausende Tokens und eine leere Antwort. Der Gedankengang wird jetzt gelesen; bleibt die Antwort leer, gilt er — ausdrücklich gekennzeichnet — als Ergebnis
+- **Zwei Tasks mit ähnlichem Titel blockierten sich im selben Repository:** Der Arbeitsbranch kam nur aus dem Titel, der Arbeitsordner trug längst die Task-ID. Git verweigerte den zweiten Worktree („is already used by worktree at …"). `workBranchName` hängt jetzt die Kurz-ID an
+- **Der Agentik-Modus fand keinen Spezialisten:** „Ich möchte eine Webseite für eine Autogarage" enthält kein technisches Stichwort. Wer Dateien schreiben lässt, stellt eine Code-Aufgabe — `agentMode` ergänzt jetzt `code` und `tools` als Wunsch-Fähigkeiten im Task-Profil
+- **Katalog-Verbesserungen erreichten bestehende Spezialisten nicht** (ihre Beschreibung steht in der Datenbank). `refreshCatalogAgents` zieht **unveränderte** Katalog-Spezialisten nach; selbst bearbeitete bleiben unberührt
+- **„Modell wird geladen" stand da, während das Modell längst arbeitete:** Die Ladephase endete erst beim ersten Text-Token — im Agentik-Modus beginnt ein Modell aber oft mit `list_files`. Jetzt zählt jedes Lebenszeichen: Text, Tool-Aufruf oder Gedankengang
+- **„Failed to fetch"** sagte weder Ursache noch Adresse. Netzwerkfehler nennen jetzt den nicht erreichbaren Core samt Startbefehl; der Chat zeigt zusätzlich ein Verbindungs-Banner und sperrt das Senden
+
 ### Fixed
 - **Der Agentik-Modus liefert jetzt immer eine vollständige Antwort.** Bisher brach der Loop am Schritt-Limit einfach ab — bestand der letzte Schritt nur aus Tool-Calls (der Normalfall beim Erkunden eines Repositories), kam gar keine Antwort zurück, sondern nur der Hinweis „die Antwort kann unvollständig sein"
   - Das Limit begrenzt jetzt **nur die Tool-Nutzung, nie die Antwort**: Ist das Budget aufgebraucht, folgt ein Abschluss-Schritt **ohne** Tool-Specs — das Modell muss die Aufgabe aus dem bereits Gesammelten fertig beantworten (Ergebnisse, Diagnose, offene Punkte, nächste Schritte)

@@ -56,6 +56,7 @@ const CASES: [prompt: string, slug: string][] = [
 	["Entwirf das Datenmodell mit Tabellen und Indizes für die Bestellungen", "datenbank-architekt"],
 	["Entwirf den Nutzerfluss und das Layout für das Dashboard", "ux-designer"],
 	["Prüfe die Oberfläche auf Barrierefreiheit nach WCAG", "accessibility-spezialist"],
+	["Ungültiger Wert in Feld sku: strukturierte Daten und JSON-LD nach Schema.org prüfen", "seo-spezialist"],
 	["Lege eine Konvention fest und schreib die Entscheidungsvorlage für das Team", "tech-lead"],
 	["Schreib eine React-Komponente für das Login-Formular mit TypeScript", "frontend-entwickler"],
 	["Implementiere den Endpoint im Fastify-Backend mit Validierung", "backend-entwickler"],

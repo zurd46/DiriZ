@@ -3287,3 +3287,22 @@ pre.code {
 	margin-top: var(--sp-2);
 	max-height: 220px;
 }
+
+/* Hinweis, wenn die Zielwahl nicht zur Absicht im Text passt. */
+.chat-nudge {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-2);
+	padding: var(--sp-2);
+	border: 1px solid var(--warn-soft);
+	border-radius: var(--r-md);
+	background: var(--warn-soft);
+	color: var(--warn-text);
+	font-size: var(--fs-sm);
+}
+
+.chat-nudge span {
+	flex: 1;
+	min-width: 200px;
+}

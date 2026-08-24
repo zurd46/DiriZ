@@ -241,7 +241,8 @@ export function tokenize(text: string): string[] {
 /**
  * Bewertet alle Agenten gegen einen Prompt (deterministisch, erklärt):
  *
- * - Name im Prompt: +10 · Namens-Terms: +4 je (max 8)
+ * - Name im Prompt: +10 · Namens-Terms: +4 je ab **zwei** Treffern (max 8);
+ *   ein einzelnes Namenswort nur +1 — sonst gewinnt ein Allerweltswort
  * - Beschreibungsterms im Prompt: +2 je (max 10)
  * - Pflicht-Fähigkeit matcht Task-Pflicht: +2 je (max 4)
  * - Wunsch-Fähigkeit matcht Task-Wunsch: +1 je (max 3)
@@ -268,9 +269,16 @@ export function scoreAgents(prompt: string, profile: AgentProfile, agents: Agent
 		}
 		const nameTerms = [...new Set(tokenize(name))]
 		const nameHits = nameTerms.filter((t) => promptTerms.has(t))
-		if (nameHits.length > 0) {
+		if (nameHits.length >= 2) {
 			score += Math.min(8, nameHits.length * 4)
 			reasons.push(`Namens-Treffer: ${nameHits.slice(0, 3).join(", ")}`)
+		} else if (nameHits.length === 1) {
+			// **Ein** Namenswort ist ein Hinweis, kein Beweis. „Strukturierte
+			// Daten“ machte sonst den Daten-Ingenieur zum Sieger einer
+			// SEO-Frage, nur weil „Daten“ in seinem Namen steht — mit mehr
+			// Punkten, als eine echte Beschreibungsübereinstimmung liefert.
+			score += 1
+			reasons.push(`Namenswort: ${nameHits[0]}`)
 		}
 		const descTerms = [...new Set(tokenize(agent.description))]
 		const descHits = descTerms.filter((t) => promptTerms.has(t))

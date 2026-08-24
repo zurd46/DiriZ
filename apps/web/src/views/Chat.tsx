@@ -71,6 +71,14 @@ interface ChatSummary {
 	turns: Turn[]
 }
 
+/**
+ * Verlangt der Auftrag Dateizugriff? „Nur antworten“ liefert dann eine
+ * allgemeine Abhandlung statt einer Prüfung am echten Code — der häufigste
+ * Fehlgriff, weil die Absicht im Text steht und nicht in der Zielwahl.
+ */
+const NEEDS_FILES =
+	/\b(im|ins|am|das|dem|unser[nm]?|meine[nmr]?)\s+(projekt|repo|repository|code|codebase|quellcode)\b|\b(datei|dateien|quelltext|implementier|umsetzen|einbauen|beheb|fixe?n?)\b/i
+
 /** Titel aus der ersten Zeile — er benennt später auch den Git-Branch. */
 function titleFrom(prompt: string): string {
 	const first = prompt.trim().split(/\r?\n/)[0] ?? ""
@@ -586,6 +594,23 @@ export default function Chat() {
 							</label>
 						</div>
 						{activeTarget && <p className="field-hint">{activeTarget.hint}</p>}
+						{target === "answer" && NEEDS_FILES.test(input) && (
+							<div className="chat-nudge">
+								<IconAlert size={14} />
+								<span>
+									Der Auftrag klingt nach Arbeit am echten Code. „Nur antworten“ hat keinen Dateizugriff — die
+									Antwort bliebe allgemein.
+								</span>
+								<button type="button" className="btn sm" onClick={() => setTarget("repo")}>
+									<IconGitBranch size={13} />
+									Repository ändern
+								</button>
+								<button type="button" className="btn sm" onClick={() => setTarget("workspace")}>
+									<IconWorkspace size={13} />
+									Projekt anlegen
+								</button>
+							</div>
+						)}
 						<textarea
 							value={input}
 							onChange={(e) => setInput(e.target.value)}

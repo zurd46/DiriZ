@@ -98,6 +98,61 @@ test("kein Nachscrollen, wenn nichts mehr läuft", async ({ page }) => {
 	expect(position).toBeLessThan(8)
 })
 
+test("laufender Auftrag reisst die Ansicht nicht nach unten", async ({ page }) => {
+	// Ein **laufender** Chat, komplett aus der Stubbing-Ebene: nur so ist der
+	// Sekundentakt der Ansicht deterministisch — echte Läufe brauchen ein Modell.
+	const jetzt = new Date().toISOString()
+	const turns = Array.from({ length: 15 }, (_, i) => ({
+		taskId: `stub-${i}`,
+		prompt: `Lange Nachricht Nummer ${i + 1}, damit der Verlauf sicher überläuft`,
+		status: i === 14 ? "running" : "done",
+		createdAt: jetzt,
+		agentMode: false,
+		repoId: null,
+		agentName: null,
+		agentReason: null,
+		modelName: null,
+		providerLabel: null,
+		answer: i === 14 ? "" : `Antwort ${i + 1} mit genug Text, dass sie Platz braucht.`,
+		error: null,
+		files: [],
+		toolCalls: [],
+	}))
+	await page.route("**/api/chats", (route) =>
+		route.fulfill({
+			status: 200,
+			contentType: "application/json",
+			body: JSON.stringify([
+				{ chatId: "e2e-running", title: "Laufender Auftrag", createdAt: jetzt, updatedAt: jetzt, turns },
+			]),
+		}),
+	)
+
+	await page.goto("/chat")
+	await page.getByRole("button", { name: /^Verlauf/ }).click()
+	await page.locator(".chat-history-item").first().click()
+	await expect(page.locator(".chat-msg.user").last()).toBeVisible()
+
+	// Nach oben scrollen, **während** gearbeitet wird …
+	await page.locator(".chat-log").evaluate((el) => {
+		el.scrollTop = 0
+	})
+	// … und über mehrere Takte des Nachscroll-Intervalls dort bleiben.
+	await page.waitForTimeout(3500)
+	const position = await page.locator(".chat-log").evaluate((el) => el.scrollTop)
+	expect(position).toBeLessThan(8)
+
+	// Wieder ganz nach unten: ab da darf die Ansicht auch wieder mitlaufen.
+	await page.locator(".chat-log").evaluate((el) => {
+		el.scrollTop = el.scrollHeight
+	})
+	await page.waitForTimeout(1500)
+	const unten = await page
+		.locator(".chat-log")
+		.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight)
+	expect(unten).toBeLessThan(8)
+})
+
 test("Werkzeug-Badges stehen nebeneinander, nicht gestapelt", async ({ page }) => {
 	await page.goto("/chat")
 	// Die Leiste ist erst mit Operationen sichtbar; geprüft wird die Regel

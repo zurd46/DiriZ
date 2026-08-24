@@ -501,17 +501,45 @@ export default function Chat() {
 	 * angefangene Bewegungen überlagern und das Bild zittert.
 	 */
 	/**
-	 * Ans Ende springen — **nur den Verlauf**, nie die Seite. `scrollIntoView`
-	 * bewegt jeden scrollbaren Vorfahren mit; dadurch sprang die ganze Ansicht.
+	 * Klebt die Ansicht am unteren Rand? Nur dann darf sie automatisch
+	 * nachziehen. Sobald jemand nach oben scrollt, gehört der Verlauf ihm —
+	 * auch mitten in einem laufenden Auftrag.
 	 */
-	const scrollToEnd = useCallback(() => {
+	const stickToBottom = useRef(true)
+
+	/** Toleranz in Pixeln: ein paar Pixel Abstand gelten noch als „unten“. */
+	const BOTTOM_EPS = 64
+
+	const onLogScroll = useCallback(() => {
 		const el = logRef.current
-		if (el) {
-			el.scrollTop = el.scrollHeight
+		if (!el) {
+			return
 		}
+		stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_EPS
 	}, [])
 
-	// Neue Nachricht: einmal ans Ende — die hat man gerade selbst abgeschickt.
+	/**
+	 * Ans Ende springen — **nur den Verlauf**, nie die Seite. `scrollIntoView`
+	 * bewegt jeden scrollbaren Vorfahren mit; dadurch sprang die ganze Ansicht.
+	 *
+	 * Ohne `force` bewegt sich gar nichts, solange die Leserin oben steht.
+	 */
+	const scrollToEnd = useCallback((force = false) => {
+		const el = logRef.current
+		if (!el || (!force && !stickToBottom.current)) {
+			return
+		}
+		stickToBottom.current = true
+		el.scrollTop = el.scrollHeight
+	}, [])
+
+	// Chatwechsel: neuer Verlauf, neue Ausgangslage — immer ganz unten anfangen.
+	useEffect(() => {
+		stickToBottom.current = true
+		scrollToEnd(true)
+	}, [chatId, scrollToEnd])
+
+	// Neue Nachricht: nachziehen, aber nur wenn die Ansicht ohnehin unten steht.
 	useEffect(() => {
 		if (turns.length > 0) {
 			scrollToEnd()
@@ -519,9 +547,9 @@ export default function Chat() {
 	}, [turns.length, scrollToEnd])
 
 	/**
-	 * Mitlaufen **nur, solange gearbeitet wird**. Ist der Lauf fertig, gehört
-	 * die Ansicht der Leserin: Wer nach oben scrollt, um die Antwort noch
-	 * einmal zu lesen, darf nicht wieder nach unten gerissen werden.
+	 * Mitlaufen **nur, solange gearbeitet wird** — und nur, solange niemand
+	 * selbst gescrollt hat. Wer nach oben geht, um die Antwort noch einmal zu
+	 * lesen, darf nicht wieder nach unten gerissen werden.
 	 */
 	useEffect(() => {
 		if (!running) {
@@ -579,6 +607,8 @@ export default function Chat() {
 		}
 		setInput("")
 		setBusy(true)
+		// Eigene Nachricht: dorthin springen, auch wenn gerade oben gelesen wurde.
+		scrollToEnd(true)
 		try {
 			const history = turns
 				.filter((t) => t.status === "done")
@@ -760,7 +790,7 @@ export default function Chat() {
 				)}
 
 				<div className="chat-main">
-					<div className="chat-log" ref={logRef}>
+					<div className="chat-log" ref={logRef} onScroll={onLogScroll}>
 						{turns.length === 0 && (
 							<div className="empty">
 								<span className="icon-chip">

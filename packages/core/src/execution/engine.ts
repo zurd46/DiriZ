@@ -63,6 +63,7 @@ import {
 	listAgents,
 	listExecutionsByTask,
 	listTasks,
+	listToolCallsByTask,
 	replayOutput,
 	saveAgentSelection,
 	saveDecision,
@@ -340,6 +341,20 @@ export class ExecutionEngine {
 
 		const ziel = chain.goal ?? task.prompt
 		const chainId = chain.id ?? task.id
+		const rootTaskId = chain.rootTaskId ?? task.id
+
+		// Was die vorige Stufe schon gelesen hat: Der nächste Spezialist arbeitet
+		// im selben Verzeichnis und muss dieselben Dateien nicht noch einmal
+		// durchlesen — jedes erneute Lesen kostet Zeit und bläht den Kontext.
+		const gelesen = [
+			...new Set(
+				geschwister.flatMap((t) =>
+					listToolCallsByTask(this.deps.db, t.id)
+						.filter((c) => c.ok && c.name === "read_file")
+						.map((c) => c.argsSummary),
+				),
+			),
+		].slice(0, 40)
 		let gestartet = 0
 		for (const agentId of nextStage) {
 			const agent = getAgent(this.deps.db, agentId)
@@ -360,17 +375,31 @@ export class ExecutionEngine {
 					`## Vorarbeit aus Stufe ${stage + 1}`,
 					"",
 					vorarbeit,
+					...(gelesen.length > 0
+						? [
+								"",
+								"## Bereits gelesen",
+								"",
+								"Diese Dateien hat die vorige Stufe im **selben** Arbeitsverzeichnis schon gelesen;",
+								"ihr Stand steht oben. Lies sie nur erneut, wenn du eine konkrete Stelle brauchst:",
+								"",
+								...gelesen.map((f) => `- ${f}`),
+							]
+						: []),
 					"",
 					"## Deine Aufgabe",
 					"",
 					"Bau darauf auf und erledige den Teil, für den du zuständig bist. " +
-						"Wiederhole die Vorarbeit nicht, sondern ergänze oder korrigiere sie.",
+						"Wiederhole die Vorarbeit nicht, sondern ergänze oder korrigiere sie. " +
+						"Du arbeitest im selben Arbeitsverzeichnis wie die vorige Stufe — ihre Änderungen " +
+						"liegen bereits vor dir.",
 				].join("\n"),
 				metadata: {
 					...task.metadata,
 					chain: {
 						...chain,
 						id: chainId,
+						rootTaskId,
 						stages,
 						stage: stage + 1,
 						index: stages.slice(0, stage + 1).reduce((n, s) => n + s.length, 0),
@@ -382,6 +411,11 @@ export class ExecutionEngine {
 				repoId: task.repoId ?? null,
 				baseBranch: task.baseBranch ?? null,
 			})
+			// Auf demselben Arbeitsbranch weiterbauen: Sonst zweigte jede Stufe
+			// erneut von `main` ab und die Arbeit der vorigen wäre verloren.
+			if (task.repoId && task.workBranch) {
+				setTaskRepo(this.deps.db, folge.id, { workBranch: task.workBranch })
+			}
 			this.deps.emit({ event: "task.created", data: { taskId: folge.id } })
 			this.deps.log(
 				"info",
@@ -415,18 +449,19 @@ export class ExecutionEngine {
 	}
 
 	/**
-	 * Wartende Kettenschritte starten, sobald Kapazität frei wird.
+	 * Wartende Aufträge starten, sobald Kapazität frei wird.
 	 *
 	 * Ohne das bliebe eine parallele Stufe unvollständig: Was am
 	 * Parallelitäts-Limit abprallt, würde nie wieder angefasst — und die
-	 * nächste Stufe wartete ewig auf einen Schritt, der nie lief.
+	 * nächste Stufe wartete ewig auf einen Schritt, der nie lief. Dasselbe gilt
+	 * für eine einzelne Task, die alle Rechner beschäftigt vorfand.
 	 */
 	private drainQueued(): void {
-		for (const t of listTasks(this.deps.db)) {
+		for (const t of listTasks(this.deps.db, { status: "queued" })) {
 			if (this.activeCount >= this.concurrencyLimit) {
 				return
 			}
-			if (t.status === "queued" && t.metadata.chain && !this.isRunning(t.id)) {
+			if (!this.isRunning(t.id)) {
 				this.start(t.id)
 			}
 		}
@@ -910,12 +945,35 @@ export class ExecutionEngine {
 		const agent = this.resolveAgent(task)
 		const profile = this.applyAgentConstraints(extractProfile(task), agent)
 		const candidates = await this.buildCandidates()
-		const { weights, excluded, allowed } = applyPolicies(
-			candidates,
-			profile,
-			this.baseWeights(),
-			this.limits(),
-		)
+		let policy = applyPolicies(candidates, profile, this.baseWeights(), this.limits())
+
+		// Kein Kandidat? Erst prüfen, **warum** — scheitern ist die letzte
+		// Antwort, nicht die erste.
+		if (policy.allowed.length === 0 && policy.onlyBusy) {
+			// Alle Rechner arbeiten gerade. Die Task ist nicht unmöglich, nur zu
+			// früh: Sie wartet und wird gestartet, sobald etwas frei wird.
+			setTaskStatus(db, task.id, "queued")
+			log("info", "routing", `Task ${task.id} wartet: alle Rechner ausgelastet`)
+			throw new NoCandidateError()
+		}
+		if (policy.allowed.length === 0 && policy.onlyCapabilities) {
+			// Kein Modell erfüllt die Pflicht-Fähigkeiten des Spezialisten. Lieber
+			// mit dem bestmöglichen Modell arbeiten als gar nicht: Ein Spezialist
+			// muss immer einsetzbar sein, notfalls auf schwächerem Werkzeug.
+			log(
+				"warn",
+				"routing",
+				`Task ${task.id}: kein Modell mit ${profile.requiredCapabilities.join(", ")} — ` +
+					"Fähigkeits-Gate gelockert, es wird das bestbewertete verfügbare Modell genommen",
+			)
+			policy = applyPolicies(
+				candidates,
+				{ ...profile, requiredCapabilities: [], preferredCapabilities: profile.requiredCapabilities },
+				this.baseWeights(),
+				this.limits(),
+			)
+		}
+		const { weights, excluded, allowed } = policy
 
 		if (allowed.length === 0) {
 			const reason = `Keine Instanz verfügbar (${excluded.length} ausgeschlossen)`

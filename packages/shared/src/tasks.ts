@@ -47,6 +47,13 @@ export interface TaskMetadata {
 		/** Gemeinsame Kennung aller Schritte einer Kette — bindet die Stufen zusammen. */
 		id?: string
 		/**
+		 * Die Task, die die Kette eröffnet hat. Alle Schritte arbeiten in **ihrem**
+		 * Verzeichnis und auf **ihrem** Branch: Sonst begänne jeder Schritt in
+		 * einem leeren Ordner, müsste das Projekt erneut lesen und verlöre die
+		 * Änderungen des vorigen — bei vier Spezialisten viermal dieselbe Arbeit.
+		 */
+		rootTaskId?: string
+		/**
 		 * Die Stufen der Kette: Innerhalb einer Stufe arbeiten alle Spezialisten
 		 * **gleichzeitig** (auf allen verfügbaren Rechnern), die nächste Stufe
 		 * beginnt erst, wenn die vorige vollständig fertig ist.

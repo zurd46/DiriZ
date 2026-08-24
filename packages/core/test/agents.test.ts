@@ -14,6 +14,7 @@ import type {
 	HealthStatus,
 	LLMProvider,
 	ProviderType,
+	Task,
 } from "@diriz/shared"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { Db } from "../src/db/connection.js"
@@ -41,6 +42,7 @@ import {
 } from "../src/db/repositories.js"
 import { EventBus } from "../src/execution/bus.js"
 import { ExecutionEngine, trimMarkdown } from "../src/execution/engine.js"
+import { taskWorktreePath } from "../src/execution/worktree.js"
 import { ProviderRegistry } from "../src/providers/registry.js"
 import { Feedback } from "../src/routing/feedback.js"
 
@@ -389,6 +391,9 @@ describe("engine: Spezialisten-Kette", () => {
 		for (const t of stufe2) {
 			expect(t.prompt).toContain("## Vorarbeit aus Stufe 1")
 			expect(t.prompt).toContain("Auftrag mit zwei parallelen Schritten")
+			// … und arbeiten im Verzeichnis der Wurzel-Task weiter, statt in einem
+			// leeren Ordner von vorn zu beginnen.
+			expect(t.metadata.chain?.rootTaskId).toBe(task.id)
 		}
 	})
 
@@ -518,5 +523,42 @@ describe("trimMarkdown", () => {
 		const out = trimMarkdown(text, 30)
 		const fences = out.split("\n").filter((l) => l.startsWith("```")).length
 		expect(fences % 2).toBe(0)
+	})
+})
+
+/**
+ * Eine Kette arbeitet an **einem** Ort. Bekäme jeder Schritt ein eigenes
+ * Verzeichnis, müsste er das Projekt neu lesen und verlöre die Änderungen des
+ * vorigen — bei vier Spezialisten viermal dieselbe Arbeit.
+ */
+describe("taskWorktreePath", () => {
+	const base = (over: Partial<Task>): Task =>
+		({
+			id: "aaaaaaaa-1111-2222-3333-444444444444",
+			title: "Gleicher Titel",
+			prompt: "p",
+			status: "draft",
+			createdAt: new Date().toISOString(),
+			metadata: { privacy: "local-only", mode: "auto" },
+			...over,
+		}) as Task
+
+	it("gibt allen Schritten einer Kette dasselbe Verzeichnis", () => {
+		const wurzel = base({})
+		const schritt2 = base({
+			id: "bbbbbbbb-1111-2222-3333-444444444444",
+			metadata: {
+				privacy: "local-only",
+				mode: "auto",
+				chain: { id: "k", agentIds: ["a", "b"], index: 1, rootTaskId: wurzel.id },
+			},
+		})
+		expect(taskWorktreePath("/w", schritt2)).toBe(taskWorktreePath("/w", wurzel))
+	})
+
+	it("trennt Tasks ohne Kette weiterhin", () => {
+		const a = base({})
+		const b = base({ id: "cccccccc-1111-2222-3333-444444444444" })
+		expect(taskWorktreePath("/w", a)).not.toBe(taskWorktreePath("/w", b))
 	})
 })

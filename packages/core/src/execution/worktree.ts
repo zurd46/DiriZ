@@ -30,5 +30,9 @@ export function taskSlug(task: Task): string {
  * Arbeitsstand.
  */
 export function taskWorktreePath(workspaceDir: string, task: Task): string {
-	return path.join(workspaceDir, `${taskSlug(task)}-${task.id.slice(0, 8)}`)
+	// Kettenschritte teilen sich das Verzeichnis der Wurzel-Task: Der zweite
+	// Spezialist soll dort weiterarbeiten, wo der erste aufgehört hat — mit
+	// dessen Änderungen vor sich, statt in einem leeren Ordner.
+	const id = task.metadata.chain?.rootTaskId ?? task.id
+	return path.join(workspaceDir, `${taskSlug(task)}-${id.slice(0, 8)}`)
 }

@@ -37,6 +37,13 @@ export interface PolicyResult {
 	weights: ScoringWeights
 	excluded: ExcludedInstance[]
 	allowed: PolicyCandidate[]
+	/**
+	 * Wurde **ausschliesslich** wegen Auslastung ausgeschlossen? Dann ist die
+	 * Task nicht unmöglich, sondern zu früh: Sie wartet, statt zu scheitern.
+	 */
+	onlyBusy: boolean
+	/** Wurde nur an fehlenden Pflicht-Fähigkeiten gescheitert? */
+	onlyCapabilities: boolean
 }
 
 export function applyPolicies(
@@ -51,8 +58,15 @@ export function applyPolicies(
 			: normalizeWeights(baseWeights)
 	const excluded: ExcludedInstance[] = []
 	const allowed: PolicyCandidate[] = []
+	/** Art des Ausschlusses je Kandidat — Grundlage für „warten statt scheitern". */
+	const kinds: ("busy" | "capabilities" | "hard")[] = []
 
-	const pushExcluded = (c: PolicyCandidate, reason: string) => {
+	const pushExcluded = (
+		c: PolicyCandidate,
+		reason: string,
+		kind: "busy" | "capabilities" | "hard" = "hard",
+	) => {
+		kinds.push(kind)
 		excluded.push({
 			instanceId: c.instance.id,
 			providerId: c.instance.providerId,
@@ -80,6 +94,7 @@ export function applyPolicies(
 				pushExcluded(
 					c,
 					`Rechner ausgelastet: ${active} gleichzeitige Ausführungen (Grenze ${limits.perProvider})`,
+					"busy",
 				)
 				continue
 			}
@@ -88,6 +103,7 @@ export function applyPolicies(
 				pushExcluded(
 					c,
 					`GPU-Schutz: Rechner führt bereits ${running.length} Modell(e) aus (${running.join(", ")}) — ein weiteres würde zusätzlichen Grafikspeicher belegen`,
+					"busy",
 				)
 				continue
 			}
@@ -128,11 +144,17 @@ export function applyPolicies(
 		}
 		const missing = profile.requiredCapabilities.filter((cap) => !c.instance.capabilities.includes(cap))
 		if (missing.length > 0) {
-			pushExcluded(c, `Fehlende Pflicht-Fähigkeiten: ${missing.join(", ")}`)
+			pushExcluded(c, `Fehlende Pflicht-Fähigkeiten: ${missing.join(", ")}`, "capabilities")
 			continue
 		}
 		allowed.push(c)
 	}
 
-	return { weights, excluded, allowed }
+	return {
+		weights,
+		excluded,
+		allowed,
+		onlyBusy: kinds.length > 0 && kinds.every((k) => k === "busy"),
+		onlyCapabilities: kinds.length > 0 && kinds.every((k) => k === "capabilities" || k === "busy"),
+	}
 }

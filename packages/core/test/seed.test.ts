@@ -26,8 +26,9 @@ import {
 	getSwarm,
 	listAgents,
 	listSwarms,
+	updateAgent,
 } from "../src/db/repositories.js"
-import { refreshCatalogSwarms, seedTeamCatalog } from "../src/db/seed.js"
+import { refreshCatalogAgents, refreshCatalogSwarms, seedTeamCatalog } from "../src/db/seed.js"
 
 let dir: string
 let db: Db
@@ -138,6 +139,41 @@ describe("seedTeamCatalog", () => {
 		expect(getSwarm(db3, swarmId)?.agentIds).toContain(memberId)
 
 		db3.close()
+		fs.rmSync(fresh, { recursive: true, force: true })
+	})
+})
+
+/**
+ * Katalog-Verbesserungen müssen bei bereits angelegten Spezialisten ankommen —
+ * sonst wirkt jede Änderung erst auf einer frischen Datenbank. Angefasst wird
+ * nur, was nie von Hand bearbeitet wurde.
+ */
+describe("refreshCatalogAgents", () => {
+	it("zieht unveränderte Spezialisten nach, lässt bearbeitete in Ruhe", () => {
+		const fresh = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-refresh-"))
+		const db4 = openDatabase(fresh)
+		migrate(db4)
+		seedTeamCatalog(db4)
+
+		// Zwei Spezialisten „veralten“ lassen: einer bleibt unberührt, einer wird
+		// von Hand bearbeitet (das setzt `updatedAt`).
+		const alt = blueprintAgentId("frontend-entwickler")
+		const bearbeitet = blueprintAgentId("backend-entwickler")
+		db4.prepare("UPDATE agents SET description = 'veraltet' WHERE id IN (?, ?)").run(alt, bearbeitet)
+		updateAgent(db4, bearbeitet, { description: "von Hand" })
+
+		const changed = refreshCatalogAgents(db4)
+
+		expect(changed).toContain("frontend-entwickler")
+		expect(changed).not.toContain("backend-entwickler")
+		const bp = SOFTWARE_TEAM.find((b) => b.slug === "frontend-entwickler")
+		expect(getAgent(db4, alt)?.description).toBe(bp?.description)
+		expect(getAgent(db4, bearbeitet)?.description).toBe("von Hand")
+
+		// Und danach ist Ruhe — der zweite Lauf ändert nichts mehr.
+		expect(refreshCatalogAgents(db4)).toEqual([])
+
+		db4.close()
 		fs.rmSync(fresh, { recursive: true, force: true })
 	})
 })

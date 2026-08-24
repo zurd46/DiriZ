@@ -20,7 +20,7 @@ Entwicklung — Vite davor, mit HMR:
 |---------|------------|
 | **Routing** | Mehrachsen-Scoring (Context-Fit, Capability-Match, Qualitäts-Prior, Last, Kosten, Latenz, Host-Last) mit harten Policies: Privacy `local-only`, Budget-Gate, Context-Gate, Pinned-Mode — jede Entscheidung nachvollziehbar erklärt |
 | **Ausführung** | Streaming-Live-View, Failover-Kette bei Provider-Ausfall, Abbruch, Concurrent-Limits, Token-/Kosten-Tracking |
-| **Agentik (M8)** | Opt-in pro Task: Das Modell arbeitet autonom mit `list_files` / `read_file` / `write_file` in der Sandbox — jede Operation live sichtbar & geloggt; Schritt-Limit gegen Endlosschleifen |
+| **Agentik (M8)** | Opt-in pro Task: Das Modell arbeitet autonom mit `list_files` / `read_file` / `write_file` in der Sandbox — jede Operation live sichtbar & geloggt; Schritt-Limit gegen Endlosschleifen — es begrenzt nur die Tool-Nutzung, nie die Antwort: Am Limit folgt ein Abschluss-Schritt ohne Tools, die Antwort ist nie abgeschnitten oder leer |
 | **Monitoring** | Dashboard mit Metriken-Karten, 24 h/7-Tage-Charts (Tokens, Requests, Kosten), Ollama-VRAM-Load, System-Karte (Host-RAM/CPU/GPU), Live-Logs, Statusleiste |
 | **Workspace** | Versionierte Task-Dateien: Baum-Ansicht, Vorschau mit Zeilennummern, farbiger Diff zwischen beliebigen zwei Versionen |
 | **Feedback** | 1–5-Sterne-Ratings pro Execution → exponentiell glättender Qualitäts-Prior — DiriZ wird mit jedem Feedback besser |

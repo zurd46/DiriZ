@@ -154,7 +154,7 @@ describe("Task an ein Repository pinnen", () => {
 
 		const dir = taskWorktreePath(workspaceDir, updated)
 		expect(fs.existsSync(path.join(dir, "README.md"))).toBe(true)
-		expect(sh(dir, "rev-parse", "--abbrev-ref", "HEAD").trim()).toBe("diriz/readme-ausbau")
+		expect(sh(dir, "rev-parse", "--abbrev-ref", "HEAD").trim()).toMatch(/^diriz\/readme-ausbau-[0-9a-f]{8}$/)
 	})
 
 	it("löst die Bindung wieder", async () => {
@@ -241,9 +241,9 @@ describe("Änderungen, Diff, Commit und Push", () => {
 		const push = res.json() as { branch: string; toBase: boolean; pushedAt: string; compareUrl?: string }
 		expect(push.branch).toMatch(/^diriz\/readme-ausbau-[0-9a-f]{8}$/)
 		expect(push.toBase).toBe(false)
-		expect(push.compareUrl).toContain("compare/main...diriz/readme-ausbau")
+		expect(push.compareUrl).toContain("compare/main...diriz/readme-ausbau-")
 
-		expect(sh(remote, "branch", "--list", "diriz/readme-ausbau")).toContain("diriz/readme-ausbau")
+		expect(sh(remote, "branch", "--list", "diriz/readme-ausbau-*")).toContain("diriz/readme-ausbau-")
 		expect(getTask(db, task.id)?.pushedAt).toBe(push.pushedAt)
 
 		const status = (await app.inject({ method: "GET", url: `/api/tasks/${task.id}/git` })).json() as GitStatus

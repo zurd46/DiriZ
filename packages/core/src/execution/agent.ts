@@ -18,8 +18,17 @@
 import type { ChatMessage, LLMProvider, ModelSettings, ToolCallRequest } from "@diriz/shared"
 import { executeTool, TOOL_SPECS } from "./tools.js"
 
-/** Schutz vor Endlosschleifen: max. Modell-Schritte **mit Tools** pro Execution. */
-export const MAX_AGENT_STEPS = 24
+/**
+ * Schutz vor Endlosschleifen: max. Modell-Schritte **mit Tools** pro Execution.
+ * Begrenzt nur die Tool-Nutzung — die Antwort folgt danach garantiert.
+ * Über `DIRIZ_AGENT_MAX_STEPS` anpassbar (z. B. für grosse Repositories).
+ */
+export const MAX_AGENT_STEPS = readMaxStepsEnv() ?? 24
+
+function readMaxStepsEnv(): number | undefined {
+	const raw = Number.parseInt(process.env.DIRIZ_AGENT_MAX_STEPS ?? "", 10)
+	return Number.isFinite(raw) && raw > 0 ? raw : undefined
+}
 
 /** Versuche für den Abschluss-Schritt, bevor DiriZ selbst zusammenfasst. */
 const FINAL_ANSWER_ATTEMPTS = 2
@@ -149,8 +158,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 
 	if (needsFinal && !opts.signal?.aborted) {
 		if (stepLimitReached) {
-			emit(
-				opts,
+			opts.onDelta(
 				`\n\n[Agentik: Tool-Budget (${maxSteps} Schritte) aufgebraucht — die Antwort wird jetzt aus den gesammelten Daten vollständig fertiggestellt.]\n\n`,
 			)
 			opts.log("warn", "agent", `Tool-Budget (${maxSteps}) erschöpft — Abschluss-Schritt ohne Tools`)
@@ -181,18 +189,13 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 			// Auch das Modell schweigt: DiriZ fasst den Arbeitsstand selbst
 			// zusammen, damit nie eine leere Antwort zurückbleibt.
 			const fallback = composeFallback(toolTrail, maxSteps, final.error)
-			emit(opts, fallback)
+			opts.onDelta(fallback)
 			text = `${text}${fallback}`
 			opts.log("warn", "agent", "Abschluss-Schritt lieferte keinen Text — DiriZ-Zusammenfassung eingesetzt")
 		}
 	}
 
 	return { text, steps, toolOps, tokensIn, tokensOut, stepLimitReached, finalized }
-}
-
-/** Delta an den Stream geben und für das Ergebnis merken. */
-function emit(opts: AgentLoopOptions, chunk: string): void {
-	opts.onDelta(chunk)
 }
 
 /** Argumente eines Tool-Calls knapp für das Protokoll darstellen. */

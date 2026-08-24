@@ -34,6 +34,7 @@ import {
 	listAgents,
 	listSwarms,
 	setSetting,
+	updateAgent,
 	updateSwarm,
 } from "./repositories.js"
 
@@ -70,6 +71,44 @@ function seedAgent(db: Db, bp: AgentBlueprint, now: string): void {
 		enabled: true,
 		docs: blueprintDocs(bp, now),
 	})
+}
+
+/**
+ * Zieht **unveränderte** Katalog-Spezialisten auf den aktuellen Stand nach.
+ *
+ * Ohne das bliebe eine Verbesserung am Katalog wirkungslos, sobald ein
+ * Spezialist einmal angelegt ist — seine Rolle und seine Schlagworte stehen ja
+ * in der Datenbank. Angefasst wird nur, was noch nie bearbeitet wurde
+ * (`updatedAt === createdAt`); alles Selbstgeschriebene bleibt unberührt.
+ */
+export function refreshCatalogAgents(db: Db): string[] {
+	const changed: string[] = []
+	for (const bp of SOFTWARE_TEAM) {
+		const id = blueprintAgentId(bp.slug)
+		const agent = getAgent(db, id)
+		if (!agent || agent.updatedAt !== agent.createdAt) {
+			continue
+		}
+		const same =
+			agent.description === bp.description &&
+			agent.systemPrompt === bp.systemPrompt &&
+			JSON.stringify(agent.requiredCapabilities) === JSON.stringify(bp.requiredCapabilities) &&
+			JSON.stringify(agent.preferredCapabilities) === JSON.stringify(bp.preferredCapabilities)
+		if (same) {
+			continue
+		}
+		updateAgent(db, id, {
+			description: bp.description,
+			systemPrompt: bp.systemPrompt,
+			requiredCapabilities: bp.requiredCapabilities,
+			preferredCapabilities: bp.preferredCapabilities,
+		})
+		// `updateAgent` setzt `updatedAt` — sonst gälte der Spezialist ab jetzt
+		// als von Hand bearbeitet und bekäme nie wieder eine Katalog-Änderung.
+		db.prepare("UPDATE agents SET updated_at = created_at WHERE id = ?").run(id)
+		changed.push(bp.slug)
+	}
+	return changed
 }
 
 /**

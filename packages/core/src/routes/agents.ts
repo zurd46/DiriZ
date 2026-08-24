@@ -33,7 +33,7 @@ import {
 	updateAgent,
 	updateSwarm,
 } from "../db/repositories.js"
-import { refreshCatalogSwarms, seedTeamCatalog } from "../db/seed.js"
+import { refreshCatalogAgents, refreshCatalogSwarms, seedTeamCatalog } from "../db/seed.js"
 
 const CAPABILITIES: Capability[] = ["code", "reasoning", "longform", "vision", "tools", "json"]
 const PRIVACIES: AgentPrivacy[] = ["any", "local-only", "allow-cloud"]
@@ -150,11 +150,17 @@ export function registerAgents(app: FastifyInstance, ctx: AppContext): void {
 	/** Fehlende Katalog-Spezialisten und -Swarms anlegen (ohne Neustart). */
 	app.post("/api/agents/catalog", (_req, reply) => {
 		const seeded = seedTeamCatalog(ctx.db)
-		const refreshed = refreshCatalogSwarms(ctx.db)
-		if (seeded.agents.length > 0 || seeded.swarms.length > 0 || refreshed.length > 0) {
+		const refreshedSwarms = refreshCatalogSwarms(ctx.db)
+		const refreshedAgents = refreshCatalogAgents(ctx.db)
+		if (
+			seeded.agents.length > 0 ||
+			seeded.swarms.length > 0 ||
+			refreshedSwarms.length > 0 ||
+			refreshedAgents.length > 0
+		) {
 			ctx.bus.emit({ event: "agents.changed", data: {} })
 		}
-		return reply.code(201).send({ ...seeded, refreshedSwarms: refreshed })
+		return reply.code(201).send({ ...seeded, refreshedSwarms, refreshedAgents })
 	})
 
 	app.get<{ Params: { id: string } }>("/api/agents/:id", (req, reply) => {

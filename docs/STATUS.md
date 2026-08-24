@@ -26,7 +26,7 @@ Desktop   ██████████████████████  Ta
 
 **End-to-End-Nutzerfluss:** Provider verbinden → Task anlegen (Prompt, Privatsphäre, Budget, Modus, optional Agentik) → DiriZ routet auf das beste Modell (lokal oder Cloud) → Live-Stream mit Failover → Ergebnis bewerten (1–5 Sterne) → DiriZ lernt daraus.
 
-**Agentik-Modus (M8):** Im Task-Composer anwählbar — das Modell arbeitet dann autonom mit den Datei-Tools `list_files`, `read_file`, `write_file` in der Task-Sandbox. Jede Operation erscheint live als ✓/✗-Zeile unter dem Stream und wird im Log protokolliert (volle Transparenz). Schritt-Limit (8) schützt vor Endlosschleifen; funktioniert mit Ollama, LM Studio, OpenAI & OpenRouter.
+**Agentik-Modus (M8):** Im Task-Composer anwählbar — das Modell arbeitet dann autonom mit den Datei-Tools `list_files`, `read_file`, `write_file` in der Task-Sandbox. Jede Operation erscheint live als ✓/✗-Zeile unter dem Stream und wird im Log protokolliert (volle Transparenz). Ein Tool-Budget (24 Schritte, per `DIRIZ_AGENT_MAX_STEPS` anpassbar) schützt vor Endlosschleifen — es begrenzt nur die Tool-Nutzung: Ist es aufgebraucht, folgt ein Abschluss-Schritt **ohne** Tools, in dem das Modell aus dem Gesammelten vollständig antworten muss; bleibt auch der stumm, fasst DiriZ den Arbeitsstand selbst zusammen. Eine abgeschnittene oder leere Antwort gibt es damit nicht. Funktioniert mit Ollama, LM Studio, OpenAI & OpenRouter.
 
 **Dashboard:** Provider-Status, Token-Volumen & Kosten als interaktive Charts (24 h / 7 Tage), Ollama-VRAM-Auslastung pro geladenem Modell, **System-Karte (M8)** mit RAM-Balken, CPU-Last und GPU-Info (Live-Polling alle 5 s).
 
@@ -45,7 +45,7 @@ Desktop   ██████████████████████  Ta
 ### Neu implementiert
 - **Tool-Call-Agent-Loop** (`packages/core/src/execution/agent.ts` + `tools.ts`):
   - Drei Sandbox-Tools mit JSON-Schemas; Pfad-Sicherheit doppelt abgesichert (Relativ-Pfad-Validierung + Prefix-Check)
-  - Loop: Streamen → Tool-Calls sammeln → ausführen → Ergebnisse als `tool`-Messages zurückgeben → bis finale Antwort oder Schritt-Limit (8)
+  - Loop: Streamen → Tool-Calls sammeln → ausführen → Ergebnisse als `tool`-Messages zurückgeben → bis finale Antwort oder Tool-Budget (24) erschöpft; danach garantierter Abschluss-Schritt ohne Tools
   - Neue SSE-Event-Art `tool.call` — jede Operation live in der UI (✓/✗ + Pfad) und im Log
   - Adapter-Support: OpenAI-kompatibel (LM Studio/OpenAI/OpenRouter, inkl. Fragment-Akkumulation gestreamter `tool_calls`) + Ollama (`message.tool_calls`); Flag `supportsTools` am Provider-Kontrakt
   - UI: „Agentik“-Checkbox im Task-Composer → `metadata.agentMode`; Live-Anzeige der Operationen in der Task-Detail

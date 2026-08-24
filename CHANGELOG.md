@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/de/2.0
 
 ## Unreleased
 
+### Fixed
+- **Der Agentik-Modus liefert jetzt immer eine vollständige Antwort.** Bisher brach der Loop am Schritt-Limit einfach ab — bestand der letzte Schritt nur aus Tool-Calls (der Normalfall beim Erkunden eines Repositories), kam gar keine Antwort zurück, sondern nur der Hinweis „die Antwort kann unvollständig sein"
+  - Das Limit begrenzt jetzt **nur die Tool-Nutzung, nie die Antwort**: Ist das Budget aufgebraucht, folgt ein Abschluss-Schritt **ohne** Tool-Specs — das Modell muss die Aufgabe aus dem bereits Gesammelten fertig beantworten (Ergebnisse, Diagnose, offene Punkte, nächste Schritte)
+  - Bleibt auch dieser Schritt stumm oder scheitert er, fasst DiriZ den Arbeitsstand aus dem Tool-Protokoll selbst zusammen. Eine leere Antwort ist damit ausgeschlossen
+  - Dasselbe greift, wenn das Modell **ohne** Limit gar keinen Text ausgibt (nur Tool-Calls und dann Schweigen)
+  - Tool-Budget von **8 auf 24 Schritte** erhöht — 8 reichten für echte Repository-Aufgaben nicht; per `DIRIZ_AGENT_MAX_STEPS` anpassbar. Das Modell erfährt sein Budget im System-Prompt und kann damit planen
+  - `AgentLoopResult` trägt neu `stepLimitReached` und `finalized`; der Abschluss-Schritt streamt normal und zählt seine Tokens mit
+
 ### Added
 - **GPU-Schutz im Routing:** Ein Rechner führt nie zwei **verschiedene** Modelle gleichzeitig aus — jedes zusätzliche Modell belegt eigenen Grafikspeicher, und zwei Modelle auf einer Karte bedeuten Auslagern, Ladezeiten von Minuten oder einen Absturz
   - Zwei harte Gates vor dem Scoring: „Rechner ausgelastet" (gleichzeitige Ausführungen) und „GPU-Schutz: Rechner führt bereits N Modell(e) aus". Beide schliessen nur diesen einen Rechner aus — **andere bleiben Kandidaten, die Arbeit verteilt sich automatisch**

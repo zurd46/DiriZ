@@ -12,7 +12,7 @@ import { loadConfig } from "./config.js"
 import { openDatabase } from "./db/connection.js"
 import { migrate } from "./db/migrate.js"
 import { getRepo, getSetting, persistLog, providerApiKeyEnc, setTaskRepo } from "./db/repositories.js"
-import { refreshCatalogSwarms, seedTeamCatalog } from "./db/seed.js"
+import { refreshCatalogAgents, refreshCatalogSwarms, seedTeamCatalog } from "./db/seed.js"
 import { EventBus } from "./execution/bus.js"
 import { ExecutionEngine } from "./execution/engine.js"
 import { taskWorktreePath } from "./execution/worktree.js"
@@ -30,6 +30,7 @@ async function main(): Promise<void> {
 	// Eingebautes Software-Team anlegen (einmalig, überschreibt nie Eigenes).
 	const seeded = seedTeamCatalog(db)
 	refreshCatalogSwarms(db)
+	const refreshedAgents = refreshCatalogAgents(db)
 	const secret = loadOrCreateSecret(config.dataDir)
 
 	const bus = new EventBus()
@@ -155,6 +156,9 @@ async function main(): Promise<void> {
 		"core",
 		`DiriZ Core läuft auf http://${config.host}:${config.port} (Schema v${schemaVersion}, Data: ${config.dataDir})`,
 	)
+	if (refreshedAgents.length > 0) {
+		log("info", "core", `Team-Katalog: ${refreshedAgents.length} unveränderte Spezialist(en) aktualisiert`)
+	}
 	if (seeded.agents.length > 0 || seeded.swarms.length > 0) {
 		log(
 			"info",

@@ -21,6 +21,8 @@ import {
 	DEFAULT_TIMEOUTS,
 	DEFAULT_WEIGHTS,
 	type Execution,
+	estimateTokens,
+	extractDirective,
 	type HostMetrics,
 	MAX_FAILOVER_HOPS,
 	MIN_AGENT_SCORE,
@@ -413,6 +415,14 @@ export class ExecutionEngine {
 			return profile
 		}
 		let next: TaskProfile = { ...profile }
+		// Der System-Prompt zählt zum Kontextbedarf. Seit `plan.md` als
+		// verbindliche Arbeitsanweisung mitgeschickt wird, kann er tausende
+		// Tokens umfassen — ohne ihn hier einzurechnen hielte das Context-Gate
+		// ein Modell für passend, dessen Fenster in Wahrheit überläuft.
+		const overhead = this.agentPromptTokens(agent)
+		if (overhead > 0) {
+			next = { ...next, estTokens: next.estTokens + overhead }
+		}
 		if (agent.privacy === "local-only") {
 			next = { ...next, privacy: "local-only" }
 		}
@@ -439,6 +449,21 @@ export class ExecutionEngine {
 			return { ...next, mode: "pinned", pinnedProviderId: agent.pinnedProviderId }
 		}
 		return next
+	}
+
+	/**
+	 * Wie viele Tokens der Spezialist selbst in den Prompt einbringt:
+	 * sein System-Prompt plus die Arbeitsanweisung aus `plan.md`.
+	 */
+	private agentPromptTokens(agent: Agent): number {
+		const parts = [
+			(agent.systemPrompt ?? "").trim() || (agent.modelSettings?.systemPrompt ?? ""),
+			extractDirective(getAgentDoc(this.deps.db, agent.id, "plan")?.content ?? "") ?? "",
+		]
+		const text = parts.filter((p) => p.length > 0).join("\n\n")
+		// `0` als erwartete Ausgabe: Der Ausgabe-Puffer steckt bereits in
+		// `estTokens` der Task — sonst würde er doppelt gezählt.
+		return text.length > 0 ? estimateTokens(text, 0) : 0
 	}
 
 	/* ----------------------------- Routing + Loop ------------------------------ */

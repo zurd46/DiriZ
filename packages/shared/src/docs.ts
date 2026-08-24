@@ -316,42 +316,60 @@ export function extractDirective(markdown: string): string | undefined {
 	const lines = (markdown ?? "").split(/\r?\n/)
 
 	// 1. Durchgang: Meta/Platzhalter raus, Struktur (Überschriften) behalten.
-	type Entry = { heading: boolean; text: string }
+	// `level` ist die Überschriften-Tiefe (1 = `#`), 0 für normale Zeilen.
+	type Entry = { level: number; text: string }
 	const kept: Entry[] = []
+	let inFence = false
 	for (const raw of lines) {
-		const isHeading = /^\s*#{1,6}\s+/.test(raw)
-		if (isHeading) {
+		// Code-Blöcke werden **unverändert** durchgereicht. Sonst verschwände die
+		// Zaun-Zeile (```) als vermeintlich leere Zeile und der Block bräche auf.
+		if (/^\s*(```|~~~)/.test(raw)) {
+			inFence = !inFence
+			kept.push({ level: 0, text: raw.trimEnd() })
+			continue
+		}
+		if (inFence) {
+			kept.push({ level: 0, text: raw.trimEnd() })
+			continue
+		}
+
+		const heading = raw.match(/^\s*(#{1,6})\s+/)
+		if (heading) {
 			if (isMetaLine(raw)) {
 				continue
 			}
-			kept.push({ heading: true, text: raw.trim() })
+			kept.push({ level: heading[1]?.length ?? 1, text: raw.trim() })
 			continue
 		}
 		if (raw.trim().length === 0) {
-			kept.push({ heading: false, text: "" })
+			kept.push({ level: 0, text: "" })
 			continue
 		}
 		if (isMetaLine(raw) || isPlaceholderLine(raw)) {
 			continue
 		}
-		kept.push({ heading: false, text: raw.trimEnd() })
+		kept.push({ level: 0, text: raw.trimEnd() })
 	}
 
 	// 2. Durchgang: Überschriften ohne eigenen Inhalt fallen weg — ein „## 2.
 	// Vorgehen“, dessen Punkte alle Platzhalter waren, ist keine Anweisung.
+	// Eine Gliederungs-Überschrift, unter der Unterabschnitte hängen, bleibt
+	// dagegen stehen: Sie trägt die Struktur des Dokuments.
 	const result: Entry[] = []
 	for (let i = 0; i < kept.length; i++) {
 		const entry = kept[i]
 		if (!entry) {
 			continue
 		}
-		if (!entry.heading) {
+		if (entry.level === 0) {
 			result.push(entry)
 			continue
 		}
-		// Nächste bedeutsame Zeile: eine weitere Überschrift → Abschnitt ist leer.
-		const next = kept.slice(i + 1).find((e) => e.heading || e.text.trim().length > 0)
-		if (next && !next.heading) {
+		const next = kept.slice(i + 1).find((e) => e.level > 0 || e.text.trim().length > 0)
+		// Inhalt folgt → behalten. Eine tiefere Überschrift folgt → ebenfalls
+		// behalten (Gliederung). Nur eine gleich- oder höherrangige Überschrift
+		// bedeutet: dieser Abschnitt ist leer.
+		if (next && (next.level === 0 || next.level > entry.level)) {
 			result.push(entry)
 		}
 	}

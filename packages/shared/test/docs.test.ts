@@ -208,3 +208,63 @@ describe("Dokument-Vorlagen", () => {
 		expect(defaultAgentDoc("changelog", "Code-Dev", "2026-08-23")).toContain("Spezialist angelegt")
 	})
 })
+
+describe("extractDirective: Struktur bleibt erhalten", () => {
+	it("lässt Code-Blöcke unangetastet", () => {
+		const md = [
+			"# plan.md — Test",
+			"",
+			"## Beispiel",
+			"",
+			"So sieht ein sicherer Aufruf aus:",
+			"",
+			"```ts",
+			"const safe = escape(input)",
+			"",
+			"return safe",
+			"```",
+			"",
+			"Danach prüfen.",
+		].join("\n")
+		const out = extractDirective(md) ?? ""
+		// Beide Zaun-Zeilen müssen stehen bleiben, sonst bricht der Block auf.
+		expect(out.split("\n").filter((l) => l.startsWith("```"))).toHaveLength(2)
+		expect(out).toContain("const safe = escape(input)")
+		// Auch die Leerzeile *innerhalb* des Blocks bleibt erhalten.
+		expect(out).toContain("const safe = escape(input)\n\nreturn safe")
+	})
+
+	it("behält Gliederungs-Überschriften, unter denen Unterabschnitte hängen", () => {
+		const md = [
+			"# plan.md — Test",
+			"",
+			"# 2. Vorgehen",
+			"",
+			"## Phase 1",
+			"",
+			"Zuerst die Angriffsfläche erfassen.",
+		].join("\n")
+		const out = extractDirective(md) ?? ""
+		expect(out).toContain("# 2. Vorgehen")
+		expect(out).toContain("## Phase 1")
+		expect(out).toContain("Zuerst die Angriffsfläche erfassen.")
+	})
+
+	it("wirft eine Überschrift weg, deren Abschnitt wirklich leer ist", () => {
+		const md = [
+			"## 1. Auftrag",
+			"",
+			"Echte Anweisung.",
+			"",
+			"## 2. Vorgehen",
+			"",
+			"- Schritt 1",
+			"- Schritt 2",
+		].join("\n")
+		const out = extractDirective(md) ?? ""
+		expect(out).toContain("## 1. Auftrag")
+		expect(out).toContain("Echte Anweisung.")
+		// Der zweite Abschnitt bestand nur aus Vorlagen-Platzhaltern.
+		expect(out).not.toContain("## 2. Vorgehen")
+	})
+})

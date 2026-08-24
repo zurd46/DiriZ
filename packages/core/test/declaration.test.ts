@@ -415,3 +415,55 @@ describe("Sammel-Endpunkt /api/docs", () => {
 		}
 	})
 })
+
+describe("Kontextbedarf des Spezialisten", () => {
+	it("rechnet System-Prompt und plan.md in die Kontext-Schätzung ein", async () => {
+		// Ein Spezialist mit umfangreicher Deklaration — wie ein echter
+		// Security-Agent mit mehrseitigem plan.md.
+		const agent = await createAgentViaApi("Kontext-Agent", {
+			systemPrompt: "Du bist Sicherheitsprüfer. ".repeat(80),
+		})
+		saveAgentDoc(db, agent.id, "plan", `## Auftrag\n\n${"Prüfe jede Eingabe sorgfältig. ".repeat(200)}\n`)
+
+		const task = createTask(db, {
+			prompt: "Kurzer Prompt",
+			title: "Kontext-Test",
+			metadata: {
+				privacy: "local-only",
+				mode: "pinned",
+				preferredProviderId: providerId,
+				preferredModelId: instance.modelId,
+			},
+			assignmentMode: "agent",
+			agentId: agent.id,
+		})
+
+		const preview = await engine.preview(task.id)
+		const geschaetzt = preview?.decision.profile.estTokens ?? 0
+		// Der Prompt allein wären ein paar Dutzend Tokens — die Deklaration
+		// bringt es auf ein Vielfaches. Ohne diese Rechnung hielte das
+		// Context-Gate ein zu kleines Modell für passend.
+		expect(geschaetzt).toBeGreaterThan(1000)
+
+		// Ein Spezialist ohne Deklaration bringt keinen Aufschlag mit.
+		const schlank = await createAgentViaApi("Schlank-Agent")
+		saveAgentDoc(db, schlank.id, "plan", "# plan.md\n")
+		const ohne = createTask(db, {
+			prompt: "Kurzer Prompt",
+			title: "Kontext-Test schlank",
+			metadata: {
+				privacy: "local-only",
+				mode: "pinned",
+				preferredProviderId: providerId,
+				preferredModelId: instance.modelId,
+			},
+			assignmentMode: "agent",
+			agentId: schlank.id,
+		})
+		const ohnePreview = await engine.preview(ohne.id)
+		const schlankTokens = ohnePreview?.decision.profile.estTokens ?? 0
+		expect(schlankTokens).toBeLessThan(geschaetzt / 3)
+		// Der Unterschied ist genau die Deklaration des großen Spezialisten.
+		expect(geschaetzt - schlankTokens).toBeGreaterThan(1500)
+	})
+})

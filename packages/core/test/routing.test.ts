@@ -1,9 +1,9 @@
 import { type Capability, DEFAULT_WEIGHTS, type InstanceModel } from "@diriz/shared"
 import { describe, expect, it } from "vitest"
+import { loadFactorFrom } from "../src/providers/registry.js"
 import { Feedback } from "../src/routing/feedback.js"
 import type { PolicyCandidate } from "../src/routing/policies.js"
 import { applyPolicies } from "../src/routing/policies.js"
-import { loadFactorFrom } from "../src/providers/registry.js"
 import { scoreCandidate } from "../src/routing/scorer.js"
 
 function instance(over: Partial<InstanceModel>): InstanceModel {

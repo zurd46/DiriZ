@@ -3034,3 +3034,36 @@ pre.code {
 	padding: 2px var(--sp-2);
 	font-size: var(--fs-xs);
 }
+
+/* --------------------------- Parallelitäts-Grenzen -------------------------- */
+
+.limits {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-4);
+	padding: var(--sp-4) 0;
+}
+
+.limit-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 90px;
+	grid-template-areas: "label input" "hint hint";
+	align-items: center;
+	gap: var(--sp-1) var(--sp-3);
+}
+
+.limit-label {
+	grid-area: label;
+	font-size: var(--fs-base);
+	color: var(--text-strong);
+}
+
+.limit-row input {
+	grid-area: input;
+	text-align: right;
+}
+
+.limit-row .field-hint {
+	grid-area: hint;
+	margin: 0;
+}

@@ -273,7 +273,6 @@ export default function Settings() {
 				</div>
 			</div>
 
-
 			<div className="card">
 				<div className="card-head">
 					<div>
@@ -282,8 +281,8 @@ export default function Settings() {
 							Parallelität & GPU-Schutz
 						</div>
 						<div className="card-sub">
-							Harte Grenzen, keine Gewichte. Sie verhindern, dass ein Rechner mehrere Modelle gleichzeitig
-							in den Grafikspeicher lädt — die Arbeit wandert stattdessen auf einen anderen Rechner.
+							Harte Grenzen, keine Gewichte. Sie verhindern, dass ein Rechner mehrere Modelle gleichzeitig in
+							den Grafikspeicher lädt — die Arbeit wandert stattdessen auf einen anderen Rechner.
 						</div>
 					</div>
 					{limitsDirty && <span className="pill warn">ungespeichert</span>}
@@ -291,25 +290,23 @@ export default function Settings() {
 
 				{limits && (
 					<div className="limits">
-						{(
-							[
-								{
-									key: "maxModelsPerProvider" as const,
-									label: "Modelle je Rechner gleichzeitig",
-									hint: "1 = strikter GPU-Schutz. Höher nur, wenn der Grafikspeicher wirklich für mehrere Modelle reicht.",
-								},
-								{
-									key: "perProvider" as const,
-									label: "Aufträge je Rechner gleichzeitig",
-									hint: "Mehrere Aufträge auf demselben Modell sind unkritisch — sie teilen sich den Speicher.",
-								},
-								{
-									key: "global" as const,
-									label: "Aufträge insgesamt gleichzeitig",
-									hint: "Obergrenze über alle Rechner hinweg.",
-								},
-							]
-						).map((row) => (
+						{[
+							{
+								key: "maxModelsPerProvider" as const,
+								label: "Modelle je Rechner gleichzeitig",
+								hint: "1 = strikter GPU-Schutz. Höher nur, wenn der Grafikspeicher wirklich für mehrere Modelle reicht.",
+							},
+							{
+								key: "perProvider" as const,
+								label: "Aufträge je Rechner gleichzeitig",
+								hint: "Mehrere Aufträge auf demselben Modell sind unkritisch — sie teilen sich den Speicher.",
+							},
+							{
+								key: "global" as const,
+								label: "Aufträge insgesamt gleichzeitig",
+								hint: "Obergrenze über alle Rechner hinweg.",
+							},
+						].map((row) => (
 							<label key={row.key} className="limit-row">
 								<span className="limit-label">{row.label}</span>
 								<input

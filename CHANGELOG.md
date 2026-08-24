@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/de/2.0
 ## Unreleased
 
 ### Added
+- **GPU-Schutz im Routing:** Ein Rechner führt nie zwei **verschiedene** Modelle gleichzeitig aus — jedes zusätzliche Modell belegt eigenen Grafikspeicher, und zwei Modelle auf einer Karte bedeuten Auslagern, Ladezeiten von Minuten oder einen Absturz
+  - Zwei harte Gates vor dem Scoring: „Rechner ausgelastet" (gleichzeitige Ausführungen) und „GPU-Schutz: Rechner führt bereits N Modell(e) aus". Beide schliessen nur diesen einen Rechner aus — **andere bleiben Kandidaten, die Arbeit verteilt sich automatisch**
+  - Neue Einstellungen (Einstellungen → „Parallelität & GPU-Schutz", `PUT /api/settings` mit `concurrency`): Modelle je Rechner gleichzeitig (Default **1**), Aufträge je Rechner (2), Aufträge insgesamt (4). Das bisher nur deklarierte `perProvider`-Limit wird damit erstmals durchgesetzt
+  - LM Studio meldet jetzt, **welche Modelle geladen sind** (`state` der nativen API) — vorher hatte DiriZ ausserhalb von Ollama keinerlei Sicht darauf. Die Ladeinfo wird vor jeder Routing-Entscheidung aufgefrischt (höchstens alle 5 s)
+
+### Fixed
+- **Die Last-Achse war invertiert:** Ein bereits geladenes Modell wurde *bestraft*, obwohl seine Nutzung keinen zusätzlichen Grafikspeicher und keinen Ladevorgang kostet. Jetzt misst der Lastfaktor, wie stark ein Rechner durch **fremde** Modelle belegt ist — geladene Modelle werden bevorzugt, was genau die Erst-Token-Zeitüberschreitungen vermeidet, die beim Modellwechsel auftreten
 - **Neue Ansicht „Chat" — der einfache Einstieg:** Aufgabe in ein Textfeld schreiben, DiriZ sucht den passenden Spezialisten und arbeitet damit
   - Drei Ziele bestimmen, was der Spezialist anfassen darf: **Nur antworten** (Text, kein Dateizugriff), **Projekt anlegen** (Agentik-Modus im Workspace — er schreibt Dateien) und **Repository ändern** (Agentik-Modus im Git-Worktree eines verbundenen Repos)
   - Live-Ausgabe Token für Token, dazu der Name des automatisch gewählten Spezialisten samt Begründung, seine Dateioperationen, Failover und die erzeugten Dateien

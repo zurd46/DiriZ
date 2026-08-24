@@ -34,6 +34,7 @@ let remote: string
 let workspaceDir: string
 let repo: Repo
 let task: Task
+let engine: ExecutionEngine
 
 function sh(cwd: string, ...args: string[]): string {
 	return execFileSync("git", args, {
@@ -73,7 +74,7 @@ beforeAll(async () => {
 		log,
 		() => undefined,
 	)
-	const engine = new ExecutionEngine({ db, registry, feedback, emit: (e) => bus.emit(e), log, workspaceDir })
+	engine = new ExecutionEngine({ db, registry, feedback, emit: (e) => bus.emit(e), log, workspaceDir })
 	const ctx: AppContext = {
 		db,
 		bus,
@@ -269,6 +270,36 @@ describe("Änderungen, Diff, Commit und Push", () => {
 		const res = await app.inject({ method: "POST", url: `/api/tasks/${task.id}/git/pull-request` })
 		expect(res.statusCode).toBe(400)
 		expect((res.json() as { error: string }).error).toContain("Token")
+	})
+})
+
+/**
+ * Nach einem erfolgreichen Lauf sichert die Engine die Arbeit selbst: Commit auf
+ * den Arbeitsbranch. Ohne das bliebe alles als uncommitteter Stand im Worktree
+ * liegen und wäre beim nächsten Lauf nicht mehr von neuem zu unterscheiden.
+ */
+describe("Automatisches Sichern", () => {
+	it("committet auf den Arbeitsbranch — nie auf den Basis-Branch", async () => {
+		const eigene = createTask(db, { prompt: "SKU korrigieren", title: "SKU Fix" })
+		const pin = await app.inject({
+			method: "PUT",
+			url: `/api/tasks/${eigene.id}/repo`,
+			payload: { repoId: repo.id },
+		})
+		expect(pin.statusCode).toBe(200)
+		const gepinnt = getTask(db, eigene.id) as Task
+		const dir = taskWorktreePath(workspaceDir, gepinnt)
+		fs.writeFileSync(path.join(dir, "AUTOCOMMIT.md"), "# vom Modell geschrieben\n")
+		// Bewusst die private Methode: Sie trägt die Zusicherung „die Arbeit geht
+		// nicht verloren“, und ein voller Modelllauf gehört nicht in diesen Test.
+		await (engine as unknown as { autoCommit: (t: Task) => Promise<void> }).autoCommit(gepinnt)
+
+		expect(sh(dir, "rev-parse", "--abbrev-ref", "HEAD").trim()).toMatch(/^diriz\//)
+		expect(sh(dir, "log", "-1", "--format=%s").trim()).toContain("SKU Fix")
+		// Nichts bleibt liegen …
+		expect(sh(dir, "status", "--porcelain").trim()).toBe("")
+		// … und der Basis-Branch bleibt unberührt.
+		expect(sh(dir, "log", "origin/main", "--oneline")).not.toContain("SKU Fix")
 	})
 })
 

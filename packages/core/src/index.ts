@@ -75,6 +75,8 @@ async function main(): Promise<void> {
 		// Tasks mit gepinntem Repository arbeiten in einem Git-Worktree statt in
 		// einem leeren Ordner — das Modell sieht damit das echte Projekt.
 		resolveTaskDir: (task) => resolveTaskDir(task),
+		// Für den automatischen Push des Arbeitsbranches (M10).
+		githubToken: () => githubTokenFor(),
 	})
 
 	async function resolveTaskDir(task: Parameters<typeof taskWorktreePath>[1]): Promise<string> {

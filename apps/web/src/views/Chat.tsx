@@ -55,6 +55,8 @@ interface Turn {
 	status: string
 	createdAt: string
 	agentMode: boolean
+	/** Gepinntes Repository — dann gibt es Diff, Commit und Push direkt hier. */
+	repoId: string | null
 	agentName: string | null
 	agentReason: string | null
 	modelName: string | null
@@ -289,6 +291,7 @@ export default function Chat() {
 					status: "running",
 					createdAt: new Date().toISOString(),
 					agentMode: target !== "answer",
+					repoId: target === "repo" ? repoId : null,
 					agentName: null,
 					agentReason: null,
 					modelName: null,

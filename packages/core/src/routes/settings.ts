@@ -11,6 +11,7 @@ import {
 	type ConcurrencySettings,
 	DEFAULT_WEIGHTS,
 	type DocTemplateSettings,
+	type GitSettings,
 	isAgentDocKind,
 	normalizeWeights,
 	type ScoringWeights,
@@ -164,6 +165,7 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 		docTemplates: getDocTemplates(ctx.db) ?? {},
 		concurrency: ctx.engine.limits(),
 		timeouts: ctx.engine.timeouts(),
+		git: ctx.engine.gitSettings(),
 	})
 
 	app.get("/api/settings", () => currentSettings())
@@ -174,6 +176,7 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			docTemplates?: DocTemplateSettings
 			concurrency?: Partial<ConcurrencySettings>
 			timeouts?: Partial<TimeoutSettings>
+			git?: Partial<GitSettings>
 		}
 	}>("/api/settings", (req, reply) => {
 		const body = req.body ?? {}
@@ -181,11 +184,23 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			body.routingWeights === undefined &&
 			body.docTemplates === undefined &&
 			body.concurrency === undefined &&
-			body.timeouts === undefined
+			body.timeouts === undefined &&
+			body.git === undefined
 		) {
 			return reply
 				.code(400)
-				.send({ error: "routingWeights, docTemplates, concurrency oder timeouts erforderlich" })
+				.send({ error: "routingWeights, docTemplates, concurrency, timeouts oder git erforderlich" })
+		}
+		if (body.git !== undefined) {
+			const current = ctx.engine.gitSettings()
+			const next = {
+				autoCommit: body.git.autoCommit ?? current.autoCommit,
+				autoPush: body.git.autoPush ?? current.autoPush,
+			}
+			if (typeof next.autoCommit !== "boolean" || typeof next.autoPush !== "boolean") {
+				return reply.code(400).send({ error: "git braucht autoCommit und autoPush als Wahrheitswerte" })
+			}
+			setSetting(ctx.db, "git", next)
 		}
 		if (body.timeouts !== undefined) {
 			const parsed = parseTimeouts(body.timeouts, ctx.engine.timeouts())

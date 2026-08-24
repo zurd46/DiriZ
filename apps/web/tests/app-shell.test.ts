@@ -16,6 +16,7 @@ test.beforeEach(async ({ page }) => {
 /** Navigationsziele mit ihrem erwarteten Pfad und ihrer Überschrift. */
 const VIEWS = [
 	{ label: "Dashboard", path: "/dashboard" },
+	{ label: "Chat", path: "/chat" },
 	{ label: "Provider", path: "/providers" },
 	{ label: "Agenten", path: "/agents" },
 	{ label: "Tasks", path: "/tasks" },
@@ -120,4 +121,32 @@ test("GitHub-Ansicht zeigt Verbindung und Repo-Formular", async ({ page }) => {
 	await expect(page.getByPlaceholder("ghp_… oder github_pat_…")).toBeVisible()
 	// Repositories lassen sich auch ohne Token-Auswahl von Hand hinzufügen.
 	await expect(page.getByPlaceholder("zurd46/DiriZ")).toBeVisible()
+})
+
+/**
+ * Die Chat-Ansicht ist der einfache Einstieg: ein Textfeld, eine Zielwahl und
+ * ein Senden-Knopf. Ohne diesen Test bliebe unbemerkt, wenn die Ansicht zwar
+ * in der Navigation steht, aber leer lädt.
+ */
+test("Chat zeigt Eingabefeld, Zielwahl und Senden-Knopf", async ({ page }) => {
+	await page.goto("/chat")
+	await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeVisible()
+
+	const eingabe = page.locator(".chat-composer textarea")
+	await expect(eingabe).toBeVisible()
+
+	// Die drei Ziele bestimmen, was der Spezialist anfassen darf.
+	for (const label of ["Nur antworten", "Projekt anlegen", "Repository ändern"]) {
+		await expect(page.getByRole("button", { name: label })).toBeVisible()
+	}
+
+	// Senden bleibt gesperrt, solange nichts drinsteht.
+	const senden = page.getByRole("button", { name: "Senden" })
+	await expect(senden).toBeDisabled()
+	await eingabe.fill("Prüfe die Anmeldung auf SQL-Injection")
+	await expect(senden).toBeEnabled()
+
+	// „Repository ändern“ blendet die Repo-Auswahl ein.
+	await page.getByRole("button", { name: "Repository ändern" }).click()
+	await expect(page.getByLabel("Repository")).toBeVisible()
 })

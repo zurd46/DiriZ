@@ -27,6 +27,8 @@ export interface LogLine {
 }
 
 export interface LiveRun {
+	/** Task, zu der dieser Stream gehört — die Chat-Ansicht filtert danach. */
+	taskId?: string
 	text: string
 	status: "running" | "done" | "failed"
 	usage?: { tokensIn: number; tokensOut: number; tps: number; costUsd: number }
@@ -275,11 +277,11 @@ export const useStore = create<State>((set, get) => ({
 				void state.refreshSwarms()
 				break
 			case "routing.decided": {
-				const { executionId } = core.data
+				const { executionId, taskId } = core.data
 				set((s) => ({
 					live: {
 						...s.live,
-						[executionId]: { text: "", status: "running", failovers: [] },
+						[executionId]: { taskId, text: "", status: "running", failovers: [] },
 					},
 				}))
 				break

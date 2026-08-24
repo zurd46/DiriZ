@@ -14,6 +14,7 @@ import { useEffect, useState } from "react"
 
 export const ROUTES = [
 	"dashboard",
+	"chat",
 	"providers",
 	"agents",
 	"tasks",
@@ -31,6 +32,7 @@ export const DEFAULT_ROUTE: Route = "dashboard"
 /** Seitentitel je Ansicht — steht im Browser-Tab und in der History. */
 export const ROUTE_TITLES: Record<Route, string> = {
 	dashboard: "Dashboard",
+	chat: "Chat",
 	providers: "Provider",
 	agents: "Agenten",
 	tasks: "Tasks",

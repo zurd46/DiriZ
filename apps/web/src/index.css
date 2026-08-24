@@ -2888,3 +2888,144 @@ pre.code {
 .commit-list li:last-child {
 	border-bottom: none;
 }
+
+/* ---------------------------------- Chat ----------------------------------- */
+
+/*
+ * Der Verlauf füllt die Höhe, die Eingabe klebt unten — sonst wandert das
+ * Textfeld mit jeder Antwort weiter nach unten aus dem Bild.
+ */
+.chat-view {
+	display: flex;
+	flex-direction: column;
+	min-height: calc(100vh - 140px);
+}
+
+.chat-log {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-5);
+	padding-bottom: var(--sp-5);
+	overflow-y: auto;
+}
+
+.chat-turn {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-2);
+}
+
+.chat-msg {
+	border: 1px solid var(--border);
+	border-radius: var(--r-md);
+	padding: var(--sp-3) var(--sp-4);
+	background: var(--surface);
+}
+
+.chat-msg.user {
+	background: var(--accent-soft);
+	border-color: var(--accent-line);
+	align-self: flex-end;
+	max-width: 80%;
+}
+
+.chat-role {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-2);
+	font-size: var(--fs-xs);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--muted);
+	margin-bottom: var(--sp-2);
+}
+
+.chat-body {
+	white-space: pre-wrap;
+	word-break: break-word;
+	font-size: var(--fs-base);
+}
+
+.chat-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sp-1);
+	margin-top: var(--sp-2);
+}
+
+.chat-reason,
+.chat-waiting {
+	font-size: var(--fs-sm);
+	color: var(--muted);
+	margin-bottom: var(--sp-2);
+}
+
+.chat-error {
+	font-size: var(--fs-sm);
+	color: var(--err-text);
+	margin-top: var(--sp-2);
+}
+
+.chat-tools {
+	list-style: none;
+	margin: 0 0 var(--sp-2);
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	font-family: var(--mono);
+	font-size: var(--fs-xs);
+}
+
+.chat-tools li.ok {
+	color: var(--ok-text);
+}
+
+.chat-tools li.err {
+	color: var(--err-text);
+}
+
+.chat-files {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-1);
+	margin-top: var(--sp-2);
+	font-size: var(--fs-sm);
+}
+
+.chat-composer {
+	position: sticky;
+	bottom: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-2);
+	padding: var(--sp-3);
+}
+
+.chat-targets {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-2);
+}
+
+.chat-context {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-1);
+	font-size: var(--fs-sm);
+	color: var(--muted);
+}
+
+.chat-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--sp-2);
+}
+
+.btn.sm {
+	padding: 2px var(--sp-2);
+	font-size: var(--fs-xs);
+}

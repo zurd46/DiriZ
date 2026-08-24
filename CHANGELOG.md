@@ -8,19 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/de/2.0
 ## Unreleased
 
 ### Added
-- **Eingebautes Software-Team (Team-Katalog): 33 Spezialisten und 8 Swarms** — von der Anforderung bis zum Betrieb, beim Start automatisch angelegt
+- **Neue Ansicht „Chat" — der einfache Einstieg:** Aufgabe in ein Textfeld schreiben, DiriZ sucht den passenden Spezialisten und arbeitet damit
+  - Drei Ziele bestimmen, was der Spezialist anfassen darf: **Nur antworten** (Text, kein Dateizugriff), **Projekt anlegen** (Agentik-Modus im Workspace — er schreibt Dateien) und **Repository ändern** (Agentik-Modus im Git-Worktree eines verbundenen Repos)
+  - Live-Ausgabe Token für Token, dazu der Name des automatisch gewählten Spezialisten samt Begründung, seine Dateioperationen, Failover und die erzeugten Dateien
+  - Jede Chat-Nachricht ist eine ganz normale Task (`assignmentMode: "auto"`) — also unter „Tasks" mit Routing-Entscheidung und Ausführungen vollständig nachvollziehbar. Es gibt bewusst keinen zweiten Ausführungsweg, der auseinanderdriften könnte
+  - „Verlauf mitsenden" hängt die letzten beiden Frage/Antwort-Paare gekürzt an den Prompt, damit Rückfragen funktionieren; abschaltbar
+  - Enter sendet, Umschalt+Enter macht eine neue Zeile; ein laufender Auftrag lässt sich abbrechen
+- `routing.decided` trägt jetzt die `taskId` — ohne sie kann eine Ansicht einen Live-Stream nicht ihrer eigenen Task zuordnen
+
+### Fixed
+- Der SSE-Client hatte eine **eigene Kopie der Event-Namen** und verschluckte damit `tool.call` und `task.pushed` — die Dateioperationen des Agentik-Modus erreichten die Oberfläche nie. Die Namen kommen jetzt aus dem Kontrakt (`CORE_EVENT_NAMES`)
+- **Eingebautes Software-Team (Team-Katalog): 42 Spezialisten und 8 Swarms** — von der Anforderung bis zum Betrieb, beim Start automatisch angelegt
   - **Produkt & Analyse:** Requirements-Analyst, Product-Owner, Agile-Coach & Projektplaner
-  - **Architektur & Design:** Software-Architekt, API-Designer, Datenbank-Architekt, UX-Designer, Accessibility-Spezialist
-  - **Implementierung:** Frontend-, Backend-, Mobile-, Desktop-, Systems- und Integrations-Entwickler, Build- & Tooling-Engineer, Git-Spezialist
-  - **Daten & KI:** Daten-Ingenieur, ML-Ingenieur, LLM- & Prompt-Ingenieur
-  - **Qualität:** Code-Reviewer, Test-Engineer, E2E-Testautomatisierer, Debugging-, Refactoring-Spezialist, Performance- und Security-Engineer
-  - **Betrieb & Auslieferung:** DevOps-Engineer, Cloud- & Infrastruktur-Engineer, Site-Reliability-Engineer, Release-Manager
+  - **Architektur & Design:** Software-Architekt, API-Designer, Datenbank-Architekt, UX-Designer, Accessibility-Spezialist, Tech-Lead & Mentor
+  - **Implementierung:** Frontend-, Backend-, Mobile-, Desktop-, Systems-, Embedded/IoT- und Integrations-Entwickler, Build- & Tooling-Engineer, Git-Spezialist
+  - **Daten & KI:** Daten-Ingenieur, Datenanalyst & BI, ML-Ingenieur, LLM- & Prompt-Ingenieur
+  - **Qualität:** Code-Reviewer, Test-Engineer, E2E-Testautomatisierer, Debugging-, Refactoring- und Migrations-/Upgrade-Spezialist, Performance- und Security-Engineer
+  - **Betrieb & Auslieferung:** DevOps-Engineer, Cloud- & Infrastruktur-Engineer, Site-Reliability-Engineer, Release-Manager, Datenbank-Administrator, Netzwerk- & TLS-Engineer, SecOps- & Incident-Response-Analyst, Support- & Second-Level-Engineer, FinOps- & Kosten-Spezialist
   - **Dokumentation & Governance:** Technischer Redakteur, i18n- & Lokalisierungs-Spezialist, Compliance- & Datenschutz-Spezialist
   - Jeder Spezialist kommt vollständig deklariert: Rolle (System-Prompt), ausgefülltes `plan.md` (Auftrag, Vorgehen, Leitplanken — wirksam als Arbeitsanweisung), `init.md` mit rollengerechter Temperatur und Max-Tokens (Reviewer und Security kühl, UX-Design wärmer), Pflicht- und Wunsch-Fähigkeiten sowie Privacy (Security und Datenschutz laufen `local-only`)
   - Ein Swarm je Fachbereich plus „Software-Team (komplett)“ — im Modus `swarm` wählt die Engine daraus automatisch das passende Mitglied
   - Das Seeding ist **einmalig und nicht übergriffig**: bestehende und namensgleiche eigene Spezialisten bleiben unangetastet, gelöschte Katalog-Einträge kommen nicht von selbst zurück, später ergänzte Katalog-Mitglieder werden in bestehende Swarms nachgetragen
   - Ohne Neustart nachladbar: `GET /api/agents/catalog` (was ist installiert, was fehlt), `POST /api/agents/catalog` und der Knopf „Team-Katalog laden“ auf der Seite „Spezialisten“
-- **Fähigkeitsbasierte Auto-Zuordnung:** Das Scoring bewertet jetzt, ob die Fähigkeiten eines Spezialisten zur Task passen — voller Treffer gibt einen Bonus, geforderte aber ungenutzte Fähigkeiten kosten Punkte (sie verengen sonst das Routing-Gate und schließen Modelle ohne Nutzen aus). Damit setzt DiriZ den richtigen Spezialisten automatisch, statt bei mehreren Kandidaten alphabetisch zu würfeln; ein Test prüft für jeden der 33 Spezialisten einen typischen Prompt
+- **Fähigkeitsbasierte Auto-Zuordnung:** Das Scoring bewertet jetzt, ob die Fähigkeiten eines Spezialisten zur Task passen — voller Treffer gibt einen Bonus, geforderte aber ungenutzte Fähigkeiten kosten Punkte (sie verengen sonst das Routing-Gate und schließen Modelle ohne Nutzen aus). Damit setzt DiriZ den richtigen Spezialisten automatisch, statt bei mehreren Kandidaten alphabetisch zu würfeln; ein Test prüft für jeden der 42 Spezialisten einen typischen Prompt
 - **GitHub-Anbindung (M10) — das volle Programm:** Repositories verbinden, pro Task pinnen, Änderungen als Diff ansehen, committen, pushen und Pull-Requests öffnen
   - **Task-Pinning:** Jede Task lässt sich an ein Repository binden. Ihr Arbeitsverzeichnis **ist** dann ein Git-Worktree auf einem eigenen Branch (`diriz/<slug>`) — das Modell schreibt also direkt im echten Projekt, und mehrere Tasks arbeiten parallel ohne sich zu stören (ein Klon, viele Worktrees)
   - **Diff-Ansicht** wie auf GitHub: Datei für Datei, mit alter und neuer Zeilennummer, Farbmarkierung, Zeilenbilanz, Erkennung von Anlegen/Löschen/Umbenennen/Binärdateien; sehr große Diffs werden gekürzt statt den Browser zu blockieren

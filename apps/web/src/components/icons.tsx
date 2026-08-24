@@ -115,6 +115,15 @@ export function IconAgents(p: IconProps) {
 	)
 }
 
+export function IconChat(p: IconProps) {
+	return (
+		<Svg {...p}>
+			<path d="M21 12a8 8 0 0 1-8 8H8l-4 3v-4.6A8 8 0 0 1 13 4a8 8 0 0 1 8 8Z" />
+			<path d="M9 11h8M9 15h5" />
+		</Svg>
+	)
+}
+
 export function IconTasks(p: IconProps) {
 	return (
 		<Svg {...p}>

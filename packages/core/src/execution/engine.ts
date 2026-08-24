@@ -533,7 +533,7 @@ export class ExecutionEngine {
 					createdAt: new Date().toISOString(),
 				}
 				saveDecision(db, decision)
-				emit({ event: "routing.decided", data: { executionId: execution.id, decision } })
+				emit({ event: "routing.decided", data: { executionId: execution.id, taskId: task.id, decision } })
 				log(
 					"info",
 					"routing",

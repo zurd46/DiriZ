@@ -3,6 +3,8 @@
  * Events werden als `{ event, data }`-Objekte an den Listener übergeben.
  */
 
+import { CORE_EVENT_NAMES } from "@diriz/shared"
+
 const BASE: string = import.meta.env.VITE_DIRIZ_API ?? ""
 
 export interface StreamEvent {
@@ -40,21 +42,9 @@ export function connectStream(
 			}
 		}
 		// Generic-Listener: Fastify sendet benannte Events (`event: <name>`).
-		const names = [
-			"task.created",
-			"task.agent_selected",
-			"agents.changed",
-			"swarms.changed",
-			"routing.decided",
-			"execution.delta",
-			"execution.usage",
-			"execution.failover",
-			"execution.done",
-			"execution.failed",
-			"provider.status",
-			"log",
-		]
-		for (const name of names) {
+		// Die Namen kommen aus dem Kontrakt — eine Kopie hier hatte bereits
+		// `tool.call` und `task.pushed` verschluckt, weil sie niemand nachzog.
+		for (const name of CORE_EVENT_NAMES) {
 			source.addEventListener(name, ((e: MessageEvent) => {
 				try {
 					onEvent({ event: name, data: JSON.parse(e.data) })

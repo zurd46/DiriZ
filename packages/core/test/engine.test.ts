@@ -151,6 +151,13 @@ describe("engine: Erfolgspfad", () => {
 		// Event-Folge
 		const names = events.map((e) => e.event)
 		expect(names).toContain("routing.decided")
+		// `routing.decided` trägt die Task-ID: Ohne sie kann eine Ansicht einen
+		// Live-Stream nicht ihrer eigenen Task zuordnen (Chat).
+		const decided = events.find((e) => e.event === "routing.decided") as
+			| { data: { taskId: string; executionId: string } }
+			| undefined
+		expect(decided?.data.taskId).toBe(task.id)
+		expect(decided?.data.executionId).toBe(result.id)
 		expect(names).toContain("execution.delta")
 		expect(names).toContain("execution.usage")
 		expect(names).toContain("execution.done")

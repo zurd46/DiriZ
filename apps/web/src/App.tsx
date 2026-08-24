@@ -4,6 +4,7 @@ import ErrorBoundary from "./components/ErrorBoundary.js"
 import type { IconProps } from "./components/icons.js"
 import {
 	IconAgents,
+	IconChat,
 	IconDashboard,
 	IconDoc,
 	IconGitBranch,
@@ -21,6 +22,7 @@ import { ROUTE_TITLES, type Route, useRoute } from "./lib/router.js"
 import { connectStream } from "./lib/sse.js"
 import { useStore } from "./store.js"
 import Agents from "./views/Agents.js"
+import Chat from "./views/Chat.js"
 import Dashboard from "./views/Dashboard.js"
 import Docs from "./views/Docs.js"
 import Github from "./views/Github.js"
@@ -40,7 +42,10 @@ interface NavItem {
 const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
 	{
 		title: "Überblick",
-		items: [{ id: "dashboard", label: "Dashboard", icon: IconDashboard }],
+		items: [
+			{ id: "dashboard", label: "Dashboard", icon: IconDashboard },
+			{ id: "chat", label: "Chat", icon: IconChat },
+		],
 	},
 	{
 		title: "Orchestrierung",
@@ -174,6 +179,7 @@ export default function App() {
 				{/* Ein Fehler in einer Ansicht darf nie die ganze App abräumen. */}
 				<ErrorBoundary resetKey={route}>
 					{route === "dashboard" && <Dashboard />}
+					{route === "chat" && <Chat />}
 					{route === "providers" && <Providers />}
 					{route === "agents" && <Agents />}
 					{route === "tasks" && <Tasks />}

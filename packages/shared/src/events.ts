@@ -40,7 +40,8 @@ export interface SwarmsChangedEvent {
 
 export interface RoutingDecidedEvent {
 	event: "routing.decided"
-	data: { executionId: string; decision: RoutingDecision }
+	/** `taskId` ordnet den Live-Stream seiner Task zu (Chat-Ansicht, Monitor). */
+	data: { executionId: string; taskId: string; decision: RoutingDecision }
 }
 
 export interface ExecutionDeltaEvent {

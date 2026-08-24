@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest"
 import {
 	AGENT_TOOLS,
 	instanceDocs,
+	MODEL_FAMILIES,
 	parameterCount,
 	parseLlmDoc,
 	profileForModel,
@@ -53,6 +54,16 @@ describe("profileForModel", () => {
 	it("lässt gemeldete Fähigkeiten gewinnen — gemessen schlägt geraten", () => {
 		const profile = profileForModel({ modelId: "laguna-xs-2.1", capabilities: ["vision"] })
 		expect(profile.capabilities).toEqual(["vision"])
+	})
+
+	it("empfiehlt nie eine Token-Obergrenze", () => {
+		// Eine geratene Obergrenze schneidet die Antwort ab — im Agentik-Modus
+		// auch mitten im Dateiinhalt eines `write_file`-Aufrufs. Lokale Modelle
+		// kosten nichts pro Token; die Grenze ist die Laufzeit.
+		for (const rule of MODEL_FAMILIES) {
+			expect(rule.profile.settings.maxTokens, rule.profile.family).toBeUndefined()
+		}
+		expect(profileForModel({ modelId: "was-auch-immer" }).settings.maxTokens).toBeUndefined()
 	})
 
 	it("liest die Parameterzahl aus dem Namen", () => {

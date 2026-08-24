@@ -32,7 +32,9 @@ describe("SOFTWARE_TEAM", () => {
 			expect(bp.approach.length, bp.slug).toBeGreaterThanOrEqual(4)
 			expect(bp.guardrails.length, bp.slug).toBeGreaterThanOrEqual(3)
 			expect(bp.modelSettings.temperature, bp.slug).toBeTypeOf("number")
-			expect(bp.modelSettings.maxTokens, bp.slug).toBeTypeOf("number")
+			// Keine Obergrenze: Eine geratene Zahl schneidet Antworten und
+			// Tool-Aufrufe mitten im Satz ab — die Grenze ist die Laufzeit.
+			expect(bp.modelSettings.maxTokens, bp.slug).toBeUndefined()
 		}
 	})
 
@@ -74,7 +76,7 @@ describe("Dokumente eines Blueprints", () => {
 		for (const bp of SOFTWARE_TEAM) {
 			const parsed = parseInitDoc(blueprintDocs(bp, DATE).init)
 			expect(parsed.temperature, bp.slug).toBe(bp.modelSettings.temperature)
-			expect(parsed.maxTokens, bp.slug).toBe(bp.modelSettings.maxTokens)
+			expect(parsed.maxTokens, bp.slug).toBeUndefined()
 		}
 	})
 })

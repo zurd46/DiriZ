@@ -574,6 +574,11 @@ function listDocs(db: Db, scope: DocScope, ownerId: string): PlainDoc[] {
 				? renderInitDoc(owner.settings, owner.name)
 				: startDoc(db, scope.owner, kind, owner.name, owner.createdAt || now, preset)
 		writeDoc(db, scope, ownerId, kind, content, now)
+		// Ein frisch angelegtes Datenblatt wirkt sofort — sonst stünden im
+		// Dokument Fähigkeiten und Parameter, die das Routing nicht kennt.
+		if (kind === "llm" && scope.owner === "instance") {
+			syncInstanceFromLlm(db, ownerId, content)
+		}
 		return { kind, content, updatedAt: now }
 	})
 }

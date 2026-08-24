@@ -322,33 +322,33 @@ export default function Models() {
 							</div>
 
 							<div className="model-readout">
-									<span className="field-hint">Das Routing liest daraus:</span>
-									<span className={`badge ${spec.capabilities.length > 0 ? "accent" : "warn"}`}>
-										Fähigkeiten: {spec.capabilities.length > 0 ? spec.capabilities.join(", ") : "keine"}
-									</span>
-									<span className="badge">Kontext: {spec.contextWindow ?? "—"}</span>
-									<span className="badge">Qualität: {spec.quality ?? "mittel"}</span>
-									<span className="badge">Tempo: {spec.speed ?? "mittel"}</span>
-									<span className="badge">
-										Werkzeuge: {spec.tools.length > 0 ? spec.tools.join(", ") : "keine"}
-									</span>
-									<span className="badge">
-										Eignung: {spec.goodFor.length} Stärken / {spec.notFor.length} Schwächen
-									</span>
-								</div>
+								<span className="field-hint">Das Routing liest daraus:</span>
+								<span className={`badge ${spec.capabilities.length > 0 ? "accent" : "warn"}`}>
+									Fähigkeiten: {spec.capabilities.length > 0 ? spec.capabilities.join(", ") : "keine"}
+								</span>
+								<span className="badge">Kontext: {spec.contextWindow ?? "—"}</span>
+								<span className="badge">Qualität: {spec.quality ?? "mittel"}</span>
+								<span className="badge">Tempo: {spec.speed ?? "mittel"}</span>
+								<span className="badge">
+									Werkzeuge: {spec.tools.length > 0 ? spec.tools.join(", ") : "keine"}
+								</span>
+								<span className="badge">
+									Eignung: {spec.goodFor.length} Stärken / {spec.notFor.length} Schwächen
+								</span>
+							</div>
 
-								<div className="model-readout">
-									<span className="field-hint">Voreinstellungen:</span>
-									{settings.length === 0 ? (
-										<span className="faint text-sm">keine — es gelten die Werte des Rechners</span>
-									) : (
-										settings.map(([k, v]) => (
-											<span key={k} className="badge accent">
-												{k}: {Array.isArray(v) ? v.join(" | ") : String(v).slice(0, 40)}
-											</span>
-										))
-									)}
-								</div>
+							<div className="model-readout">
+								<span className="field-hint">Voreinstellungen:</span>
+								{settings.length === 0 ? (
+									<span className="faint text-sm">keine — es gelten die Werte des Rechners</span>
+								) : (
+									settings.map(([k, v]) => (
+										<span key={k} className="badge accent">
+											{k}: {Array.isArray(v) ? v.join(" | ") : String(v).slice(0, 40)}
+										</span>
+									))
+								)}
+							</div>
 
 							<div className="row model-actions">
 								<button

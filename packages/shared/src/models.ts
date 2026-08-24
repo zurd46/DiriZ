@@ -852,23 +852,6 @@ export function renderLlmDoc(identity: ModelIdentity, isoDate: string): string {
 			"Agentik-Modus zuerst mit einer kleinen Aufgabe prüfen.",
 		)
 	}
-	// Die Model-Parameter stehen im selben Dokument: Ein Modell hat genau ein
-	// Datenblatt, und Temperatur & Co. sind eine seiner Eigenschaften.
-	// Vorhandene Overrides gewinnen gegen die Katalog-Empfehlung.
-	const settings: ModelSettings = { ...profile.settings, ...identity.settings }
-	lines.push("", "## Voreinstellungen", "", "Gilt für dieses Modell; ein Spezialist oder eine Task schlägt es.", "")
-	for (const { key, label } of SETTING_LABELS) {
-		const value = settings[key]
-		if (value !== undefined) {
-			lines.push(`- ${label}: ${value}`)
-		}
-	}
-	if (settings.stop?.length) {
-		lines.push(`- Stop: ${settings.stop.join(", ")}`)
-	}
-	if (settings.systemPrompt?.trim()) {
-		lines.push("", "## System-Prompt", "", settings.systemPrompt.trim())
-	}
 	lines.push(
 		"",
 		"## Gut für",
@@ -882,8 +865,37 @@ export function renderLlmDoc(identity: ModelIdentity, isoDate: string): string {
 		"## Hinweise",
 		"",
 		...profile.notes.map((s) => `- ${s}`),
+	)
+
+	// Zum Schluss die Model-Parameter: Ein Modell hat genau ein Datenblatt, und
+	// Temperatur & Co. sind eine seiner Eigenschaften.
+	//
+	// Bereits gesetzte Overrides gelten **anstelle** der Katalog-Empfehlung,
+	// nicht zusätzlich: Wer nur die Temperatur gesetzt hatte, wollte für alles
+	// andere die Werte des Rechners — ein hinzugemischtes Max-Tokens würde sie
+	// stillschweigend aushebeln.
+	const own = identity.settings ?? undefined
+	const settings: ModelSettings = own && Object.keys(own).length > 0 ? own : profile.settings
+	lines.push(
+		"",
+		"## Voreinstellungen",
+		"",
+		"Gilt für dieses Modell; ein Spezialist oder eine Task schlägt es.",
 		"",
 	)
+	for (const { key, label } of SETTING_LABELS) {
+		const value = settings[key]
+		if (value !== undefined) {
+			lines.push(`- ${label}: ${value}`)
+		}
+	}
+	if (settings.stop?.length) {
+		lines.push(`- Stop: ${settings.stop.join(", ")}`)
+	}
+	if (settings.systemPrompt?.trim()) {
+		lines.push("", "## System-Prompt", "", settings.systemPrompt.trim())
+	}
+	lines.push("")
 	return lines.join("\n")
 }
 

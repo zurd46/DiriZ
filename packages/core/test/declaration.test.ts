@@ -475,9 +475,7 @@ describe("Sammel-Endpunkt /api/docs", () => {
 				.filter(([, content]) => content.length > 0)
 				.map(([kind]) => kind)
 				.sort()
-			expect(kinds, owner.name).toEqual(
-				owner.kind === "instance" ? ["llm"] : ["changelog", "init", "plan"],
-			)
+			expect(kinds, owner.name).toEqual(owner.kind === "instance" ? ["llm"] : ["changelog", "init", "plan"])
 		}
 	})
 })

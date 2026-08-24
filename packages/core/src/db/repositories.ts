@@ -330,13 +330,11 @@ export function upsertInstance(
 			now,
 		)
 		createDocs(db, "instance", id, model.displayName, now, docs)
-		// Was im Datenblatt steht, gilt: Fähigkeiten daraus übernehmen — der
-		// Provider meldet meist keine, das Routing bräuchte sie aber.
+		// Was im Datenblatt steht, gilt: Fähigkeiten und Parameter daraus
+		// übernehmen — der Provider meldet meist keine, das Routing bräuchte
+		// sie aber.
 		if (docs.llm) {
 			syncInstanceFromLlm(db, id, docs.llm)
-		}
-		if (docs.init) {
-			syncSettingsFromInit(db, DOC_SCOPES.instance, id)
 		}
 		const created = getInstance(db, id)
 		if (!created) {
@@ -497,7 +495,9 @@ const DOC_SCOPES: Record<DocOwnerKind, DocScope> = {
 		},
 		defaults: (db, id, isoDate) => {
 			const i = getInstance(db, id)
-			return i ? instanceDocs(i, isoDate) : {}
+			// Bereits gesetzte Overrides wandern ins Datenblatt, sonst löschte
+			// das erste Speichern die Parameter dieses Modells.
+			return i ? instanceDocs({ ...i, settings: i.modelSettings }, isoDate) : {}
 		},
 	},
 	agent: {
@@ -566,6 +566,9 @@ function listDocs(db: Db, scope: DocScope, ownerId: string): PlainDoc[] {
 		if (existing) {
 			return { kind, content: existing.content, updatedAt: existing.updated_at }
 		}
+		// Bestände aus der Zeit vor den Dokumenten: vorhandene Overrides ins
+		// `init.md` retten. Modelle brauchen das nicht — ihr Datenblatt bringt
+		// die Parameter schon mit (`DocScope.defaults`).
 		const content =
 			kind === "init" && owner.settings && Object.keys(owner.settings).length > 0
 				? renderInitDoc(owner.settings, owner.name)
@@ -612,18 +615,21 @@ function syncSettingsFromInit(db: Db, scope: DocScope, ownerId: string): ModelSe
 }
 
 /**
- * Spiegelt das `llm.md` in die `instances`-Tabelle: Fähigkeiten und
- * Kontext-Fenster sind harte Routing-Gates, und das Dokument ist ihre Quelle
- * der Wahrheit — genau wie `init.md` für die Model-Settings. Wer im Datenblatt
- * `vision` streicht, nimmt das Modell damit aus dem Bild-Routing.
+ * Spiegelt das `llm.md` in die `instances`-Tabelle. Das Datenblatt ist die
+ * Quelle der Wahrheit für alles, was das Routing über ein Modell weiss:
+ * Fähigkeiten und Kontext-Fenster sind harte Gates, `## Voreinstellungen`
+ * liefert die Model-Parameter (früher `init.md`). Wer im Datenblatt `vision`
+ * streicht, nimmt das Modell damit aus dem Bild-Routing.
  *
  * Das Kontext-Fenster wird nur übernommen, wenn es plausibel ist: Eine
  * versehentlich gelöschte Zeile darf ein Modell nicht aus jedem Routing werfen.
  */
 function syncInstanceFromLlm(db: Db, instanceId: string, content: string): ModelSpec {
 	const spec = parseLlmDoc(content)
-	db.prepare("UPDATE instances SET capabilities_json = ? WHERE id = ?").run(
+	const settings = Object.keys(spec.settings).length > 0 ? JSON.stringify(spec.settings) : null
+	db.prepare("UPDATE instances SET capabilities_json = ?, model_settings = ? WHERE id = ?").run(
 		JSON.stringify(spec.capabilities),
+		settings,
 		instanceId,
 	)
 	if (spec.contextWindow !== undefined && spec.contextWindow >= 512) {

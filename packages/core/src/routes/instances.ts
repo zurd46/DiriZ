@@ -2,24 +2,21 @@
  * Instance-Routen: Modelle pro Provider — Übersicht, manuelle Korrektur
  * (Context-Fenster, Fähigkeiten, Sprachen, Preis), Entfernen.
  *
- * Jedes Modell führt drei Dokumente (`llm.md`, `changelog.md`, `init.md`).
- * Anders als ein Spezialist bekommt es **keinen** Auftrag (`plan.md`), sondern
- * ein Datenblatt: `llm.md` beschreibt Fähigkeiten, Kontext-Fenster, Stärken und
- * Schwächen — und ist damit die Quelle der Wahrheit für die Orchestrierung.
- * `init.md` setzt wie gehabt die Model-Voreinstellungen.
+ * Jedes Modell führt **genau ein** Dokument: `llm.md`, sein Datenblatt. Es
+ * beschreibt Fähigkeiten, Kontext-Fenster, Werkzeuge, Stärken, Schwächen und
+ * die Voreinstellungen — und ist damit die Quelle der Wahrheit für die
+ * Orchestrierung. Einen Auftrag (`plan.md`) und ein Änderungsprotokoll führt
+ * ein Modell nicht; das gehört zur Arbeit, nicht zum Werkzeug.
  */
 
 import {
 	AGENT_DOC_FILES,
 	type AgentDocKind,
-	appendChangelogEntry,
 	type Capability,
 	docKindsFor,
 	isAgentDocKind,
 	type ModelSettings,
-	parseInitDoc,
 	parseLlmDoc,
-	renderInitDoc,
 	updateLlmDoc,
 } from "@diriz/shared"
 import type { FastifyInstance } from "fastify"
@@ -50,19 +47,6 @@ interface InstancePatchBody {
 	enabled?: boolean
 }
 
-/** Feld-Labels für den automatischen Changelog-Eintrag beim Bearbeiten. */
-const FIELD_LABELS: Record<string, string> = {
-	displayName: "Anzeigename",
-	contextWindow: "Kontext-Fenster",
-	capabilities: "Fähigkeiten",
-	languages: "Sprachen",
-	quantization: "Quantisierung",
-	priceInPerMTok: "Preis (in)",
-	priceOutPerMTok: "Preis (out)",
-	modelSettings: "Model-Voreinstellungen",
-	enabled: "Status",
-}
-
 export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
 	app.get<{ Querystring: { providerId?: string } }>("/api/instances", (req) => {
 		return listInstances(ctx.db, req.query.providerId)
@@ -77,18 +61,13 @@ export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
 		if (!before) {
 			return reply.code(404).send({ error: "Instance nicht gefunden" })
 		}
-		// Model-Settings sind aus `init.md` abgeleitet — also dort hineinschreiben.
-		if (body.modelSettings !== undefined) {
-			saveInstanceDoc(
-				ctx.db,
-				req.params.id,
-				"init",
-				renderInitDoc(body.modelSettings ?? {}, body.displayName?.trim() || before.displayName),
-			)
-		}
-		// Fähigkeiten und Kontext-Fenster stehen im `llm.md` — dorthin zurück,
+		// Alles, was das Formular ändert, steht im Datenblatt — dorthin zurück,
 		// sonst überschreibt der nächste Speichervorgang im Dokument die Eingabe.
-		if (body.capabilities !== undefined || body.contextWindow !== undefined) {
+		if (
+			body.capabilities !== undefined ||
+			body.contextWindow !== undefined ||
+			body.modelSettings !== undefined
+		) {
 			const doc = getInstanceDoc(ctx.db, req.params.id, "llm")
 			if (doc) {
 				saveInstanceDoc(
@@ -98,6 +77,7 @@ export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
 					updateLlmDoc(doc.content, {
 						capabilities: body.capabilities as Capability[] | undefined,
 						contextWindow: body.contextWindow,
+						settings: body.modelSettings,
 					}),
 				)
 			}
@@ -114,27 +94,6 @@ export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
 		})
 		if (!instance) {
 			return reply.code(404).send({ error: "Instance nicht gefunden" })
-		}
-		const changed = Object.entries(body)
-			.filter(([key, value]) => value !== undefined && key in FIELD_LABELS)
-			.filter(
-				([key, value]) =>
-					JSON.stringify(value ?? null) !==
-					JSON.stringify((before as unknown as Record<string, unknown>)[key] ?? null),
-			)
-			.map(([key]) => FIELD_LABELS[key] ?? key)
-		if (changed.length > 0) {
-			const doc = getInstanceDoc(ctx.db, instance.id, "changelog")
-			saveInstanceDoc(
-				ctx.db,
-				instance.id,
-				"changelog",
-				appendChangelogEntry(
-					doc?.content ?? "",
-					`Bearbeitet: ${changed.join(", ")}`,
-					new Date().toISOString(),
-				),
-			)
 		}
 		return instance
 	})
@@ -166,13 +125,10 @@ export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
 			if (!doc) {
 				return reply.code(404).send({ error: "Instance nicht gefunden" })
 			}
-			// Beide wirksamen Dokumente geben zurück, was der Core daraus gelesen
-			// hat — die UI zeigt damit ohne zweite Anfrage die Wirkung an.
-			return {
-				...doc,
-				settings: kind === "init" ? parseInitDoc(content) : undefined,
-				spec: kind === "llm" ? parseLlmDoc(content) : undefined,
-			}
+			// Das Datenblatt wirkt: zurückgeben, was der Core daraus gelesen hat —
+			// die UI zeigt die Wirkung ohne zweite Anfrage an.
+			const spec = kind === "llm" ? parseLlmDoc(content) : undefined
+			return { ...doc, spec, settings: spec?.settings }
 		},
 	)
 

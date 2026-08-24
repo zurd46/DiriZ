@@ -1,0 +1,14 @@
+-- DiriZ 0013 — ein Modell führt genau ein Dokument
+--
+-- `changelog.md` und `init.md` fallen bei Modellen weg:
+--   * Ein Änderungsprotokoll gehört zur Arbeit (Task, Spezialist), nicht zum
+--     Werkzeug — bei einem Modell stand dort nur „Bearbeitet: Fähigkeiten".
+--   * Die Model-Parameter (Temperatur, Max-Tokens, System-Prompt) stehen jetzt
+--     im Abschnitt `## Voreinstellungen` des Datenblatts; gelesen werden sie
+--     vom selben Parser wie zuvor (`parseInitDoc`).
+--
+-- Die Werte gehen nicht verloren: `instances.model_settings` trägt sie bereits,
+-- und der Core schreibt sie beim Anlegen des Datenblatts dort hinein
+-- (`DocScope.defaults` → `instanceDocs`). Rechner und Spezialisten behalten
+-- ihre drei Dokumente unverändert.
+DELETE FROM instance_docs WHERE kind <> 'llm';

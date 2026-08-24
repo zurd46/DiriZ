@@ -29,7 +29,7 @@
  */
 
 import { tokenize } from "./agents.js"
-import { type AgentDocKind, renderInitDoc } from "./docs.js"
+import { type AgentDocKind, parseInitDoc } from "./docs.js"
 import type { Capability, ModelSettings } from "./types.js"
 
 /** Wie gut die Ausgaben erfahrungsgemäß sind — Startwert der Qualitäts-Achse. */
@@ -83,6 +83,8 @@ export interface ModelIdentity {
 	quantization?: string
 	/** Nur Cloud (USD je Million Token). */
 	pricePerMTok?: { in: number; out: number }
+	/** Bereits gesetzte Overrides — sie gewinnen gegen die Katalog-Empfehlung. */
+	settings?: ModelSettings | null
 }
 
 /** Das, was `parseLlmDoc` aus einem Datenblatt herausliest. */
@@ -99,9 +101,27 @@ export interface ModelSpec {
 	notFor: string[]
 	/** Freigegebene Werkzeuge des Agentik-Modus. */
 	tools: AgentTool[]
+	/** Model-Parameter aus `## Voreinstellungen` (Temperatur, Max-Tokens, …). */
+	settings: ModelSettings
 }
 
 const CAPABILITY_VALUES: Capability[] = ["code", "reasoning", "longform", "vision", "tools", "json"]
+
+/**
+ * Die Model-Parameter im Datenblatt. Geschrieben wie in `init.md`, damit
+ * `parseInitDoc` sie versteht — ein Parser für beide Schreibweisen genügt.
+ */
+const SETTING_LABELS: { key: keyof ModelSettings; label: string }[] = [
+	{ key: "temperature", label: "Temperature" },
+	{ key: "topP", label: "Top-P" },
+	{ key: "topK", label: "Top-K" },
+	{ key: "minP", label: "Min-P" },
+	{ key: "maxTokens", label: "Max-Tokens" },
+	{ key: "repeatPenalty", label: "Repeat-Penalty" },
+	{ key: "presencePenalty", label: "Presence-Penalty" },
+	{ key: "frequencyPenalty", label: "Frequency-Penalty" },
+	{ key: "seed", label: "Seed" },
+]
 
 /**
  * Die Werkzeuge, die DiriZ im Agentik-Modus anbietet (`core/execution/tools.ts`).
@@ -832,6 +852,23 @@ export function renderLlmDoc(identity: ModelIdentity, isoDate: string): string {
 			"Agentik-Modus zuerst mit einer kleinen Aufgabe prüfen.",
 		)
 	}
+	// Die Model-Parameter stehen im selben Dokument: Ein Modell hat genau ein
+	// Datenblatt, und Temperatur & Co. sind eine seiner Eigenschaften.
+	// Vorhandene Overrides gewinnen gegen die Katalog-Empfehlung.
+	const settings: ModelSettings = { ...profile.settings, ...identity.settings }
+	lines.push("", "## Voreinstellungen", "", "Gilt für dieses Modell; ein Spezialist oder eine Task schlägt es.", "")
+	for (const { key, label } of SETTING_LABELS) {
+		const value = settings[key]
+		if (value !== undefined) {
+			lines.push(`- ${label}: ${value}`)
+		}
+	}
+	if (settings.stop?.length) {
+		lines.push(`- Stop: ${settings.stop.join(", ")}`)
+	}
+	if (settings.systemPrompt?.trim()) {
+		lines.push("", "## System-Prompt", "", settings.systemPrompt.trim())
+	}
 	lines.push(
 		"",
 		"## Gut für",
@@ -859,11 +896,17 @@ function normalizeKey(key: string): string {
 		.replace(/[^a-zäöüß0-9]/g, "")
 }
 
-/** Entfernt Listenpunkt, Fettung und Backticks. */
+/**
+ * Entfernt Listenpunkt, Fettung und Backticks.
+ *
+ * Unterstriche bleiben stehen: In diesem Dokument sind sie Teil von Namen
+ * (`write_file`), nicht Kursivsatz — sonst würde aus dem Werkzeug `writefile`
+ * und die Freigabe liefe ins Leere.
+ */
 function stripMarkdown(line: string): string {
 	return line
 		.replace(/^\s*(?:[-*+]|\d+\.)\s+/, "")
-		.replace(/[*_`]/g, "")
+		.replace(/[*`]/g, "")
 		.replace(/^#+\s*/, "")
 		.trim()
 }
@@ -886,6 +929,32 @@ function parseNumber(raw: string): number | undefined {
 	const value = Number(m[1]) * (m[2] ? 1024 : 1)
 	return Number.isFinite(value) ? value : undefined
 }
+
+/** Schlüssel des Steckbriefs — alles andere ist Fliesstext oder Aufzählung. */
+const KNOWN_KEYS = new Set([
+	"familie",
+	"family",
+	"parameter",
+	"parameters",
+	"kontextfenster",
+	"kontext",
+	"contextwindow",
+	"quantisierung",
+	"quantization",
+	"sprachen",
+	"languages",
+	"qualitätsklasse",
+	"qualitatsklasse",
+	"qualität",
+	"qualitat",
+	"tempo",
+	"speed",
+	"werkzeuge",
+	"tools",
+	"fähigkeiten",
+	"fahigkeiten",
+	"capabilities",
+])
 
 const SECTION_KEYS: Record<string, "capabilities" | "goodFor" | "notFor" | "tools"> = {
 	werkzeuge: "tools",
@@ -917,7 +986,17 @@ const SECTION_KEYS: Record<string, "capabilities" | "goodFor" | "notFor" | "tool
  * das Dokument bleibt für Menschen frei beschreibbar.
  */
 export function parseLlmDoc(markdown: string): ModelSpec {
-	const spec: ModelSpec = { languages: [], capabilities: [], goodFor: [], notFor: [], tools: [] }
+	// Die Model-Parameter liest `parseInitDoc` — dieselbe Schreibweise, derselbe
+	// Parser; Schlüssel, die es nicht kennt (Kontext-Fenster, Tempo …), lässt es
+	// liegen.
+	const spec: ModelSpec = {
+		languages: [],
+		capabilities: [],
+		goodFor: [],
+		notFor: [],
+		tools: [],
+		settings: parseInitDoc(markdown),
+	}
 	let section: "capabilities" | "goodFor" | "notFor" | "tools" | undefined
 
 	for (const rawLine of (markdown ?? "").split(/\r?\n/)) {
@@ -932,9 +1011,13 @@ export function parseLlmDoc(markdown: string): ModelSpec {
 			continue
 		}
 
+		// Ein `Schlüssel: Wert` zählt nur, wenn der Schlüssel bekannt ist. Sonst
+		// wäre jede Aufzählungszeile mit Doppelpunkt („strukturierte Ausgaben:
+		// JSON, Diff") verschluckt worden — und genau die tragen die Eignung.
 		const pair = line.match(/^([^:=]{1,40})\s*[:=]\s*(.*)$/)
-		if (pair && !isEmptyValue(pair[2] ?? "")) {
-			const key = normalizeKey(pair[1] ?? "")
+		const pairKey = pair ? normalizeKey(pair[1] ?? "") : ""
+		if (pair && KNOWN_KEYS.has(pairKey) && !isEmptyValue(pair[2] ?? "")) {
+			const key = pairKey
 			const value = (pair[2] ?? "").trim()
 			if (key === "familie" || key === "family") {
 				spec.family = value
@@ -976,8 +1059,6 @@ export function parseLlmDoc(markdown: string): ModelSpec {
 					}
 				}
 			}
-			// Ein `Schlüssel: Wert` beendet keine Aufzählung — Steckbrief und
-			// Abschnitte stehen nie im selben Block.
 			continue
 		}
 
@@ -1014,28 +1095,17 @@ export function qualityPriorOf(spec: ModelSpec | undefined): number {
 /* -------------------------------- Dokumente ---------------------------------- */
 
 /**
- * Die Startdokumente einer LLM-Instanz — befüllt statt leere Vorlage.
- * Das `changelog.md` hält fest, dass das Profil geraten und ungeprüft ist.
+ * Das Startdokument einer LLM-Instanz — befüllt statt leere Vorlage.
+ *
+ * Ein Modell führt **genau ein** Dokument: `llm.md`. Ein Auftrag (`plan.md`)
+ * passt nicht zu einer Eigenschaft, ein Änderungsprotokoll gehört zur Arbeit
+ * und nicht zum Werkzeug, und die Parameter stehen im Datenblatt selbst.
  */
 export function instanceDocs(
 	identity: ModelIdentity,
 	isoDate: string,
 ): Partial<Record<AgentDocKind, string>> {
-	const profile = profileForModel(identity)
-	const name = identity.displayName || identity.modelId
-	const day = isoDate.slice(0, 10)
-	return {
-		llm: renderLlmDoc(identity, isoDate),
-		changelog: [
-			`# changelog.md — ${name}`,
-			"",
-			"Änderungsprotokoll (neueste Einträge oben).",
-			"",
-			`- ${day} — Modell entdeckt, Datenblatt „${profile.family}" aus dem Modell-Katalog übernommen (ungeprüft)`,
-			"",
-		].join("\n"),
-		init: renderInitDoc(profile.settings, name),
-	}
+	return { llm: renderLlmDoc(identity, isoDate) }
 }
 
 /* ---------------------- Eignung: Stärken/Schwächen im Routing ----------------- */
@@ -1115,9 +1185,29 @@ export function specFitScore(spec: ModelSpec | undefined, prompt: string): SpecF
  */
 export function updateLlmDoc(
 	markdown: string,
-	patch: { contextWindow?: number; capabilities?: Capability[] },
+	patch: { contextWindow?: number; capabilities?: Capability[]; settings?: ModelSettings | null },
 ): string {
 	let out = markdown ?? ""
+
+	if (patch.settings !== undefined) {
+		const settings = patch.settings ?? {}
+		const body: string[] = ["Gilt für dieses Modell; ein Spezialist oder eine Task schlägt es.", ""]
+		for (const { key, label } of SETTING_LABELS) {
+			if (settings[key] !== undefined) {
+				body.push(`- ${label}: ${settings[key]}`)
+			}
+		}
+		if (settings.stop?.length) {
+			body.push(`- Stop: ${settings.stop.join(", ")}`)
+		}
+		if (body.length === 2) {
+			body.push("- Temperature: —", "- Max-Tokens: —")
+		}
+		const section = /(^|\n)(#{1,6}\s*Voreinstellungen\s*\n)([\s\S]*?)(?=\n#{1,6}\s|\n*$)/i
+		out = section.test(out)
+			? out.replace(section, `$1$2\n${body.join("\n")}\n`)
+			: `${out.trimEnd()}\n\n## Voreinstellungen\n\n${body.join("\n")}\n`
+	}
 
 	if (patch.contextWindow !== undefined) {
 		const line = /^(\s*(?:[-*+]\s*)?\**\s*Kontext-?Fenster\**\s*[:=]\s*).*$/im

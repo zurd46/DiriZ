@@ -9,10 +9,11 @@
  *   Leitplanken. Wird als **verbindliche Arbeitsanweisung** in den
  *   System-Prompt übernommen (siehe `composeSystemPrompt`);
  *   Vorlagen-Platzhalter werden dabei entfernt.
- * - `llm.md`       — **nur Modelle**: das technische Datenblatt (Fähigkeiten,
- *   Kontext-Fenster, Qualitätsklasse, Eignung). Ein Modell bekommt keinen
- *   Auftrag — es hat Eigenschaften; die Orchestrierung rechnet sie ein
- *   (siehe `models.ts`, `parseLlmDoc`).
+ * - `llm.md`       — **das einzige Dokument eines Modells**: das technische
+ *   Datenblatt (Fähigkeiten, Kontext-Fenster, Qualitätsklasse, Eignung,
+ *   Werkzeuge, Voreinstellungen). Ein Modell bekommt keinen Auftrag — es hat
+ *   Eigenschaften; die Orchestrierung rechnet sie ein (`models.ts`,
+ *   `parseLlmDoc`).
  * - `init.md`      — setzt die Voreinstellungen des LLM-Modells (Temperatur,
  *   Max-Tokens, System-Prompt, …).
  * - `changelog.md` — Änderungsprotokoll; der Core hängt Einträge automatisch an.
@@ -45,10 +46,15 @@ export type DocOwnerKind = "provider" | "instance" | "agent"
  * **Eigenschaften** (`llm.md`) — beides zu vermischen war der Fehler: „Wofür
  * wird dieses Modell eingesetzt? / Schritt 1 / Schritt 2" ist die Sprache
  * eines Auftrags und an einem Modell schlicht sinnlos.
+ *
+ * Das Modell führt genau **ein** Dokument: Ein Änderungsprotokoll gehört zur
+ * Arbeit, nicht zum Werkzeug, und die Model-Parameter (Temperatur, Max-Tokens,
+ * System-Prompt) stehen im Abschnitt `## Voreinstellungen` des Datenblatts —
+ * gelesen von demselben Parser wie ein `init.md` (`parseInitDoc`).
  */
 export const DOC_KINDS: Record<DocOwnerKind, AgentDocKind[]> = {
 	provider: ["plan", "changelog", "init"],
-	instance: ["llm", "changelog", "init"],
+	instance: ["llm"],
 	agent: ["plan", "changelog", "init"],
 }
 

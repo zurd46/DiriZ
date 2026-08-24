@@ -30,3 +30,4 @@ Thumbs.db
 
 # Laufzeit-Daten (DB, Workspace-Artefakte)
 .data/
+apps/web/tests/.auth/

@@ -11,6 +11,7 @@ import type { EventBus } from "./execution/bus.js"
 import type { ExecutionEngine } from "./execution/engine.js"
 import type { ProviderRegistry } from "./providers/registry.js"
 import { registerAgents } from "./routes/agents.js"
+import { registerAuth } from "./routes/auth.js"
 import { registerDocs } from "./routes/docs.js"
 import { registerHealth } from "./routes/health.js"
 import { registerHost } from "./routes/host.js"
@@ -43,7 +44,17 @@ export interface AppContext {
 
 export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
 	const app = fastify({ logger: false })
-	await app.register(cors, { origin: WEB_ORIGIN, methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"] })
+	// `credentials: true`, weil die Anmeldung über ein Cookie läuft: Ohne das
+	// schickt der Browser es aus der Dev-UI (anderer Port) nicht mit.
+	await app.register(cors, {
+		origin: WEB_ORIGIN,
+		methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+		credentials: true,
+	})
+
+	// Zuerst: Ohne gültige Sitzung kommt keine Anfrage an eine der Routen
+	// darunter — der Türsteher hängt als `preHandler` vor allem, was folgt.
+	registerAuth(app, ctx)
 
 	registerHealth(app, ctx)
 	registerVersion(app, ctx)

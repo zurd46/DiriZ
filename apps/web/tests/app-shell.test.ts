@@ -7,6 +7,7 @@
  */
 
 import { expect, test } from "@playwright/test"
+import { AUTH_FILE } from "./global-setup.js"
 
 /** Die Einführung erscheint beim ersten Start — für die übrigen Tests weggeklickt. */
 test.beforeEach(async ({ page }) => {
@@ -101,11 +102,10 @@ test("unbekannter Pfad landet in der Anwendung statt im 404", async ({ page }) =
 })
 
 test.describe("Einführung beim ersten Start", () => {
-	// Dieser Block soll die Einführung sehen — die Vorbelegung wieder aufheben.
-	test.use({ storageState: { cookies: [], origins: [] } })
-
 	test("erscheint und lässt sich mit Escape schließen", async ({ browser }) => {
-		const context = await browser.newContext()
+		// Eigener Kontext mit **leerem** localStorage (damit die Einführung
+		// erscheint), aber angemeldet — sonst steht der Anmeldebildschirm davor.
+		const context = await browser.newContext({ storageState: AUTH_FILE })
 		const page = await context.newPage()
 		await page.goto("/")
 

@@ -38,6 +38,12 @@ export interface TaskMetadata {
 	 * eigener Ausführung; `index` sagt, an welcher Stelle diese Task steht.
 	 * Läuft ein Schritt erfolgreich durch, startet der Core den nächsten.
 	 */
+	/**
+	 * `fast` = Schnellmodus: ein Spezialist statt Schwarm, und die Auswahl
+	 * gewichtet gemessenes Tempo dreifach. Für kleine Korrekturen, bei denen
+	 * eine gründliche Kette mehr Zeit kostet, als die Aufgabe wert ist.
+	 */
+	speed?: "fast" | "normal"
 	chain?: {
 		/** Alle Beteiligten in Reihenfolge — für Anzeige und Rückwärtskompatibilität. */
 		agentIds: string[]

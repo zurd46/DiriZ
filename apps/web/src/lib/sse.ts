@@ -28,7 +28,9 @@ export function connectStream(
 		if (closed) {
 			return
 		}
-		source = new EventSource(`${BASE}/api/stream`)
+		// `withCredentials`: Der Stream steht wie jede Route hinter der Anmeldung
+		// — ohne Cookie käme nur ein 401 und eine endlose Wiederverbindung.
+		source = new EventSource(`${BASE}/api/stream`, { withCredentials: true })
 		source.onopen = () => {
 			retry = 1000
 			onState?.(true)

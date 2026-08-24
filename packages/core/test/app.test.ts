@@ -456,6 +456,36 @@ describe("api: Parallelitäts- und GPU-Grenzen", () => {
 	})
 })
 
+describe("api: Abgebrochenen Lauf fortsetzen", () => {
+	it("legt eine Folge-Task mit Vorarbeit und gemeinsamem Arbeitsverzeichnis an", async () => {
+		const angelegt = await app.inject({
+			method: "POST",
+			url: "/api/tasks",
+			payload: { title: "Abgebrochen", prompt: "Mach etwas Grosses" },
+		})
+		expect(angelegt.statusCode).toBe(201)
+		const taskId = angelegt.json().id as string
+
+		const res = await app.inject({ method: "POST", url: `/api/tasks/${taskId}/resume` })
+		expect(res.statusCode).toBe(202)
+		const folgeId = res.json().taskId as string
+		expect(folgeId).not.toBe(taskId)
+
+		const folge = await app.inject({ method: "GET", url: `/api/tasks/${folgeId}` })
+		const body = folge.json()
+		expect(body.prompt).toContain("## Ursprünglicher Auftrag")
+		expect(body.prompt).toContain("Mach etwas Grosses")
+		expect(body.prompt).toContain("## Bisheriger Stand")
+		// Dasselbe Arbeitsverzeichnis wie der abgebrochene Lauf.
+		expect(body.metadata.chain.rootTaskId).toBe(taskId)
+	})
+
+	it("weist eine unbekannte Task ab", async () => {
+		const res = await app.inject({ method: "POST", url: "/api/tasks/gibt-es-nicht/resume" })
+		expect(res.statusCode).toBe(404)
+	})
+})
+
 describe("api: SSE-Stream", () => {
 	it("liefert Events über den echten HTTP-Stream", async () => {
 		await app.listen({ port: 0, host: "127.0.0.1" })
@@ -486,3 +516,9 @@ describe("api: SSE-Stream", () => {
 		await app.close()
 	})
 })
+
+/**
+ * Fortsetzen: Ein abgebrochener Lauf ist kein verlorener Lauf. Die neue Task
+ * trägt den bisherigen Stand als Vorarbeit **und** arbeitet im selben
+ * Verzeichnis — sonst begänne sie wieder bei null.
+ */

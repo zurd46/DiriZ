@@ -33,8 +33,12 @@ export default defineConfig({
 	reporter: process.env.CI
 		? [["github"], ["html", { open: "never" }]]
 		: [["list"], ["html", { open: "never" }]],
+	// Vor allen Tests: einmal anmelden (siehe `global-setup.ts`). Ohne Sitzung
+	// zeigt die Anwendung nur noch den Anmeldebildschirm.
+	globalSetup: "./apps/web/tests/global-setup.ts",
 	use: {
 		baseURL: BASE_URL,
+		storageState: "./apps/web/tests/.auth/state.json",
 		trace: "retry-on-failure",
 		screenshot: "only-on-failure",
 		video: "retain-on-failure",

@@ -1,5 +1,5 @@
 import type { ComponentType } from "react"
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import ErrorBoundary from "./components/ErrorBoundary.js"
 import type { IconProps } from "./components/icons.js"
 import {
@@ -20,7 +20,7 @@ import {
 } from "./components/icons.js"
 import Onboarding, { shouldShowOnboarding } from "./components/Onboarding.js"
 import Toasts from "./components/Toasts.js"
-import { setMissingRouteHandler } from "./lib/api.js"
+import { api, setMissingRouteHandler, setUnauthorizedHandler } from "./lib/api.js"
 import { ROUTE_TITLES, type Route, useRoute } from "./lib/router.js"
 import { connectStream } from "./lib/sse.js"
 import { useStore } from "./store.js"
@@ -29,6 +29,7 @@ import Chat from "./views/Chat.js"
 import Dashboard from "./views/Dashboard.js"
 import Docs from "./views/Docs.js"
 import Github from "./views/Github.js"
+import Login from "./views/Login.js"
 import Logs from "./views/Logs.js"
 import Models from "./views/Models.js"
 import Providers from "./views/Providers.js"
@@ -72,8 +73,15 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
 	},
 ]
 
+/** Anmeldezustand: `undefined` = noch nicht geprüft. */
+interface AuthState {
+	configured: boolean
+	user: { id: string; username: string } | null
+}
+
 export default function App() {
 	const { route, navigate } = useRoute()
+	const [auth, setAuth] = useState<AuthState | undefined>()
 	const [showOnboarding, setShowOnboarding] = useState(shouldShowOnboarding)
 	/** Sidebar auf schmalen Bildschirmen — auf Desktop immer sichtbar. */
 	const [navOpen, setNavOpen] = useState(false)
@@ -84,7 +92,42 @@ export default function App() {
 	const handleStreamEvent = useStore((s) => s.handleStreamEvent)
 	const version = useStore((s) => s.version)
 
+	/**
+	 * Erst die Anmeldung, dann alles andere: Ohne gültige Sitzung antwortet der
+	 * Core auf jede API-Anfrage mit 401 — die Daten würden ohnehin nicht kommen.
+	 */
+	const loadAuth = useCallback(async () => {
+		try {
+			const state = await api.get<AuthState>("/api/auth/state")
+			setAuth(state)
+			return state
+		} catch {
+			// Core nicht erreichbar: Die Anwendung zeigt ihre eigene Meldung.
+			setAuth({ configured: false, user: null })
+			return undefined
+		}
+	}, [])
+
 	useEffect(() => {
+		void loadAuth()
+		setUnauthorizedHandler(() => setAuth((prev) => (prev ? { ...prev, user: null } : prev)))
+	}, [loadAuth])
+
+	const signedIn = auth?.user != null
+
+	const logout = useCallback(async () => {
+		try {
+			await api.post("/api/auth/logout", {})
+		} finally {
+			// Auch wenn der Aufruf scheitert: Aus der Oberfläche ist man draussen.
+			await loadAuth()
+		}
+	}, [loadAuth])
+
+	useEffect(() => {
+		if (!signedIn) {
+			return
+		}
 		const state = useStore.getState()
 		void state.refreshProviders()
 		void state.refreshAgents()
@@ -105,7 +148,7 @@ export default function App() {
 			clearInterval(metricsTimer)
 			clearInterval(logsTimer)
 		}
-	}, [handleStreamEvent, setConnected])
+	}, [handleStreamEvent, setConnected, signedIn])
 
 	const runningTasks = tasks.filter((t) => t.running).length
 
@@ -115,6 +158,14 @@ export default function App() {
 	const go = (to: Route) => {
 		navigate(to)
 		setNavOpen(false)
+	}
+
+	// Vor der Anmeldung gibt es nichts zu sehen — kein Menü, keine Daten.
+	if (auth === undefined) {
+		return <div className="login-screen" />
+	}
+	if (!signedIn) {
+		return <Login configured={auth.configured} onSignedIn={() => void loadAuth()} />
 	}
 
 	return (
@@ -162,6 +213,14 @@ export default function App() {
 				<div className="sidebar-foot">
 					<span className={`dot ${connected ? "online" : "offline"}`} />
 					<span>{connected ? "verbunden" : "getrennt"}</span>
+					<button
+						type="button"
+						className="link-btn"
+						title={`Angemeldet als ${auth.user?.username}`}
+						onClick={() => void logout()}
+					>
+						{auth.user?.username} · abmelden
+					</button>
 				</div>
 			</aside>
 

@@ -14,12 +14,13 @@ import type { Capability } from "./types.js"
  * Default-Gewichte aus dem Plan (§6.2):
  *
  * ```
- * score = 0.23 · contextFit
- *       + 0.23 · capabilityMatch
- *       + 0.16 · qualityPrior
+ * score = 0.22 · contextFit
+ *       + 0.22 · capabilityMatch
+ *       + 0.15 · qualityPrior
  *       + 0.12 · specFit
  *       + 0.10 · providerSpread
- *       + 0.07 · loadScore
+ *       + 0.08 · throughput
+ *       + 0.05 · loadScore
  *       + 0.05 · costScore
  *       + 0.04 · latencyScore
  * ```
@@ -30,14 +31,15 @@ import type { Capability } from "./types.js"
  * — die Summe bleibt 1.
  */
 export const DEFAULT_WEIGHTS: ScoringWeights = {
-	contextFit: 0.23,
-	capabilityMatch: 0.23,
-	qualityPrior: 0.16,
+	contextFit: 0.22,
+	capabilityMatch: 0.22,
+	qualityPrior: 0.15,
 	specFit: 0.12,
 	providerSpread: 0.1,
-	loadScore: 0.07,
-	costScore: 0.05,
-	latencyScore: 0.04,
+	throughput: 0.08,
+	loadScore: 0.05,
+	costScore: 0.04,
+	latencyScore: 0.02,
 	hostLoad: 0, // M8: aus — Host-RAM-Last wird erst aktiv, wenn der Nutzer sie gewichtet
 }
 
@@ -52,10 +54,38 @@ export function costAwareWeights(base: ScoringWeights = DEFAULT_WEIGHTS): Scorin
 		qualityPrior: scale(base.qualityPrior),
 		specFit: scale(base.specFit ?? 0),
 		providerSpread: scale(base.providerSpread ?? 0),
+		throughput: scale(base.throughput ?? 0),
 		loadScore: scale(base.loadScore),
 		costScore: cost,
 		latencyScore: scale(base.latencyScore),
 		hostLoad: base.hostLoad === undefined ? 0 : scale(base.hostLoad),
+	}
+}
+
+/**
+ * Schnellmodus: Tempo-Gewicht ×3, der Rest wird renormiert.
+ *
+ * Dieselbe Mechanik wie `costAwareWeights`, nur auf der Tempo-Achse: Wer „schnell"
+ * wählt, bekommt das Modell, das nachweislich am schnellsten schreibt — nicht
+ * das gründlichste. Die harten Gates (Kontext, Fähigkeiten, Privatsphäre)
+ * bleiben unangetastet; Tempo darf keine Aufgabe unmöglich machen.
+ */
+export function fastWeights(base: ScoringWeights = DEFAULT_WEIGHTS): ScoringWeights {
+	const throughput = Math.min(0.6, (base.throughput ?? 0.08) * 3)
+	const rest = 1 - throughput
+	const übrig = 1 - (base.throughput ?? 0)
+	const scale = (v: number) => (übrig > 0 ? (v / übrig) * rest : v)
+	return {
+		contextFit: scale(base.contextFit),
+		capabilityMatch: scale(base.capabilityMatch),
+		qualityPrior: scale(base.qualityPrior),
+		specFit: scale(base.specFit ?? 0),
+		providerSpread: scale(base.providerSpread ?? 0),
+		throughput,
+		loadScore: scale(base.loadScore),
+		costScore: scale(base.costScore),
+		latencyScore: scale(base.latencyScore),
+		hostLoad: scale(base.hostLoad ?? 0),
 	}
 }
 
@@ -64,6 +94,7 @@ export function normalizeWeights(weights: ScoringWeights): ScoringWeights {
 	const hostLoad = weights.hostLoad ?? 0
 	const specFit = weights.specFit ?? 0
 	const spread = weights.providerSpread ?? 0
+	const throughput = weights.throughput ?? 0
 	const sum =
 		weights.contextFit +
 		weights.capabilityMatch +
@@ -73,6 +104,7 @@ export function normalizeWeights(weights: ScoringWeights): ScoringWeights {
 		weights.latencyScore +
 		specFit +
 		spread +
+		throughput +
 		hostLoad
 	if (sum <= 0) {
 		return { ...DEFAULT_WEIGHTS }
@@ -83,6 +115,7 @@ export function normalizeWeights(weights: ScoringWeights): ScoringWeights {
 		qualityPrior: weights.qualityPrior / sum,
 		specFit: specFit / sum,
 		providerSpread: spread / sum,
+		throughput: throughput / sum,
 		loadScore: weights.loadScore / sum,
 		costScore: weights.costScore / sum,
 		latencyScore: weights.latencyScore / sum,
@@ -153,6 +186,22 @@ export function costScore(pricePerMTok: { in: number; out: number } | undefined,
 		return 0.3
 	}
 	return priceFit
+}
+
+/**
+ * Tempo-Achse aus **gemessenem** Durchsatz (Token/s).
+ *
+ * 5 Token/s gelten als langsam (0.2), 60 als schnell (1.0), dazwischen linear.
+ * Ohne Messwert bleibt es neutral (0.6) — ein Modell, das noch nie gelaufen
+ * ist, soll weder bevorzugt noch bestraft werden, sonst käme es nie an die
+ * Reihe und bekäme nie einen Messwert.
+ */
+export function throughputScore(tokensPerSecond: number | undefined): number {
+	if (tokensPerSecond === undefined || tokensPerSecond <= 0) {
+		return 0.6
+	}
+	const scaled = (tokensPerSecond - 5) / 55
+	return Math.max(0.2, Math.min(1, 0.2 + scaled * 0.8))
 }
 
 /**

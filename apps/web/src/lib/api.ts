@@ -35,6 +35,17 @@ export function setMissingRouteHandler(handler: () => void): void {
 	onMissingRoute = handler
 }
 
+/**
+ * Rückruf für „nicht angemeldet“ (HTTP 401). Die Sitzung kann jederzeit
+ * ablaufen — dann gehört der Anmeldebildschirm auf den Schirm, nicht eine
+ * Fehlermeldung in einer Ecke.
+ */
+let onUnauthorized: (() => void) | undefined
+
+export function setUnauthorizedHandler(handler: () => void): void {
+	onUnauthorized = handler
+}
+
 /** Adresse des Cores — für die Fehlermeldung, wenn er nicht antwortet. */
 const CORE_URL = BASE || window.location.origin
 
@@ -44,6 +55,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 	try {
 		res = await fetch(`${BASE}${path}`, {
 			...init,
+			// Die Anmeldung läuft über ein HttpOnly-Cookie; ohne `include`
+			// schickt der Browser es aus der Dev-UI (anderer Port) nicht mit.
+			credentials: "include",
 			headers: { ...(hasBody ? { "content-type": "application/json" } : {}), ...(init?.headers ?? {}) },
 		})
 	} catch (e) {
@@ -79,6 +93,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 		error.missingRoute = missingRoute
 		if (missingRoute) {
 			onMissingRoute?.()
+		}
+		if (res.status === 401) {
+			onUnauthorized?.()
 		}
 		throw error
 	}

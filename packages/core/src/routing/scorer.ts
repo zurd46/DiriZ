@@ -17,6 +17,7 @@ import {
 	type ScoringWeights,
 	specFitScore,
 	type TaskProfile,
+	throughputScore,
 } from "@diriz/shared"
 import type { Feedback } from "./feedback.js"
 
@@ -35,6 +36,8 @@ export interface CandidateInfo {
 	spec?: ModelSpec
 	/** Laufende Ausführungen auf diesem Rechner — Grundlage der Spread-Achse. */
 	providerActiveCount?: number
+	/** Gemessener Durchsatz dieses Modells (Token/s) aus den letzten Läufen. */
+	tokensPerSecond?: number
 }
 
 const AXIS_LABELS: Record<keyof ScoringWeights, string> = {
@@ -43,6 +46,7 @@ const AXIS_LABELS: Record<keyof ScoringWeights, string> = {
 	qualityPrior: "Qualität",
 	specFit: "Eignung",
 	providerSpread: "Rechner frei",
+	throughput: "Tempo (gemessen)",
 	loadScore: "Last",
 	costScore: "Kosten",
 	latencyScore: "Latenz",
@@ -97,6 +101,9 @@ export function scoreCandidate(
 		// Verteilung über die Rechner: Ein Auftrag geht dorthin, wo gerade nichts
 		// läuft — sonst arbeitet immer dieselbe Maschine und die zweite steht.
 		providerSpread: providerSpreadScore(info.providerActiveCount),
+		// Gemessen schlägt geraten: Wie viele Token pro Sekunde dieses Modell
+		// wirklich schreibt, entscheidet über die Wartezeit — nicht die Latenz.
+		throughput: throughputScore(info.tokensPerSecond),
 		loadScore: loadScoreValue(info.loadFactor),
 		costScore: costScore(info.instance.pricePerMTok, profile.budgetUsd),
 		latencyScore: latencyScoreValue(info.providerLatencyMs),

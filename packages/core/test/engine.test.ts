@@ -27,6 +27,7 @@ import {
 	latestDecision,
 	listExecutionsByTask,
 	replayOutput,
+	updateInstance,
 	upsertInstance,
 } from "../src/db/repositories.js"
 import { EventBus } from "../src/execution/bus.js"
@@ -167,11 +168,47 @@ describe("engine: Erfolgspfad", () => {
 describe("engine: Failover", () => {
 	it("wechselt bei Provider-Fehler auf die nächste Instanz", async () => {
 		events.length = 0
+		// Eigene Rechner nur für diesen Test: Sonst entscheidet die Vorgeschichte
+		// aus anderen Tests mit — ein Modell, das dort schon gelaufen ist, hat
+		// einen gemessenen Durchsatz und gewinnt damit zu Recht die Auswahl.
+		const failId = createProvider(db, { type: "ollama", label: "Fail2", baseUrl: "http://fail2" }).id
+		const okId = createProvider(db, { type: "ollama", label: "Ok2", baseUrl: "http://ok2" }).id
+		registry.registerAdapter(failId, "ollama", "Fail2", new FakeAdapter(failId, "ollama", "fail"))
+		registry.registerAdapter(okId, "ollama", "Ok2", new FakeAdapter(okId, "ollama", "ok"))
+		upsertInstance(
+			db,
+			failId,
+			{ modelId: "m-fail2", displayName: "M Fail 2", contextWindow: 32_000, capabilities: ["code"] },
+			"manual",
+		)
+		const zweite = upsertInstance(
+			db,
+			okId,
+			{ modelId: "m-ok2", displayName: "M Ok 2", contextWindow: 32_000, capabilities: ["code"] },
+			"manual",
+		)
+		registry.recordSuccess(failId)
+		registry.recordSuccess(okId)
+		// Die Ersatz-Instanz schlechter bewerten, damit die fehlerhafte zuerst
+		// gewählt wird — nur dann prüft der Test überhaupt das Failover.
+		feedback.record(zweite.id, false)
+		feedback.record(zweite.id, false)
+		// Die Instanzen der übrigen Tests aus dem Rennen nehmen.
+		for (const inst of registry.instances()) {
+			if (![failId, okId].includes(inst.providerId)) {
+				updateInstance(db, inst.id, { enabled: false })
+			}
+		}
+
 		const task = createTask(db, { prompt: "Failover-Test" })
 		const result = await engine.runTask(task)
 
 		expect(result.status).toBe("done")
 		expect(result.failoverCount).toBe(1)
+
+		for (const inst of registry.instances()) {
+			updateInstance(db, inst.id, { enabled: true })
+		}
 
 		const execs = [...listExecutionsByTask(db, task.id)].sort((a, b) => a.failoverCount - b.failoverCount)
 		expect(execs).toHaveLength(2)
@@ -181,8 +218,8 @@ describe("engine: Failover", () => {
 		const failover = events.find((e) => e.event === "execution.failover")
 		expect(failover).toBeTruthy()
 		if (failover && failover.event === "execution.failover") {
-			expect(failover.data.from).toBe("m-fail")
-			expect(failover.data.to).toBe("m-ok")
+			expect(failover.data.from).toBe("m-fail2")
+			expect(failover.data.to).toBe("m-ok2")
 		}
 	})
 })

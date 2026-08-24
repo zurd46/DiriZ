@@ -25,6 +25,7 @@ import {
 	type Execution,
 	estimateTokens,
 	extractDirective,
+	fastWeights,
 	type GitSettings,
 	type HostMetrics,
 	MAX_FAILOVER_HOPS,
@@ -63,6 +64,7 @@ import {
 	listAgents,
 	listExecutionsByTask,
 	listTasks,
+	listTasksByChain,
 	listToolCallsByTask,
 	replayOutput,
 	saveAgentSelection,
@@ -72,6 +74,7 @@ import {
 	setTaskChain,
 	setTaskRepo,
 	setTaskStatus,
+	throughputByInstance,
 	updateExecution,
 } from "../db/repositories.js"
 import { commitAll, isWorktree, push } from "../git/repo.js"
@@ -445,7 +448,9 @@ export class ExecutionEngine {
 			// selbst ist also ihre eigene Stufe.
 			return [self]
 		}
-		return listTasks(this.deps.db).filter((t) => t.metadata.chain?.id === id)
+		// Gezielt statt alles: `listTasks` lädt sonst bei jedem Abschluss den
+		// gesamten Bestand, nur um drei Geschwister zu finden.
+		return listTasksByChain(this.deps.db, id)
 	}
 
 	/**
@@ -499,9 +504,20 @@ export class ExecutionEngine {
 		}
 		try {
 			const branch = task.workBranch ?? workBranchName(task.title || task.id, task.id)
+			// Der Commit nennt den Spezialisten und die Stufe: Auf einem
+			// gemeinsamen Branch arbeiten mehrere nacheinander, und hinterher
+			// will man sehen, wer was beigetragen hat — und eine einzelne Stufe
+			// verwerfen können, statt alles.
+			const agent = task.agentId ? getAgent(this.deps.db, task.agentId)?.name : undefined
+			const chain = task.metadata.chain
+			const stufe =
+				chain?.stages && chain.stages.length > 1
+					? ` (Stufe ${(chain.stage ?? chain.index) + 1}/${chain.stages.length})`
+					: ""
+			const kopf = `${task.title?.trim() || "DiriZ-Änderung"}${agent ? ` — ${agent}` : ""}${stufe}`
 			const result = await commitAll({
 				worktreePath: dir,
-				message: `${task.title?.trim() || "DiriZ-Änderung"}\n\nAutomatisch committet von DiriZ (Task ${task.id}).`,
+				message: `${kopf}\n\nAutomatisch committet von DiriZ (Task ${task.id}).`,
 			})
 			if (!result) {
 				return
@@ -634,6 +650,8 @@ export class ExecutionEngine {
 		} catch {
 			// Routing darf an Host-Metriken nicht scheitern → Achse bleibt neutral.
 		}
+		// Einmal je Routing-Runde: gemessener Durchsatz aller Modelle.
+		const tps = throughputByInstance(this.deps.db)
 		const instances = registry.instances()
 		const result: PolicyCandidate[] = []
 		const now = new Date().toISOString()
@@ -658,6 +676,7 @@ export class ExecutionEngine {
 				providerLatencyMs: p50,
 				basisPrior: spec ? qualityPriorOf(spec) : BASIS_PRIOR,
 				spec,
+				tokensPerSecond: tps.get(inst.id),
 				local: ExecutionEngine.LOCAL_TYPES.includes(type),
 				hostRamUsagePct: host?.ramUsagePct,
 			}
@@ -840,10 +859,12 @@ export class ExecutionEngine {
 		const agent = sel.ok ? sel.agent : undefined
 		const profile = this.applyAgentConstraints(extractProfile(task), agent)
 		const candidates = await this.buildCandidates()
+		// Dieselben Gewichte wie im echten Lauf — eine Vorschau, die anders
+		// rechnet als die Ausführung, ist keine Vorschau.
 		const { weights, excluded, allowed } = applyPolicies(
 			candidates,
 			profile,
-			this.baseWeights(),
+			task.metadata.speed === "fast" ? fastWeights(this.baseWeights()) : this.baseWeights(),
 			this.limits(),
 		)
 		const scored = allowed
@@ -945,7 +966,9 @@ export class ExecutionEngine {
 		const agent = this.resolveAgent(task)
 		const profile = this.applyAgentConstraints(extractProfile(task), agent)
 		const candidates = await this.buildCandidates()
-		let policy = applyPolicies(candidates, profile, this.baseWeights(), this.limits())
+		// Schnellmodus: Tempo zählt dreifach (siehe `fastWeights`).
+		const gewichte = task.metadata.speed === "fast" ? fastWeights(this.baseWeights()) : this.baseWeights()
+		let policy = applyPolicies(candidates, profile, gewichte, this.limits())
 
 		// Kein Kandidat? Erst prüfen, **warum** — scheitern ist die letzte
 		// Antwort, nicht die erste.
@@ -966,10 +989,14 @@ export class ExecutionEngine {
 				`Task ${task.id}: kein Modell mit ${profile.requiredCapabilities.join(", ")} — ` +
 					"Fähigkeits-Gate gelockert, es wird das bestbewertete verfügbare Modell genommen",
 			)
+			// Aber nicht um jeden Preis: Ein Modell **ohne jede** Fähigkeit ist
+			// kein schwächeres Werkzeug, sondern gar keines — Einbettungs- und
+			// Rerank-Modelle beantworten keine Aufträge. Sie bleiben draussen,
+			// sonst käme statt einer Antwort ein Vektor zurück.
 			policy = applyPolicies(
-				candidates,
+				candidates.filter((c) => c.instance.capabilities.length > 0),
 				{ ...profile, requiredCapabilities: [], preferredCapabilities: profile.requiredCapabilities },
-				this.baseWeights(),
+				gewichte,
 				this.limits(),
 			)
 		}
@@ -1254,6 +1281,8 @@ export class ExecutionEngine {
 					allowedTools: getInstanceSpec(db, choice.instance.id)?.tools,
 					// Jeder Schritt beginnt mit einer neuen Prompt-Verarbeitung.
 					onStepStart: relaxForNextStep,
+					// Damit der Loop weiss, wann der Verlauf zu gross wird.
+					contextWindow: choice.instance.contextWindow,
 					adapter,
 					model: choice.instance.modelId,
 					settings: effective,

@@ -10,6 +10,7 @@ import os from "node:os"
 import path from "node:path"
 import type {
 	ChatChunk,
+	ChatMessage,
 	ChatRequest,
 	DiscoveredModel,
 	HealthStatus,
@@ -17,7 +18,7 @@ import type {
 	ProviderType,
 } from "@diriz/shared"
 import { describe, expect, it } from "vitest"
-import { runAgentLoop } from "../src/execution/agent.js"
+import { runAgentLoop, trimContext } from "../src/execution/agent.js"
 
 type Behavior = "write-then-done" | "loop" | "stumm" | "kaputt" | "doppelt"
 
@@ -319,5 +320,44 @@ describe("agent: unbegrenztes Tool-Budget", () => {
 		// Deutlich mehr als die frühere Grenze von 8 bzw. 24 Schritten.
 		expect(steps).toBeGreaterThanOrEqual(12)
 		fs.rmSync(baseDir, { recursive: true, force: true })
+	})
+})
+
+/**
+ * Kontext-Budget: Ein Lauf, der zehn Dateien gelesen hat, schleppt sie in jedem
+ * weiteren Schritt mit — und die Verarbeitungszeit wächst mit dem Verlauf.
+ * Alte Tool-Ergebnisse werden deshalb eingedampft, die jüngsten nie.
+ */
+describe("trimContext", () => {
+	const toolMsg = (n: number): ChatMessage => ({
+		role: "tool",
+		toolCallId: `c${n}`,
+		content: JSON.stringify({ ok: true, detail: `Inhalt ${n} `.repeat(200) }),
+	})
+
+	it("lässt einen kleinen Verlauf unangetastet", () => {
+		const messages: ChatMessage[] = [{ role: "user", content: "kurz" }, toolMsg(1)]
+		const res = trimContext(messages, 128_000)
+		expect(res.trimmed).toBe(0)
+		expect(res.messages).toEqual(messages)
+	})
+
+	it("dampft alte Ergebnisse ein, sobald es eng wird — die jüngsten bleiben", () => {
+		const messages: ChatMessage[] = Array.from({ length: 12 }, (_, i) => toolMsg(i))
+		const res = trimContext(messages, 4096)
+		expect(res.trimmed).toBeGreaterThan(0)
+		// Die letzten vier Ergebnisse sind unverändert — mit ihnen arbeitet das
+		// Modell gerade.
+		for (const i of [8, 9, 10, 11]) {
+			expect(res.messages[i]).toEqual(messages[i])
+		}
+		// Die Struktur bleibt: jede Antwort hängt weiter an ihrem Aufruf.
+		expect(res.messages).toHaveLength(messages.length)
+		expect(res.messages.every((m, i) => m.toolCallId === messages[i]?.toolCallId)).toBe(true)
+	})
+
+	it("tut nichts ohne bekanntes Kontextfenster", () => {
+		const messages: ChatMessage[] = Array.from({ length: 12 }, (_, i) => toolMsg(i))
+		expect(trimContext(messages, undefined).trimmed).toBe(0)
 	})
 })

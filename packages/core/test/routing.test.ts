@@ -144,8 +144,8 @@ describe("routing: Scorer", () => {
 		expect(a.score).toBe(b.score)
 		expect(a.score).toBeGreaterThanOrEqual(0)
 		expect(a.score).toBeLessThanOrEqual(100)
-		// M8: + hostLoad, M9: + Eignung (`llm.md`), + freier Rechner (Verteilung)
-		expect(a.axes).toHaveLength(9)
+		// M8: + hostLoad, M9: + Eignung (`llm.md`), + freier Rechner, + Tempo
+		expect(a.axes).toHaveLength(10)
 		for (const axis of a.axes) {
 			expect(axis.weighted).toBeCloseTo(axis.value * axis.weight, 3)
 		}
@@ -291,5 +291,21 @@ describe("routing: Lastfaktor eines Rechners", () => {
 	it("bleibt neutral, wenn der Rechner keine Auskunft gibt", () => {
 		expect(loadFactorFrom(undefined, "m-1")).toBe(0)
 		expect(loadFactorFrom({ loadedModels: [] }, "m-1")).toBe(0)
+	})
+})
+
+/**
+ * Die Lockerung des Fähigkeits-Gates darf keine Einbettungs-Modelle
+ * hereinlassen: Sie sind kein schwächeres Werkzeug, sondern gar keines — statt
+ * einer Antwort käme ein Vektor zurück.
+ */
+describe("routing: Gate-Lockerung", () => {
+	it("lässt ein Modell ohne jede Fähigkeit auch dann draussen, wenn nichts übrig bleibt", () => {
+		const embedder = candidate(instance({ id: "embed", modelId: "nomic-embed-text", capabilities: [] }))
+		const chat = candidate(instance({ id: "chat", capabilities: ["reasoning"] }))
+		// So filtert die Engine, bevor sie ohne Pflicht-Fähigkeiten neu bewertet.
+		const übrig = [embedder, chat].filter((c) => c.instance.capabilities.length > 0)
+		const { allowed } = applyPolicies(übrig, { ...profile, requiredCapabilities: [] }, DEFAULT_WEIGHTS)
+		expect(allowed.map((c) => c.instance.id)).toEqual(["chat"])
 	})
 })

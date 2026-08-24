@@ -19,7 +19,7 @@
  */
 
 import type { Db } from "../db/connection.js"
-import { getInstanceSpec, listInstances } from "../db/repositories.js"
+import { listInstances, recentlyUsedInstances, throughputByInstance } from "../db/repositories.js"
 import type { ProviderRegistry } from "../providers/registry.js"
 
 type LogFn = (level: "info" | "warn" | "error", scope: string, msg: string) => void
@@ -96,22 +96,41 @@ export class WarmKeeper {
 	}
 
 	/**
-	 * Welche Modelle warm bleiben sollen: die bereits geladenen — sonst die
-	 * besten aktiven dieses Rechners (Qualitätsklasse aus dem `llm.md`, bei
-	 * Gleichstand das grössere Kontextfenster).
+	 * Welche Modelle warm bleiben sollen.
+	 *
+	 * 1. Was **geladen** ist, bleibt geladen — nichts verdrängen.
+	 * 2. Sonst: was **zuletzt tatsächlich benutzt** wurde. Ein Modell warm zu
+	 *    halten, das niemand ruft, belegt nur Speicher.
+	 * 3. Erst wenn es keine Geschichte gibt: das **schnellste gemessene**,
+	 *    ersatzweise das mit dem grössten Kontextfenster. Die geratene
+	 *    Qualitätsklasse taugt dafür nicht — sie sagt nichts über Nutzung.
 	 */
 	private targets(providerId: string, limit: number): string[] {
 		const geladen = this.deps.registry.loadedModelsOf(providerId)
 		if (geladen.length > 0) {
 			return geladen.slice(0, limit)
 		}
-		const RANG = { hoch: 3, mittel: 2, niedrig: 1 } as const
-		return listInstances(this.deps.db, providerId)
-			.filter((i) => i.enabled && i.capabilities.length > 0)
-			.map((i) => ({ i, rang: RANG[getInstanceSpec(this.deps.db, i.id)?.quality ?? "mittel"] }))
-			.sort((a, b) => b.rang - a.rang || b.i.contextWindow - a.i.contextWindow)
+		const aktiv = listInstances(this.deps.db, providerId).filter(
+			(i) => i.enabled && i.capabilities.length > 0,
+		)
+		if (aktiv.length === 0) {
+			return []
+		}
+
+		const benutzt = recentlyUsedInstances(this.deps.db, providerId, limit)
+		if (benutzt.length > 0) {
+			return benutzt
+				.map((id) => aktiv.find((i) => i.id === id)?.modelId)
+				.filter((m): m is string => m !== undefined)
+		}
+
+		const tempo = throughputByInstance(this.deps.db)
+		return [...aktiv]
+			.sort(
+				(a, b) => (tempo.get(b.id) ?? 0) - (tempo.get(a.id) ?? 0) || b.contextWindow - a.contextWindow,
+			)
 			.slice(0, limit)
-			.map((x) => x.i.modelId)
+			.map((i) => i.modelId)
 	}
 
 	/** Ein Ein-Token-Aufruf: Er hält das Modell geladen und kostet nichts. */

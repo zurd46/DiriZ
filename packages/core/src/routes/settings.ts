@@ -76,7 +76,7 @@ function parseConcurrency(
 // Später hinzugekommene Achsen sind optional: Ein Client, der sie nicht
 // kennt, soll die Einstellungen weiterhin speichern können (er schaltet die
 // Achse damit auf 0 — sichtbar in der Oberfläche, nicht stillschweigend).
-const OPTIONAL_WEIGHT_KEYS: (keyof ScoringWeights)[] = ["hostLoad", "specFit", "providerSpread"]
+const OPTIONAL_WEIGHT_KEYS: (keyof ScoringWeights)[] = ["hostLoad", "specFit", "providerSpread", "throughput"]
 
 function parseWeights(body: unknown): ScoringWeights | undefined {
 	if (!body || typeof body !== "object") {

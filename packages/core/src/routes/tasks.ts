@@ -25,6 +25,7 @@ import {
 	listTasks,
 	listToolCallsByTask,
 	replayOutput,
+	setTaskRepo,
 	updateExecution,
 } from "../db/repositories.js"
 
@@ -319,6 +320,74 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 			return reply.code(409).send({ error: result.reason })
 		}
 		return reply.code(202).send({ accepted: true, taskId: task.id })
+	})
+
+	/**
+	 * Einen abgebrochenen oder steckengebliebenen Lauf **fortsetzen**.
+	 *
+	 * Der Arbeitsstand ist nicht verloren: Die gelesenen Dateien, die
+	 * geschriebenen Änderungen und die halbe Antwort liegen vor. Bisher stand
+	 * im Fehlertext „Task mit dem bisherigen Stand erneut starten" — ohne dass
+	 * es dafür einen Weg gab. Hier ist er: eine neue Task mit demselben
+	 * Spezialisten, demselben Arbeitsverzeichnis und dem bisherigen Stand als
+	 * Vorarbeit.
+	 */
+	app.post<{ Params: { id: string } }>("/api/tasks/:id/resume", (req, reply) => {
+		const task = getTask(ctx.db, req.params.id)
+		if (!task) {
+			return reply.code(404).send({ error: "Task nicht gefunden" })
+		}
+		if (ctx.engine.isRunning(task.id)) {
+			return reply.code(409).send({ error: "Task läuft noch — erst abbrechen" })
+		}
+		const letzte = listExecutionsByTask(ctx.db, task.id).at(-1)
+		const stand = (letzte?.output ?? "").trim()
+		const werkzeuge = listToolCallsByTask(ctx.db, task.id)
+			.filter((c) => c.ok)
+			.map((c) => `- ${c.name}(${c.argsSummary})`)
+
+		const folge = createTask(ctx.db, {
+			title: task.title,
+			prompt: [
+				"## Ursprünglicher Auftrag",
+				"",
+				task.prompt.trim(),
+				"",
+				"## Bisheriger Stand",
+				"",
+				stand || "_(keine Textantwort — der Lauf endete vorzeitig)_",
+				...(werkzeuge.length > 0
+					? ["", "## Bereits erledigt", "", "Im **selben** Arbeitsverzeichnis:", "", ...werkzeuge]
+					: []),
+				"",
+				"## Deine Aufgabe",
+				"",
+				"Setze genau hier fort. Wiederhole nichts davon, sondern bringe den Auftrag zu Ende.",
+			].join("\n"),
+			metadata: {
+				...task.metadata,
+				// Dasselbe Arbeitsverzeichnis wie der abgebrochene Lauf: Seine
+				// Dateien und Änderungen liegen dort bereits.
+				chain: {
+					agentIds: [task.agentId ?? ""],
+					index: 0,
+					stages: [[task.agentId ?? ""]],
+					stage: 0,
+					goal: task.metadata.chain?.goal ?? task.prompt,
+					id: task.metadata.chain?.id ?? task.id,
+					rootTaskId: task.metadata.chain?.rootTaskId ?? task.id,
+				},
+			},
+			assignmentMode: task.agentId ? "agent" : "auto",
+			agentId: task.agentId ?? undefined,
+			repoId: task.repoId ?? null,
+			baseBranch: task.baseBranch ?? null,
+		})
+		if (task.repoId && task.workBranch) {
+			setTaskRepo(ctx.db, folge.id, { workBranch: task.workBranch })
+		}
+		const started = ctx.engine.start(folge.id)
+		return reply.code(202).send({ taskId: folge.id, started: started.accepted, reason: started.reason })
 	})
 
 	app.post<{ Params: { id: string } }>("/api/tasks/:id/cancel", (req, reply) => {

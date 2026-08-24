@@ -8,6 +8,7 @@ import {
 	estimateTokens,
 	normalizeWeights,
 	providerSpreadScore,
+	throughputScore,
 } from "../src/scoring.js"
 
 describe("scoring", () => {
@@ -39,6 +40,7 @@ describe("scoring", () => {
 			w.qualityPrior +
 			(w.specFit ?? 0) +
 			(w.providerSpread ?? 0) +
+			(w.throughput ?? 0) +
 			w.loadScore +
 			w.costScore +
 			w.latencyScore
@@ -65,6 +67,14 @@ describe("scoring", () => {
 		expect(providerSpreadScore(undefined)).toBe(1)
 	})
 
+	it("throughput: gemessenes Tempo hebt, fehlende Messung bleibt neutral", () => {
+		expect(throughputScore(undefined)).toBe(0.6)
+		expect(throughputScore(60)).toBe(1)
+		expect(throughputScore(13)).toBeLessThan(throughputScore(50))
+		// Auch ein sehr langsames Modell fällt nicht auf 0 — es bleibt wählbar.
+		expect(throughputScore(1)).toBeGreaterThan(0)
+	})
+
 	it("estimateTokens ist konservativ (inkl. Output-Reserve)", () => {
 		expect(estimateTokens("x".repeat(3500))).toBe(1024 + 1000)
 	})
@@ -76,6 +86,7 @@ describe("scoring", () => {
 			DEFAULT_WEIGHTS.qualityPrior +
 			(DEFAULT_WEIGHTS.specFit ?? 0) +
 			(DEFAULT_WEIGHTS.providerSpread ?? 0) +
+			(DEFAULT_WEIGHTS.throughput ?? 0) +
 			DEFAULT_WEIGHTS.loadScore +
 			DEFAULT_WEIGHTS.costScore +
 			DEFAULT_WEIGHTS.latencyScore

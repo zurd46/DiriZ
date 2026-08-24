@@ -38,6 +38,12 @@ export interface ScoringWeights {
 	 * während der zweite danebensteht und nichts tut.
 	 */
 	providerSpread?: number
+	/**
+	 * **Gemessener** Durchsatz (Token/s) aus den letzten Läufen dieses Modells.
+	 * Die Latenz-Achse misst, wie schnell der Server antwortet — nicht, wie
+	 * schnell er schreibt. Für die Wartezeit zählt Letzteres.
+	 */
+	throughput?: number
 	loadScore: number
 	costScore: number
 	latencyScore: number

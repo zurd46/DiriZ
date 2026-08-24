@@ -36,6 +36,7 @@ import {
 	IconGitBranch,
 	IconPlay,
 	IconPlus,
+	IconRefresh,
 	IconServer,
 	IconStop,
 	IconTrash,
@@ -442,6 +443,12 @@ export default function Chat() {
 	 * Rückfragen, bei denen eine Kette nur Zeit kostet.
 	 */
 	const [swarmMode, setSwarmMode] = useState(true)
+	/**
+	 * Schnellmodus: ein Spezialist, das nachweislich schnellste Modell. Für die
+	 * kleine Korrektur, bei der eine gründliche Kette mehr Zeit kostet als die
+	 * Aufgabe wert ist.
+	 */
+	const [fastMode, setFastMode] = useState(false)
 	const [plan, setPlan] = useState<SwarmStep[]>([])
 	/**
 	 * Verlauf standardmässig zugeklappt — die Unterhaltung bekommt die Breite.
@@ -649,13 +656,16 @@ export default function Chat() {
 			const plan = await api
 				.post<{ steps: SwarmStep[] }>("/api/swarms/plan", { prompt: text, agentMode: target !== "answer" })
 				.catch(() => ({ steps: [] as SwarmStep[] }))
-			const kette = swarmMode
-				? plan.steps.map((s) => s.agentId)
-				: plan.steps.slice(0, 1).map((s) => s.agentId)
+			// Im Schnellmodus arbeitet immer nur einer — ein Schwarm wäre das
+			// Gegenteil von schnell.
+			const kette =
+				swarmMode && !fastMode
+					? plan.steps.map((s) => s.agentId)
+					: plan.steps.slice(0, 1).map((s) => s.agentId)
 			// Stufen statt Perlenschnur: Was fachlich nebeneinander liegt (bauen
 			// und Daten, prüfen und dokumentieren), läuft gleichzeitig — auf
 			// allen angebundenen Rechnern statt nacheinander auf einem.
-			const stufen = swarmMode ? stagesOf(plan.steps) : kette.map((id) => [id])
+			const stufen = swarmMode && !fastMode ? stagesOf(plan.steps) : kette.map((id) => [id])
 
 			const task = await api.post<{ id: string }>("/api/tasks", {
 				title: titleFrom(text),
@@ -665,6 +675,7 @@ export default function Chat() {
 					mode: "auto",
 					// Agentik-Modus: nur wenn der Spezialist Dateien anfassen soll.
 					agentMode: target !== "answer",
+					speed: fastMode ? "fast" : "normal",
 					chatId,
 					...(kette.length > 1
 						? {
@@ -721,6 +732,23 @@ export default function Chat() {
 		try {
 			await api.post(`/api/tasks/${taskId}/cancel`)
 			await loadChats()
+		} catch (e) {
+			setLastError(e instanceof Error ? e.message : String(e))
+		}
+	}
+
+	/**
+	 * Einen abgebrochenen oder steckengebliebenen Lauf fortsetzen.
+	 *
+	 * Der Arbeitsstand ist nicht verloren — gelesene Dateien, geschriebene
+	 * Änderungen und die halbe Antwort liegen vor. Der Core legt daraus eine
+	 * neue Task im **selben** Arbeitsverzeichnis an.
+	 */
+	const resume = async (taskId: string) => {
+		try {
+			await api.post(`/api/tasks/${taskId}/resume`)
+			await loadChats()
+			scrollToEnd(true)
 		} catch (e) {
 			setLastError(e instanceof Error ? e.message : String(e))
 		}
@@ -959,6 +987,22 @@ export default function Chat() {
 													Abbrechen
 												</button>
 											)}
+											{/* Steckengeblieben oder abgebrochen: Der Stand liegt vor,
+											    also lässt er sich fortsetzen statt neu zu beginnen. */}
+											{!isRunning &&
+												(turn.status === "cancelled" ||
+													turn.status === "failed" ||
+													answer.includes("[Agentik:")) && (
+													<button
+														type="button"
+														className="btn ghost sm"
+														title="Neue Task im selben Arbeitsverzeichnis, mit dem bisherigen Stand als Vorarbeit"
+														onClick={() => void resume(turn.taskId)}
+													>
+														<IconRefresh size={13} />
+														Fortsetzen
+													</button>
+												)}
 										</div>
 
 										{turn.agentReason && (
@@ -1100,8 +1144,20 @@ export default function Chat() {
 								className="chat-context"
 								title="Swarm: mehrere Spezialisten nacheinander, automatisch zusammengestellt"
 							>
-								<input type="checkbox" checked={swarmMode} onChange={(e) => setSwarmMode(e.target.checked)} />
+								<input
+									type="checkbox"
+									checked={swarmMode && !fastMode}
+									disabled={fastMode}
+									onChange={(e) => setSwarmMode(e.target.checked)}
+								/>
 								Swarm
+							</label>
+							<label
+								className="chat-context"
+								title="Schnellmodus: ein Spezialist auf dem nachweislich schnellsten Modell — für kleine Korrekturen"
+							>
+								<input type="checkbox" checked={fastMode} onChange={(e) => setFastMode(e.target.checked)} />
+								Schnell
 							</label>
 							<label className="chat-context">
 								<input
@@ -1115,11 +1171,15 @@ export default function Chat() {
 						{plan.length > 0 && (
 							<div className="chat-plan">
 								<span className="chat-tools-label">
-									{swarmMode && plan.length > 1 ? `Swarm · ${plan.length} Schritte` : "Spezialist"}
+									{fastMode
+										? "Schnell · ein Spezialist"
+										: swarmMode && plan.length > 1
+											? `Swarm · ${plan.length} Schritte`
+											: "Spezialist"}
 								</span>
-								{(swarmMode ? plan : plan.slice(0, 1)).map((s, i) => (
+								{(swarmMode && !fastMode ? plan : plan.slice(0, 1)).map((s, i) => (
 									<span key={s.agentId} className="plan-step" title={s.reasons.join(" · ")}>
-										{swarmMode && plan.length > 1 && <span className="plan-index">{i + 1}</span>}
+										{swarmMode && !fastMode && plan.length > 1 && <span className="plan-index">{i + 1}</span>}
 										{s.name}
 									</span>
 								))}

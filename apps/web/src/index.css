@@ -2449,6 +2449,90 @@ pre.code {
 	border-radius: var(--r-sm);
 }
 
+/* ── Anmeldung ───────────────────────────────────────────────────────────────
+   Ein Vorhang vor der Anwendung: nichts als das Formular, mittig, ruhig. */
+
+.login-screen {
+	min-height: 100vh;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: var(--sp-6);
+	background: var(--bg);
+}
+
+.login-card {
+	width: 100%;
+	max-width: 420px;
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-4);
+	padding: var(--sp-6);
+}
+
+.login-brand {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-3);
+}
+
+.login-title {
+	font-size: var(--fs-lg);
+	font-weight: 650;
+	letter-spacing: -0.01em;
+}
+
+.login-sub {
+	font-size: var(--fs-xs);
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--muted);
+}
+
+.login-head {
+	margin: 0;
+	font-size: var(--fs-lg);
+}
+
+.login-field {
+	display: flex;
+	flex-direction: column;
+	gap: var(--sp-2);
+	font-size: var(--fs-sm);
+}
+
+.login-field > span {
+	color: var(--muted);
+}
+
+.login-submit {
+	margin-top: var(--sp-2);
+	justify-content: center;
+}
+
+.login-foot {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-2);
+	margin: 0;
+}
+
+.link-btn {
+	margin-left: auto;
+	background: none;
+	border: none;
+	padding: 0;
+	color: var(--muted);
+	font-size: inherit;
+	cursor: pointer;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+
+.link-btn:hover {
+	color: var(--text);
+}
+
 /* ── LLM-Modelle: Datenblatt-Ansicht ─────────────────────────────────────────
    Bewusst luftiger als die Dokumente-Ansicht: Fakten, Tabs und zwei
    Auswertungs-Zeilen stehen sonst als ein einziger Block beieinander. */

@@ -16,7 +16,7 @@ import {
 	type ScoringWeights,
 	type TimeoutSettings,
 } from "@diriz/shared"
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
 	IconAlert,
 	IconCheck,
@@ -48,6 +48,11 @@ const WEIGHT_META: { key: keyof ScoringWeights; label: string; hint: string }[] 
 		label: "Rechner frei",
 		hint: "Bevorzugt eine Maschine, auf der gerade nichts läuft — verteilt die Arbeit über alle Rechner",
 	},
+	{
+		key: "throughput",
+		label: "Tempo (gemessen)",
+		hint: "Token pro Sekunde aus den letzten Läufen dieses Modells — nicht geschätzt, gemessen",
+	},
 	{ key: "loadScore", label: "Last", hint: "Aktuelle Auslastung des Providers" },
 	{ key: "costScore", label: "Kosten", hint: "Preis pro Token (lokal = 0 $)" },
 	{ key: "latencyScore", label: "Latenz", hint: "Antwortgeschwindigkeit" },
@@ -57,6 +62,14 @@ const WEIGHT_META: { key: keyof ScoringWeights; label: string; hint: string }[] 
 		hint: "RAM-Belegung dieses Rechners — bestraft lokale Modelle bei hoher Last (0 = aus)",
 	},
 ]
+
+/** Ein Benutzer, wie ihn `/api/users` liefert. */
+interface UserRow {
+	id: string
+	username: string
+	createdAt: string
+	lastLoginAt?: string
+}
 
 /** Warmhalte-Einstellungen, wie die Oberfläche sie bearbeitet. */
 interface WarmupView {
@@ -92,6 +105,15 @@ export default function Settings() {
 	const [limits, setLimits] = useState<ConcurrencySettings | null>(null)
 	const [limitsBusy, setLimitsBusy] = useState(false)
 	const [limitsSaved, setLimitsSaved] = useState(false)
+
+	// Benutzer: Wer darf DiriZ bedienen?
+	const [users, setUsers] = useState<UserRow[] | null>(null)
+	const [newUser, setNewUser] = useState("")
+	const [newPass, setNewPass] = useState("")
+	const [pwFor, setPwFor] = useState<string | null>(null)
+	const [pwValue, setPwValue] = useState("")
+	const [userBusy, setUserBusy] = useState(false)
+	const [userMsg, setUserMsg] = useState<string | undefined>()
 
 	// Warmhalten: hält geladene Modelle im Speicher, damit der erste Aufruf
 	// nicht Minuten kostet.
@@ -180,6 +202,66 @@ export default function Settings() {
 			setImportMsg(e instanceof Error ? e.message : String(e))
 		} finally {
 			setLimitsBusy(false)
+		}
+	}
+
+	const loadUsers = useCallback(async () => {
+		try {
+			setUsers(await api.get<UserRow[]>("/api/users"))
+		} catch (e) {
+			setUserMsg(e instanceof Error ? e.message : String(e))
+		}
+	}, [])
+
+	useEffect(() => {
+		void loadUsers()
+	}, [loadUsers])
+
+	const addUser = async () => {
+		setUserBusy(true)
+		setUserMsg(undefined)
+		try {
+			await api.post("/api/users", { username: newUser.trim(), password: newPass })
+			setNewUser("")
+			setNewPass("")
+			await loadUsers()
+			setUserMsg("Benutzer angelegt")
+		} catch (e) {
+			setUserMsg(e instanceof Error ? e.message : String(e))
+		} finally {
+			setUserBusy(false)
+		}
+	}
+
+	const changePassword = async (id: string) => {
+		setUserBusy(true)
+		setUserMsg(undefined)
+		try {
+			await api.patch(`/api/users/${id}`, { password: pwValue })
+			setPwFor(null)
+			setPwValue("")
+			// Das Ändern beendet alle Sitzungen dieses Benutzers — auch die eigene.
+			setUserMsg("Passwort geändert — bestehende Sitzungen wurden beendet")
+		} catch (e) {
+			setUserMsg(e instanceof Error ? e.message : String(e))
+		} finally {
+			setUserBusy(false)
+		}
+	}
+
+	const removeUser = async (u: UserRow) => {
+		if (!window.confirm(`Benutzer „${u.username}“ wirklich löschen?`)) {
+			return
+		}
+		setUserBusy(true)
+		setUserMsg(undefined)
+		try {
+			await api.del(`/api/users/${u.id}`)
+			await loadUsers()
+		} catch (e) {
+			setUserMsg(e instanceof Error ? e.message : String(e))
+		} finally {
+			setUserBusy(false)
 		}
 	}
 
@@ -582,6 +664,105 @@ export default function Settings() {
 						disabled={!warmDirty || warmBusy}
 					>
 						Warmhalten speichern
+					</button>
+				</div>
+			</div>
+
+			<div className="card">
+				<div className="card-head">
+					<div>
+						<div className="card-title">
+							<IconServer size={16} />
+							Benutzer
+						</div>
+						<div className="card-sub">
+							Wer sich anmelden darf. Ohne gültige Anmeldung beantwortet der Core keine Anfrage — weder aus
+							dieser Oberfläche noch von aussen. Passwörter liegen als scrypt-Hash, im Klartext nirgends.
+						</div>
+					</div>
+				</div>
+
+				{userMsg && <p className="hint">{userMsg}</p>}
+
+				<div className="limits">
+					{(users ?? []).map((u) => (
+						<div key={u.id} className="limit-row">
+							<span className="limit-label">{u.username}</span>
+							<span className="field-hint">
+								angelegt {new Date(u.createdAt).toLocaleDateString("de-CH")}
+								{u.lastLoginAt
+									? ` · zuletzt angemeldet ${new Date(u.lastLoginAt).toLocaleString("de-CH")}`
+									: " · noch nie angemeldet"}
+							</span>
+							<span className="row tight">
+								<button
+									type="button"
+									className="btn ghost sm"
+									onClick={() => {
+										setPwFor(pwFor === u.id ? null : u.id)
+										setPwValue("")
+									}}
+								>
+									Passwort ändern
+								</button>
+								<button
+									type="button"
+									className="btn ghost sm"
+									onClick={() => void removeUser(u)}
+									disabled={userBusy || (users?.length ?? 0) <= 1}
+									title={
+										(users?.length ?? 0) <= 1
+											? "Der letzte Benutzer kann nicht gelöscht werden — sonst käme niemand mehr hinein"
+											: undefined
+									}
+								>
+									Löschen
+								</button>
+							</span>
+							{pwFor === u.id && (
+								<span className="row tight" style={{ gridColumn: "1 / -1" }}>
+									<input
+										type="password"
+										placeholder="neues Passwort (mind. 8 Zeichen)"
+										value={pwValue}
+										onChange={(e) => setPwValue(e.target.value)}
+										autoComplete="new-password"
+									/>
+									<button
+										type="button"
+										className="btn primary sm"
+										onClick={() => void changePassword(u.id)}
+										disabled={userBusy || pwValue.length < 8}
+									>
+										Speichern
+									</button>
+								</span>
+							)}
+						</div>
+					))}
+				</div>
+
+				<div className="row" style={{ marginTop: "var(--sp-4)", gap: "var(--sp-2)", flexWrap: "wrap" }}>
+					<input
+						placeholder="Benutzername"
+						value={newUser}
+						onChange={(e) => setNewUser(e.target.value)}
+						autoComplete="off"
+					/>
+					<input
+						type="password"
+						placeholder="Passwort (mind. 8 Zeichen)"
+						value={newPass}
+						onChange={(e) => setNewPass(e.target.value)}
+						autoComplete="new-password"
+					/>
+					<button
+						type="button"
+						className="btn primary"
+						onClick={() => void addUser()}
+						disabled={userBusy || newUser.trim().length < 3 || newPass.length < 8}
+					>
+						Benutzer anlegen
 					</button>
 				</div>
 			</div>

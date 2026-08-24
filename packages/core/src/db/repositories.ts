@@ -1891,3 +1891,190 @@ export function deleteTemplate(db: Db, id: string): boolean {
 	const result = db.prepare("DELETE FROM prompt_templates WHERE id = ?").run(id)
 	return result.changes > 0
 }
+
+/* --------------------------- Benutzer & Sitzungen ---------------------------- */
+
+/**
+ * Anmeldung (Migration 0015). Passwörter liegen als scrypt-Hash, Sitzungen als
+ * Hash ihres Tokens — die Datenbank enthält nichts, womit man sich anmelden
+ * könnte.
+ */
+export interface User {
+	id: string
+	username: string
+	createdAt: string
+	updatedAt: string
+	lastLoginAt?: string
+}
+
+interface UserRow {
+	id: string
+	username: string
+	password_hash: string
+	created_at: string
+	updated_at: string
+	last_login_at: string | null
+}
+
+function mapUser(row: UserRow): User {
+	return {
+		id: row.id,
+		username: row.username,
+		createdAt: row.created_at,
+		updatedAt: row.updated_at,
+		lastLoginAt: row.last_login_at ?? undefined,
+	}
+}
+
+export function countUsers(db: Db): number {
+	return (db.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number }).n
+}
+
+export function listUsers(db: Db): User[] {
+	return (db.prepare("SELECT * FROM users ORDER BY username").all() as unknown as UserRow[]).map(mapUser)
+}
+
+export function getUserByName(db: Db, username: string): (User & { passwordHash: string }) | undefined {
+	// `COLLATE NOCASE`: „Daniel" und „daniel" sind derselbe Mensch.
+	const row = db.prepare("SELECT * FROM users WHERE username = ? COLLATE NOCASE").get(username) as
+		| UserRow
+		| undefined
+	return row ? { ...mapUser(row), passwordHash: row.password_hash } : undefined
+}
+
+export function getUser(db: Db, id: string): User | undefined {
+	const row = db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow | undefined
+	return row ? mapUser(row) : undefined
+}
+
+export function createUser(db: Db, username: string, passwordHash: string): User {
+	const id = randomUUID()
+	const now = new Date().toISOString()
+	db.prepare(
+		"INSERT INTO users (id, username, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+	).run(id, username, passwordHash, now, now)
+	const created = getUser(db, id)
+	if (!created) {
+		throw new Error("user create failed")
+	}
+	return created
+}
+
+export function setUserPassword(db: Db, id: string, passwordHash: string): boolean {
+	const res = db
+		.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
+		.run(passwordHash, new Date().toISOString(), id)
+	return res.changes > 0
+}
+
+export function touchUserLogin(db: Db, id: string): void {
+	db.prepare("UPDATE users SET last_login_at = ? WHERE id = ?").run(new Date().toISOString(), id)
+}
+
+/**
+ * Löscht einen Benutzer — samt seiner Sitzungen (Fremdschlüssel-Kaskade).
+ * Der letzte Benutzer bleibt: Ohne ihn käme niemand mehr hinein.
+ */
+export function deleteUser(db: Db, id: string): { ok: boolean; reason?: string } {
+	if (countUsers(db) <= 1) {
+		return { ok: false, reason: "Der letzte Benutzer kann nicht gelöscht werden" }
+	}
+	const res = db.prepare("DELETE FROM users WHERE id = ?").run(id)
+	return { ok: res.changes > 0 }
+}
+
+export function createSession(db: Db, userId: string, tokenHash: string, expiresAt: string): void {
+	db.prepare("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)").run(
+		tokenHash,
+		userId,
+		new Date().toISOString(),
+		expiresAt,
+	)
+}
+
+/** Benutzer zu einem Sitzungs-Token; abgelaufene Sitzungen werden entfernt. */
+export function userBySession(db: Db, tokenHash: string): User | undefined {
+	const row = db.prepare("SELECT user_id, expires_at FROM sessions WHERE token_hash = ?").get(tokenHash) as
+		| { user_id: string; expires_at: string }
+		| undefined
+	if (!row) {
+		return undefined
+	}
+	if (row.expires_at <= new Date().toISOString()) {
+		deleteSession(db, tokenHash)
+		return undefined
+	}
+	return getUser(db, row.user_id)
+}
+
+export function deleteSession(db: Db, tokenHash: string): void {
+	db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(tokenHash)
+}
+
+/** Alle Sitzungen eines Benutzers beenden — etwa nach einer Passwortänderung. */
+export function deleteSessionsOfUser(db: Db, userId: string): void {
+	db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId)
+}
+
+/** Aufräumen: abgelaufene Sitzungen verschwinden. */
+export function purgeExpiredSessions(db: Db): void {
+	db.prepare("DELETE FROM sessions WHERE expires_at <= ?").run(new Date().toISOString())
+}
+
+/**
+ * Gemessener Durchsatz je Modell (Token/s, Mittel der letzten Läufe).
+ *
+ * `tps_avg` stand seit jeher in jeder Ausführung, wurde aber von niemandem
+ * gelesen — das Routing schätzte das Tempo über die Provider-Latenz. Die sagt
+ * nur, wie schnell der Server *antwortet*, nicht wie schnell er *schreibt*: Ein
+ * 27-B-Modell über einen Tunnel liefert 13 Token/s, ein 8-B-Modell daneben das
+ * Fünffache, und beide haben dieselbe Latenz.
+ *
+ * Nur abgeschlossene Läufe zählen, und nur die jüngsten: Ein Modell, das nach
+ * einem Rechnerwechsel schneller geworden ist, soll nicht ewig an alten
+ * Messwerten hängen.
+ */
+export function throughputByInstance(db: Db, sampleSize = 5): Map<string, number> {
+	const rows = db
+		.prepare(
+			`SELECT instance_id, AVG(tps_avg) AS tps FROM (
+				SELECT instance_id, tps_avg,
+					ROW_NUMBER() OVER (PARTITION BY instance_id ORDER BY started_at DESC) AS rang
+				FROM executions
+				WHERE instance_id IS NOT NULL AND tps_avg IS NOT NULL AND tps_avg > 0 AND status = 'done'
+			) WHERE rang <= ? GROUP BY instance_id`,
+		)
+		.all(sampleSize) as { instance_id: string; tps: number }[]
+	return new Map(rows.map((r) => [r.instance_id, r.tps]))
+}
+
+/**
+ * Alle Tasks einer Kette. Gezielt über die Kennung in den Metadaten — sonst
+ * müsste der Core bei jedem Abschluss den gesamten Task-Bestand laden, nur um
+ * die zwei, drei Geschwister derselben Stufe zu finden.
+ */
+export function listTasksByChain(db: Db, chainId: string): Task[] {
+	const rows = db
+		.prepare("SELECT * FROM tasks WHERE json_extract(metadata_json, '$.chain.id') = ? ORDER BY created_at")
+		.all(chainId) as unknown as TaskRow[]
+	return rows.map(mapTask)
+}
+
+/**
+ * Zuletzt tatsächlich benutzte Modelle eines Rechners — jüngste zuerst.
+ *
+ * Grundlage fürs Warmhalten: Ein Modell im Speicher zu halten, das niemand
+ * ruft, belegt Grafikspeicher ohne Gegenwert. Was gestern gebraucht wurde,
+ * wird wahrscheinlich auch heute gebraucht.
+ */
+export function recentlyUsedInstances(db: Db, providerId: string, limit = 3): string[] {
+	const rows = db
+		.prepare(
+			`SELECT instance_id, MAX(started_at) AS zuletzt
+			 FROM executions
+			 WHERE provider_id = ? AND instance_id IS NOT NULL AND started_at IS NOT NULL
+			 GROUP BY instance_id ORDER BY zuletzt DESC LIMIT ?`,
+		)
+		.all(providerId, limit) as { instance_id: string }[]
+	return rows.map((r) => r.instance_id)
+}

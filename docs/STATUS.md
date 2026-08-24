@@ -1,13 +1,14 @@
 # DiriZ — Projektstatus
 
-> **Stand: 22.08.2026** · Alle Meilensteine M0–M8 sind abgeschlossen und verifiziert — das Projekt ist fertig.
+> **Stand: 24.08.2026** · M0–M11 abgeschlossen und verifiziert.
 
 ## ⚡ Quick Status
 
 ```
-Roadmap   ██████████████████████  M0–M8 fertig (100 %)
-Qualität  ██████████████████████  Lint · Typecheck · 93 Unit-Tests · Build · 3 E2E — alles grün
+Roadmap   ██████████████████████  M0–M11 fertig
+Qualität  ██████████████████████  Lint · Typecheck · 331 Unit-Tests · Build · 18 E2E — alles grün
 Desktop   ██████████████████████  Tauri-2-Wrapper kompiliert (cargo check ✓)
+Schema    ██████████████████████  Migration 0016
 ```
 
 | Bereich | Status | Details |
@@ -18,13 +19,16 @@ Desktop   ██████████████████████  Ta
 | Monitoring (M5) | ✅ fertig | Dashboard mit Metriken, 24 h/7-Tage-Charts, Ollama-Load-Karte, Statusleiste, Live-Logs |
 | Workspace & Diff (M6) | ✅ fertig | Dateibaum der Sandbox, Vorschau mit Zeilennummern, LCS-Diff zwischen Versionen |
 | Feedback & Polish (M7) | ✅ fertig | Sterne-Ratings → lernender Qualitäts-Prior, Routing-Gewichte in Einstellungen, Export/Import, Onboarding |
-| Desktop & Agentik (M8) | ✅ fertig | Tauri-2-Desktop-Wrapper · Tool-Call-Agent-Loop (`list_files`/`read_file`/`write_file`) · Host-RAM/CPU/GPU-Monitoring + 7. Routing-Achse „Host-Last“ |
+| Desktop & Agentik (M8) | ✅ fertig | Tauri-2-Desktop-Wrapper · Tool-Call-Agent-Loop (`list_files`/`read_file`/`write_file`) · Host-RAM/CPU/GPU-Monitoring + Routing-Achse „Host-Last“ |
+| Deklaration (M9) | ✅ fertig | `plan.md`/`changelog.md`/`init.md` je Rechner und Spezialist · **`llm.md` als Datenblatt je Modell** mit eigener Ansicht „LLM-Modelle“ · Modell-Katalog mit 24 Familien · Dokumente-Ansicht mit Suche |
+| GitHub (M10) | ✅ fertig | Repositories verbinden, Task-Worktrees, Diff, Commit, Push, Pull-Request |
+| Orchestrierung & Betrieb (M11) | ✅ fertig | **Stufen statt Kette** (parallel über alle Rechner, gemeinsames Arbeitsverzeichnis) · **Anmeldung** mit Benutzerverwaltung · **Warmhalten** geladener Modelle · **gemessener Durchsatz** und **Eignung** als Routing-Achsen · dauerhaftes Feedback · Kontext-Budget · Schnellmodus · Fortsetzen abgebrochener Läufe |
 
 ---
 
 ## 🚀 Was heute läuft
 
-**End-to-End-Nutzerfluss:** Provider verbinden → Task anlegen (Prompt, Privatsphäre, Budget, Modus, optional Agentik) → DiriZ routet auf das beste Modell (lokal oder Cloud) → Live-Stream mit Failover → Ergebnis bewerten (1–5 Sterne) → DiriZ lernt daraus.
+**End-to-End-Nutzerfluss:** Anmelden → Provider verbinden → Datenblatt (`llm.md`) der entdeckten Modelle prüfen → Auftrag im Chat (Schwarm in Stufen oder Schnellmodus) oder als Task → DiriZ routet auf das beste Modell (lokal oder Cloud) → Live-Stream mit Failover → Ergebnis bewerten (1–5 Sterne) → DiriZ lernt daraus, **dauerhaft**.
 
 **Agentik-Modus (M8):** Im Task-Composer anwählbar — das Modell arbeitet dann autonom mit den Datei-Tools `list_files`, `read_file`, `write_file` in der Task-Sandbox. Jede Operation erscheint live als ✓/✗-Zeile unter dem Stream und wird im Log protokolliert (volle Transparenz). Ein Tool-Budget (24 Schritte, per `DIRIZ_AGENT_MAX_STEPS` anpassbar) schützt vor Endlosschleifen — es begrenzt nur die Tool-Nutzung: Ist es aufgebraucht, folgt ein Abschluss-Schritt **ohne** Tools, in dem das Modell aus dem Gesammelten vollständig antworten muss; bleibt auch der stumm, fasst DiriZ den Arbeitsstand selbst zusammen. Eine abgeschnittene oder leere Antwort gibt es damit nicht. Funktioniert mit Ollama, LM Studio, OpenAI & OpenRouter.
 
@@ -32,7 +36,7 @@ Desktop   ██████████████████████  Ta
 
 **Workspace:** Jede Task-Datei ist versioniert — Vorschau mit Zeilennummern und ein farbiger Diff (+/−) zwischen beliebigen zwei Versionen derselben Datei.
 
-**Einstellungen:** Die sieben Routing-Gewichte (Context-Fit, Capability-Match, Qualitäts-Prior, Last, Kosten, Latenz, **Host-Last**) sind live anpassbar — die Engine liest sie pro Entscheidung aus der Datenbank. Dazu JSON-Export/-Import von Agenten, Swarms, Templates und Settings.
+**Einstellungen:** Zehn Routing-Gewichte (Context-Fit, Capability-Match, Qualitäts-Prior, **Eignung**, **Rechner frei**, **Tempo (gemessen)**, Last, Kosten, Latenz, Host-Last) live anpassbar — die Engine liest sie pro Entscheidung aus der Datenbank. Dazu Parallelitäts- und GPU-Grenzen, Zeitgrenzen, Warmhalten, **Benutzerverwaltung**, Dokument-Vorlagen und JSON-Export/-Import.
 
 **Desktop (M8):** `npm run desktop` startet die Web-UI in einer nativen Tauri-2-Fenster-Hülle (Dev: Vite; Prod: gebautes Bundle). Der Core läuft weiterhin lokal — die App ist eine schlanke Hülle ohne eigene Logik.
 
@@ -40,7 +44,46 @@ Desktop   ██████████████████████  Ta
 
 ---
 
-## 🔧 Diese Iteration (22.08.2026) — M8: Desktop & Agentik
+## 🔧 Diese Iteration (24.08.2026) — M11: Orchestrierung, Tempo & Zugang
+
+### Neu implementiert
+- **`llm.md` — das Datenblatt eines Modells** (`packages/shared/src/models.ts`, Ansicht `apps/web/src/views/Models.tsx`):
+  Ein Modell bekommt keinen Auftrag, sondern hat Eigenschaften. Familie, Parameter, Kontext, Quantisierung, Preis,
+  Qualitätsklasse, Tempo, Fähigkeiten, Werkzeuge, „Gut für“/„Nicht geeignet für“, Voreinstellungen — ausgefüllt aus
+  einem Katalog mit 24 Modellfamilien plus Heuristiken über Parameterzahl, Kontextfenster und Quantisierung.
+  Fähigkeiten und Kontext sind harte Routing-Gates, die Angaben werden in die `instances`-Tabelle gespiegelt.
+- **Schwarm in Stufen** (`engine.startNextChainStep`): Fachbereiche mit gleicher Stufennummer arbeiten gleichzeitig
+  auf allen Rechnern; die nächste Stufe wartet auf alle Geschwister und bekommt deren Ergebnisse gebündelt.
+  Alle Schritte teilen sich Arbeitsverzeichnis und Branch — niemand liest das Projekt zweimal.
+- **Anmeldung** (`routes/auth.ts`, `security/auth.ts`, Migration 0015): scrypt-Passwörter, Sitzungen als Token-Hash im
+  HttpOnly-Cookie, Türsteher vor allen `/api`-Routen, Benutzerverwaltung in den Einstellungen, Sperre nach
+  wiederholten Fehlversuchen.
+- **Warmhalten** (`execution/warmup.ts`): Ein-Token-Ping in Abständen hält geladene Modelle im Speicher.
+  Rechner, die arbeiten, werden übersprungen; ein fremdes Modell wird nie verdrängt.
+- **Drei neue Routing-Achsen**: **Eignung** (Stärken/Schwächen aus dem `llm.md` gegen den Prompt),
+  **Rechner frei** (verteilt Aufträge über die Maschinen), **Tempo (gemessen)** (Token/s aus echten Läufen —
+  in deinem Bestand liegen zwischen zwei Modellen Faktor 10).
+- **Kein Token-Deckel mehr** (Migration 0014): Weder Katalog noch Spezialist setzen `maxTokens`. Eine geratene
+  Obergrenze schnitt Antworten und Tool-Aufrufe mitten im Satz ab — im Agentik-Modus auch mitten im Dateiinhalt.
+- **Robustheit im Agentik-Modus**: Zeitüberwachung beginnt mit jedem Schritt neu (jeder Schritt schickt den ganzen
+  Verlauf erneut zur Verarbeitung), Abbruch nach drei erfolglosen Schritten, Kontext-Budget dampft alte
+  Tool-Ergebnisse ein, dieselbe Datei wird nie zweimal gelesen.
+- **Dauerhaftes Feedback** (Migration 0016): Erfolge, Fehlschläge und geglättete Bewertung überleben den Neustart.
+- **Schnellmodus** im Chat (ein Spezialist, Tempo dreifach gewichtet) und **Fortsetzen** abgebrochener Läufe
+  (`POST /api/tasks/:id/resume`, neue Task im selben Arbeitsverzeichnis mit dem bisherigen Stand als Vorarbeit).
+
+### Architektur-Entscheidungen (diese Iteration)
+- **Auftrag ≠ Eigenschaft:** Ein Spezialist bekommt `plan.md`, ein Modell `llm.md`. Beides zu vermischen war der
+  Fehler — „Wofür wird dieses Modell eingesetzt? / Schritt 1“ ist die Sprache eines Auftrags.
+- **Katalog-Werte sind Empfehlung, kein Override:** Parameter aus dem Modell-Katalog stehen als Text im Datenblatt,
+  gesetzt wird nur, was jemand einträgt.
+- **Warten statt scheitern:** Sind alle Rechner belegt, wartet die Task; fehlt allen Modellen eine Pflicht-Fähigkeit,
+  wird das Gate gelockert — aber nie für Modelle ohne jede Fähigkeit (Einbettungs-Modelle liefern keinen Text).
+- **Gemessen schlägt geraten:** Durchsatz aus echten Läufen, Fähigkeiten aus dem Provider — beides schlägt den Katalog.
+
+---
+
+## 🔧 Vorige Iteration (22.08.2026) — M8: Desktop & Agentik
 
 ### Neu implementiert
 - **Tool-Call-Agent-Loop** (`packages/core/src/execution/agent.ts` + `tools.ts`):

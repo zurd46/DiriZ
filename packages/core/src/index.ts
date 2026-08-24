@@ -12,6 +12,7 @@ import { loadConfig } from "./config.js"
 import { openDatabase } from "./db/connection.js"
 import { migrate } from "./db/migrate.js"
 import { getRepo, getSetting, persistLog, providerApiKeyEnc, setTaskRepo } from "./db/repositories.js"
+import { DEFAULT_RETENTION, purgeOldData, type RetentionSettings } from "./db/retention.js"
 import {
 	refreshCatalogAgents,
 	refreshCatalogSwarms,
@@ -73,7 +74,8 @@ async function main(): Promise<void> {
 		}
 	})
 
-	const feedback = new Feedback()
+	// Mit Datenbank: Gelerntes überlebt den Neustart.
+	const feedback = new Feedback(db)
 	const engine = new ExecutionEngine({
 		db,
 		registry,
@@ -134,6 +136,23 @@ async function main(): Promise<void> {
 
 	await registry.bootstrap()
 
+	// Einmal beim Start und danach täglich aufräumen: Logs, Stream-Schnipsel und
+	// abgelaufene Sitzungen wachsen sonst unbegrenzt.
+	const aufräumen = () => {
+		const settings = { ...DEFAULT_RETENTION, ...getSetting<Partial<RetentionSettings>>(db, "retention") }
+		const res = purgeOldData(db, settings)
+		const summe = res.logs + res.chunks + res.metrics + res.sessions
+		if (summe > 0) {
+			log(
+				"info",
+				"core",
+				`Aufgeräumt: ${res.logs} Logzeile(n), ${res.chunks} Schnipsel, ${res.metrics} Kennzahl(en), ${res.sessions} abgelaufene Sitzung(en)`,
+			)
+		}
+	}
+	aufräumen()
+	const retentionTimer = setInterval(aufräumen, 24 * 60 * 60 * 1000)
+
 	// Modelle warm halten: Der erste Aufruf eines kalten 30-B-Modells kostet
 	// Minuten — und sieht aus wie ein hängendes Programm. Ein winziger Ping in
 	// regelmässigem Abstand hält, was ohnehin geladen ist, im Speicher.
@@ -166,6 +185,7 @@ async function main(): Promise<void> {
 		log("info", "core", `${signal} — beende DiriZ Core …`)
 		registry.stopAllPolling()
 		warmKeeper.stop()
+		clearInterval(retentionTimer)
 		void app.close().finally(() => {
 			db.close()
 			process.exit(0)

@@ -16,6 +16,7 @@ import type {
 	ProviderType,
 	Task,
 } from "@diriz/shared"
+import { DEFAULT_WEIGHTS, fastWeights } from "@diriz/shared"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { Db } from "../src/db/connection.js"
 import { openDatabase } from "../src/db/connection.js"
@@ -560,5 +561,33 @@ describe("taskWorktreePath", () => {
 		const a = base({})
 		const b = base({ id: "cccccccc-1111-2222-3333-444444444444" })
 		expect(taskWorktreePath("/w", a)).not.toBe(taskWorktreePath("/w", b))
+	})
+})
+
+/**
+ * Schnellmodus: Tempo zählt dreifach. Die harten Gates bleiben unangetastet —
+ * schnell zu sein darf keine Aufgabe unmöglich machen.
+ */
+describe("fastWeights", () => {
+	it("verdreifacht das Tempo-Gewicht und renormiert auf 1", () => {
+		const w = fastWeights()
+		expect(w.throughput).toBeCloseTo((DEFAULT_WEIGHTS.throughput ?? 0) * 3)
+		const sum =
+			w.contextFit +
+			w.capabilityMatch +
+			w.qualityPrior +
+			(w.specFit ?? 0) +
+			(w.providerSpread ?? 0) +
+			(w.throughput ?? 0) +
+			w.loadScore +
+			w.costScore +
+			w.latencyScore +
+			(w.hostLoad ?? 0)
+		expect(sum).toBeCloseTo(1)
+	})
+
+	it("lässt Kontext und Fähigkeiten weiterhin schwerer wiegen als alles andere", () => {
+		const w = fastWeights()
+		expect(w.contextFit + w.capabilityMatch).toBeGreaterThan(w.throughput ?? 0)
 	})
 })

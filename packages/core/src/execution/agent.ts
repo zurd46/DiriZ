@@ -37,6 +37,68 @@ export const MAX_AGENT_STEPS = readMaxStepsEnv() ?? 0
  */
 const MAX_FAILED_TOOL_STREAK = 3
 
+/**
+ * Ab wie viel belegtem Kontext ältere Tool-Ergebnisse eingedampft werden.
+ *
+ * Jeder Schritt schickt den gesamten bisherigen Verlauf erneut — und die
+ * Verarbeitungszeit wächst mit ihm. Ein Lauf, der zehn Dateien gelesen hat,
+ * trägt sie in jedem weiteren Schritt mit; irgendwann besteht der halbe
+ * Kontext aus Material, das längst ausgewertet ist, und jeder Schritt dauert
+ * länger als der vorige.
+ */
+const CONTEXT_TRIM_RATIO = 0.6
+
+/** Zeichen je Token (grobe Schätzung, dieselbe wie im Routing). */
+const CHARS_PER_TOKEN = 3.5
+
+/** Wie viele der jüngsten Tool-Ergebnisse **immer** vollständig bleiben. */
+const KEEP_RECENT_TOOL_RESULTS = 4
+
+/**
+ * Dampft alte Tool-Ergebnisse ein, wenn der Verlauf zu gross wird.
+ *
+ * Ersetzt wird nur der **Inhalt** alter `tool`-Nachrichten, nie die Struktur:
+ * Jede Antwort bleibt an ihrem Aufruf hängen (sonst bricht das Format vieler
+ * Backends), und die jüngsten Ergebnisse bleiben unangetastet — mit ihnen
+ * arbeitet das Modell gerade.
+ *
+ * Rein und exportiert, damit die Grenze prüfbar ist.
+ */
+export function trimContext(
+	messages: ChatMessage[],
+	contextWindow: number | undefined,
+): { messages: ChatMessage[]; trimmed: number } {
+	if (!contextWindow || contextWindow <= 0) {
+		return { messages, trimmed: 0 }
+	}
+	const used = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0) / CHARS_PER_TOKEN
+	if (used < contextWindow * CONTEXT_TRIM_RATIO) {
+		return { messages, trimmed: 0 }
+	}
+
+	const toolIndexes = messages
+		.map((m, i) => (m.role === "tool" ? i : -1))
+		.filter((i) => i >= 0)
+		.slice(0, -KEEP_RECENT_TOOL_RESULTS)
+	let trimmed = 0
+	const out = messages.map((m, i) => {
+		if (!toolIndexes.includes(i) || m.content.length < 400) {
+			return m
+		}
+		trimmed++
+		return {
+			...m,
+			content: JSON.stringify({
+				ok: true,
+				detail:
+					`[Gekürzt, um Platz zu schaffen — ${m.content.length} Zeichen. Der Inhalt wurde bereits ` +
+					"ausgewertet; lies die Datei erneut, falls du eine konkrete Stelle brauchst.]",
+			}),
+		}
+	})
+	return { messages: out, trimmed }
+}
+
 function readMaxStepsEnv(): number | undefined {
 	const raw = Number.parseInt(process.env.DIRIZ_AGENT_MAX_STEPS ?? "", 10)
 	return Number.isFinite(raw) && raw > 0 ? raw : undefined
@@ -72,6 +134,8 @@ export interface AgentLoopOptions {
 	/** Tool-Operation melden (Event `tool.call`). */
 	emitToolCall: (data: { name: string; argsSummary: string; ok: boolean; detail?: string }) => void
 	log: LogFn
+	/** Kontextfenster des Modells — Grundlage fürs Eindampfen alter Ergebnisse. */
+	contextWindow?: number
 	/**
 	 * Freigegebene Werkzeuge laut `llm.md` des Modells. Leer/undefiniert = alle.
 	 * Wer im Datenblatt `write_file` streicht, nimmt dem Modell das Schreiben —
@@ -156,6 +220,15 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 			throw new Error("Abgebrochen")
 		}
 
+		// Vor jedem Aufruf: Passt der Verlauf noch bequem ins Fenster? Sonst
+		// werden alte Tool-Ergebnisse eingedampft — sie sind ausgewertet, ihr
+		// voller Text kostet ab jetzt nur noch Zeit.
+		const gekürzt = trimContext(messages, opts.contextWindow)
+		if (gekürzt.trimmed > 0) {
+			messages.length = 0
+			messages.push(...gekürzt.messages)
+			opts.log("info", "agent", `Kontext eingedampft: ${gekürzt.trimmed} alte Tool-Ergebnis(se) gekürzt`)
+		}
 		opts.onStepStart?.()
 		const stream = opts.adapter.chat({
 			messages,

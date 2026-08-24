@@ -43,6 +43,11 @@ const WEIGHT_META: { key: keyof ScoringWeights; label: string; hint: string }[] 
 		label: "Eignung",
 		hint: "Stärken und Schwächen aus dem `llm.md` des Modells, gemessen am Prompt",
 	},
+	{
+		key: "providerSpread",
+		label: "Rechner frei",
+		hint: "Bevorzugt eine Maschine, auf der gerade nichts läuft — verteilt die Arbeit über alle Rechner",
+	},
 	{ key: "loadScore", label: "Last", hint: "Aktuelle Auslastung des Providers" },
 	{ key: "costScore", label: "Kosten", hint: "Preis pro Token (lokal = 0 $)" },
 	{ key: "latencyScore", label: "Latenz", hint: "Antwortgeschwindigkeit" },

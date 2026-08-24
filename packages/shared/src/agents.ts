@@ -371,6 +371,49 @@ export const DISCIPLINE_ORDER = [
 	"Dokumentation & Governance",
 ]
 
+/**
+ * Welche Fachbereiche **gleichzeitig** arbeiten können.
+ *
+ * Der Wertstrom ist nicht durchgehend eine Kette: Anforderungen müssen vor der
+ * Architektur stehen, und gebaut wird erst danach — aber Implementierung und
+ * Datenarbeit greifen nicht ineinander, und Tests, Sicherheit und Dokumentation
+ * prüfen alle dasselbe Ergebnis. Was dieselbe Stufennummer trägt, läuft
+ * parallel; die nächste Stufe wartet, bis die vorige vollständig fertig ist.
+ *
+ * Das ist der Unterschied zwischen „ein Rechner arbeitet, der andere steht" und
+ * „beide rechnen".
+ */
+export const DISCIPLINE_STAGE: Record<string, number> = {
+	"Produkt & Analyse": 0,
+	"Architektur & Design": 1,
+	Implementierung: 2,
+	"Daten & KI": 2,
+	Qualität: 3,
+	"Dokumentation & Governance": 3,
+	"Betrieb & Auslieferung": 4,
+}
+
+/**
+ * Gruppiert geplante Schritte in Stufen. Ein Spezialist ohne bekannten
+ * Fachbereich (selbst angelegt) bekommt eine eigene Stufe am Ende: Über seine
+ * Abhängigkeiten weiss das System nichts, also läuft er sicherheitshalber
+ * allein und zuletzt.
+ */
+export function stagesOf(steps: { agentId: string; discipline?: string }[]): string[][] {
+	const known = new Map<number, string[]>()
+	const unknown: string[][] = []
+	for (const step of steps) {
+		const stage = step.discipline !== undefined ? DISCIPLINE_STAGE[step.discipline] : undefined
+		if (stage === undefined) {
+			unknown.push([step.agentId])
+			continue
+		}
+		known.set(stage, [...(known.get(stage) ?? []), step.agentId])
+	}
+	const ordered = [...known.entries()].sort(([a], [b]) => a - b).map(([, ids]) => ids)
+	return [...ordered, ...unknown]
+}
+
 /** Ein Schritt des Swarms: wer, warum, an welcher Stelle. */
 export interface SwarmStep {
 	agentId: string

@@ -38,6 +38,7 @@ import {
 	type ScoringWeights,
 	scoreAgents,
 	type Task,
+	type TaskMetadata,
 	type TaskProfile,
 	type TimeoutSettings,
 	toAgentCandidate,
@@ -59,6 +60,8 @@ import {
 	getSetting,
 	getSwarm,
 	getTask,
+	listExecutionsByTask,
+	listTasks,
 	listAgents,
 	replayOutput,
 	saveAgentSelection,
@@ -146,6 +149,17 @@ const AGENT_TOTAL_FACTOR = 3
 
 /** Konservative Basis-Qualität ohne Feedback-Historie. */
 const BASIS_PRIOR = 0.6
+
+/**
+ * Die Stufen einer Kette. Altbestand ohne `stages` wird als Folge einzelner
+ * Stufen gelesen — genau das Verhalten von vorher.
+ */
+function chainStages(chain: NonNullable<TaskMetadata["chain"]>): string[][] {
+	if (chain.stages && chain.stages.length > 0) {
+		return chain.stages
+	}
+	return chain.agentIds.map((id) => [id])
+}
 
 /** So viel Vorarbeit reicht ein Kettenschritt weiter (Zeichen). */
 const HANDOFF_MAX_CHARS = 6000
@@ -254,70 +268,166 @@ export class ExecutionEngine {
 	}
 
 	/**
-	 * Startet den nächsten Spezialisten einer Kette.
+	 * Schaltet eine Kette eine **Stufe** weiter.
 	 *
-	 * Jeder Schritt ist eine eigene Task — dadurch bekommt er seine eigene
-	 * Ausführung, seinen eigenen Diff und seinen eigenen Eintrag im Verlauf.
-	 * Der nächste sieht das Ergebnis des vorigen als Vorarbeit; er soll darauf
-	 * aufbauen, nicht dieselbe Frage noch einmal beantworten.
+	 * Eine Kette ist keine Perlenschnur, sondern ein Wertstrom mit Stufen:
+	 * Innerhalb einer Stufe arbeiten alle Spezialisten **gleichzeitig** — dann
+	 * rechnen alle angebundenen Rechner statt einer, während die anderen
+	 * danebenstehen. Die nächste Stufe beginnt erst, wenn die vorige
+	 * vollständig fertig ist; sie bekommt die Ergebnisse **aller** ihrer
+	 * Vorgänger als Vorarbeit.
 	 *
-	 * Abgebrochen wird still: Scheitert ein Schritt, endet die Kette dort —
-	 * einen Fehler weiterzureichen hiesse, auf falschem Fundament weiterzubauen.
+	 * Aufgerufen wird das nach jedem Schritt. Läuft ein Geschwisterschritt noch,
+	 * passiert nichts — wer als Letzter fertig wird, zieht die Kette weiter.
+	 *
+	 * Abgebrochen wird still: Liefert eine ganze Stufe nichts, endet die Kette
+	 * dort — auf falschem Fundament weiterzubauen kostet mehr als aufzuhören.
 	 */
 	private startNextChainStep(task: Task, ergebnis: string): void {
 		const chain = task.metadata.chain
 		if (!chain) {
 			return
 		}
-		const next = chain.agentIds[chain.index + 1]
-		if (!next) {
-			return
-		}
-		const agent = getAgent(this.deps.db, next)
-		if (!agent?.enabled) {
-			this.deps.log("warn", "agents", `Kette endet: Spezialist ${next} fehlt oder ist deaktiviert`)
-			return
-		}
-		const ziel = chain.goal ?? task.prompt
-		const vorher = getAgent(this.deps.db, chain.agentIds[chain.index] ?? "")?.name
-		const vorarbeit = trimMarkdown(ergebnis.trim(), HANDOFF_MAX_CHARS)
-		const folge = createTask(this.deps.db, {
-			title: task.title,
-			// Sauberes Markdown: Die Übergabe landet im Chat vor Augen und im
-			// Prompt vor dem Modell. Überschriften statt „Label:"-Zeilen halten
-			// beides lesbar — und die Vorarbeit ist selbst schon Markdown.
-			prompt: [
-				"## Ursprünglicher Auftrag",
-				"",
-				ziel.trim(),
-				"",
-				`## Vorarbeit aus Schritt ${chain.index + 1}${vorher ? ` — ${vorher}` : ""}`,
-				"",
-				vorarbeit || "_(keine Textantwort)_",
-				"",
-				"## Deine Aufgabe",
-				"",
-				"Bau darauf auf und erledige den Teil, für den du zuständig bist. " +
-					"Wiederhole die Vorarbeit nicht, sondern ergänze oder korrigiere sie.",
-			].join("\n"),
-			metadata: {
-				...task.metadata,
-				chain: { ...chain, index: chain.index + 1, goal: ziel },
-			},
-			assignmentMode: "agent",
-			agentId: next,
-			repoId: task.repoId ?? null,
-			baseBranch: task.baseBranch ?? null,
-		})
-		this.deps.emit({ event: "task.created", data: { taskId: folge.id } })
-		this.deps.log(
-			"info",
-			"agents",
-			`Kette: Schritt ${chain.index + 2}/${chain.agentIds.length} an ${agent.name} (Task ${folge.id})`,
+		const stages = chainStages(chain)
+		const stage = chain.stage ?? chain.index ?? 0
+
+		// Geschwister derselben Stufe: Solange einer noch arbeitet, wartet die
+		// Kette. Ohne diese Sperre startete jeder fertige Schritt die nächste
+		// Stufe erneut — die Arbeit liefe mehrfach.
+		const geschwister = this.chainTasks(chain, task).filter(
+			(t) => (t.metadata.chain?.stage ?? t.metadata.chain?.index ?? 0) === stage,
 		)
-		const accepted = this.start(folge.id)
-		if (!accepted.accepted) {
-			this.deps.log("warn", "agents", `Kette pausiert: ${accepted.reason}`)
+		const offen = geschwister.filter(
+			(t) => t.id !== task.id && !["done", "failed", "cancelled"].includes(t.status),
+		)
+		if (offen.length > 0) {
+			this.deps.log(
+				"info",
+				"agents",
+				`Kette: Stufe ${stage + 1} noch nicht fertig — ${offen.length} Schritt(e) laufen`,
+			)
+			return
+		}
+
+		const nextStage = stages[stage + 1]
+		if (!nextStage || nextStage.length === 0) {
+			return
+		}
+
+		// Vorarbeit dieser Stufe: die Ergebnisse **aller** Geschwister, jeweils
+		// mit dem Namen ihres Spezialisten — sonst weiss die nächste Stufe
+		// nicht, wessen Aussage sie vor sich hat.
+		const beitraege = geschwister
+			.map((t) => {
+				const text = t.id === task.id ? ergebnis : (listExecutionsByTask(this.deps.db, t.id).at(-1)?.output ?? "")
+				const name = getAgent(this.deps.db, t.agentId ?? "")?.name
+				return { name: name ?? "Spezialist", text: text.trim() }
+			})
+			.filter((b) => b.text.length > 0)
+
+		const budget = Math.max(1500, Math.floor(HANDOFF_MAX_CHARS / Math.max(1, beitraege.length)))
+		const vorarbeit =
+			beitraege.length === 0
+				? "_(keine Textantwort)_"
+				: beitraege
+						.map((b) =>
+							beitraege.length === 1
+								? trimMarkdown(b.text, HANDOFF_MAX_CHARS)
+								: `### ${b.name}\n\n${trimMarkdown(b.text, budget)}`,
+						)
+						.join("\n\n")
+
+		const ziel = chain.goal ?? task.prompt
+		const chainId = chain.id ?? task.id
+		let gestartet = 0
+		for (const agentId of nextStage) {
+			const agent = getAgent(this.deps.db, agentId)
+			if (!agent?.enabled) {
+				this.deps.log("warn", "agents", `Kette: Spezialist ${agentId} fehlt oder ist deaktiviert`)
+				continue
+			}
+			const folge = createTask(this.deps.db, {
+				title: task.title,
+				// Sauberes Markdown: Die Übergabe landet im Chat vor Augen und im
+				// Prompt vor dem Modell. Überschriften statt „Label:"-Zeilen halten
+				// beides lesbar — und die Vorarbeit ist selbst schon Markdown.
+				prompt: [
+					"## Ursprünglicher Auftrag",
+					"",
+					ziel.trim(),
+					"",
+					`## Vorarbeit aus Stufe ${stage + 1}`,
+					"",
+					vorarbeit,
+					"",
+					"## Deine Aufgabe",
+					"",
+					"Bau darauf auf und erledige den Teil, für den du zuständig bist. " +
+						"Wiederhole die Vorarbeit nicht, sondern ergänze oder korrigiere sie.",
+				].join("\n"),
+				metadata: {
+					...task.metadata,
+					chain: {
+						...chain,
+						id: chainId,
+						stages,
+						stage: stage + 1,
+						index: stages.slice(0, stage + 1).reduce((n, s) => n + s.length, 0),
+						goal: ziel,
+					},
+				},
+				assignmentMode: "agent",
+				agentId,
+				repoId: task.repoId ?? null,
+				baseBranch: task.baseBranch ?? null,
+			})
+			this.deps.emit({ event: "task.created", data: { taskId: folge.id } })
+			this.deps.log(
+				"info",
+				"agents",
+				`Kette: Stufe ${stage + 2}/${stages.length} an ${agent.name} (Task ${folge.id})`,
+			)
+			const accepted = this.start(folge.id)
+			if (accepted.accepted) {
+				gestartet++
+			} else {
+				// Kein Verlust: Die Task wartet und wird gestartet, sobald wieder
+				// Kapazität frei wird (`drainQueued`).
+				setTaskStatus(this.deps.db, folge.id, "queued")
+				this.deps.log("info", "agents", `Kette: ${agent.name} wartet auf Kapazität (${accepted.reason})`)
+			}
+		}
+		if (gestartet === 0) {
+			this.deps.log("warn", "agents", `Kette: Stufe ${stage + 2} konnte nicht starten`)
+		}
+	}
+
+	/** Alle Tasks derselben Kette — über die gemeinsame Kennung. */
+	private chainTasks(chain: NonNullable<TaskMetadata["chain"]>, self: Task): Task[] {
+		const id = chain.id
+		if (!id) {
+			// Altbestand ohne Kennung: Dort war jede Stufe einelementig, die Task
+			// selbst ist also ihre eigene Stufe.
+			return [self]
+		}
+		return listTasks(this.deps.db).filter((t) => t.metadata.chain?.id === id)
+	}
+
+	/**
+	 * Wartende Kettenschritte starten, sobald Kapazität frei wird.
+	 *
+	 * Ohne das bliebe eine parallele Stufe unvollständig: Was am
+	 * Parallelitäts-Limit abprallt, würde nie wieder angefasst — und die
+	 * nächste Stufe wartete ewig auf einen Schritt, der nie lief.
+	 */
+	private drainQueued(): void {
+		for (const t of listTasks(this.deps.db)) {
+			if (this.activeCount >= this.concurrencyLimit) {
+				return
+			}
+			if (t.status === "queued" && t.metadata.chain && !this.isRunning(t.id)) {
+				this.start(t.id)
+			}
 		}
 	}
 
@@ -1210,6 +1320,8 @@ export class ExecutionEngine {
 		feedback.record(choice.instance.id, true)
 		await this.autoCommit(task)
 		this.startNextChainStep(task, fullText)
+		// Kapazität ist frei geworden — wartende Kettenschritte nachziehen.
+		this.drainQueued()
 		log(
 			"info",
 			"engine",

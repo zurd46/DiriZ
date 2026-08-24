@@ -353,12 +353,12 @@ describe("engine: Spezialisten-Kette", () => {
 		expect(folge).toBeDefined()
 		// … dem ursprünglichen Ziel und der Vorarbeit im Prompt.
 		expect(folge?.prompt).toContain("Ursprungsauftrag der Kette")
-		expect(folge?.prompt).toContain("Vorarbeit aus Schritt 1")
+		expect(folge?.prompt).toContain("Vorarbeit aus Stufe 1")
 		expect(folge?.metadata.chain?.agentIds).toEqual([erster.id, zweiter.id])
 		// Sauberes Markdown mit festen Überschriften: Die Oberfläche zerlegt die
 		// Übergabe daran, und das Modell liest sie als gegliederten Auftrag.
 		expect(folge?.prompt).toMatch(/^## Ursprünglicher Auftrag$/m)
-		expect(folge?.prompt).toMatch(/^## Vorarbeit aus Schritt 1 — Ketten-Erster$/m)
+		expect(folge?.prompt).toMatch(/^## Vorarbeit aus Stufe 1$/m)
 		expect(folge?.prompt).toMatch(/^## Deine Aufgabe$/m)
 	})
 

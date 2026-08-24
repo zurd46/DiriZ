@@ -32,6 +32,12 @@ export interface ScoringWeights {
 	 * Prompt. 0 = das Modell taugt laut Datenblatt ausdrücklich nicht dafür.
 	 */
 	specFit?: number
+	/**
+	 * Freier Rechner: bevorzugt eine Maschine, auf der gerade nichts läuft.
+	 * Ohne diese Achse stapeln sich alle Aufträge auf dem schnellsten Rechner,
+	 * während der zweite danebensteht und nichts tut.
+	 */
+	providerSpread?: number
 	loadScore: number
 	costScore: number
 	latencyScore: number

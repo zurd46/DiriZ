@@ -38,7 +38,23 @@ export interface TaskMetadata {
 	 * eigener Ausführung; `index` sagt, an welcher Stelle diese Task steht.
 	 * Läuft ein Schritt erfolgreich durch, startet der Core den nächsten.
 	 */
-	chain?: { agentIds: string[]; index: number; goal?: string }
+	chain?: {
+		/** Alle Beteiligten in Reihenfolge — für Anzeige und Rückwärtskompatibilität. */
+		agentIds: string[]
+		/** Position dieser Task in `agentIds` (Altbestand; heute abgeleitet). */
+		index: number
+		goal?: string
+		/** Gemeinsame Kennung aller Schritte einer Kette — bindet die Stufen zusammen. */
+		id?: string
+		/**
+		 * Die Stufen der Kette: Innerhalb einer Stufe arbeiten alle Spezialisten
+		 * **gleichzeitig** (auf allen verfügbaren Rechnern), die nächste Stufe
+		 * beginnt erst, wenn die vorige vollständig fertig ist.
+		 */
+		stages?: string[][]
+		/** Stufe, zu der diese Task gehört. */
+		stage?: number
+	}
 }
 
 export interface Task {

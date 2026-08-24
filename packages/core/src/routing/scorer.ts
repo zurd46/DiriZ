@@ -13,6 +13,7 @@ import {
 	costScore,
 	type InstanceModel,
 	type ModelSpec,
+	providerSpreadScore,
 	type ScoringWeights,
 	specFitScore,
 	type TaskProfile,
@@ -32,6 +33,8 @@ export interface CandidateInfo {
 	hostRamUsagePct?: number
 	/** Datenblatt (`llm.md`) des Modells — Stärken, Schwächen, Qualitätsklasse. */
 	spec?: ModelSpec
+	/** Laufende Ausführungen auf diesem Rechner — Grundlage der Spread-Achse. */
+	providerActiveCount?: number
 }
 
 const AXIS_LABELS: Record<keyof ScoringWeights, string> = {
@@ -39,6 +42,7 @@ const AXIS_LABELS: Record<keyof ScoringWeights, string> = {
 	capabilityMatch: "Capability-Match",
 	qualityPrior: "Qualität",
 	specFit: "Eignung",
+	providerSpread: "Rechner frei",
 	loadScore: "Last",
 	costScore: "Kosten",
 	latencyScore: "Latenz",
@@ -90,6 +94,9 @@ export function scoreCandidate(
 		qualityPrior: feedback.prior(info.instance.id, info.basisPrior),
 		// Eignung laut `llm.md`: „Gut für" hebt, „Nicht geeignet für" senkt.
 		specFit: specFitScore(info.spec, prompt).value,
+		// Verteilung über die Rechner: Ein Auftrag geht dorthin, wo gerade nichts
+		// läuft — sonst arbeitet immer dieselbe Maschine und die zweite steht.
+		providerSpread: providerSpreadScore(info.providerActiveCount),
 		loadScore: loadScoreValue(info.loadFactor),
 		costScore: costScore(info.instance.pricePerMTok, profile.budgetUsd),
 		latencyScore: latencyScoreValue(info.providerLatencyMs),

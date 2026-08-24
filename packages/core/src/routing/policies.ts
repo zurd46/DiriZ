@@ -29,8 +29,6 @@ const CLOUD_TYPES: ProviderType[] = ["openrouter", "openai"]
 export interface PolicyCandidate extends CandidateInfo {
 	providerType: ProviderType
 	providerOnline: boolean
-	/** Laufende Ausführungen auf diesem Rechner (GPU-Schutz). */
-	providerActiveCount?: number
 	/** Modelle, die dieser Rechner **gerade ausführt** (GPU-Schutz). */
 	providerActiveModels?: string[]
 }

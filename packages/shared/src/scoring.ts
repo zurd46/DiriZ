@@ -14,13 +14,14 @@ import type { Capability } from "./types.js"
  * Default-Gewichte aus dem Plan (§6.2):
  *
  * ```
- * score = 0.25 · contextFit
- *       + 0.25 · capabilityMatch
- *       + 0.18 · qualityPrior
+ * score = 0.23 · contextFit
+ *       + 0.23 · capabilityMatch
+ *       + 0.16 · qualityPrior
  *       + 0.12 · specFit
- *       + 0.08 · loadScore
- *       + 0.07 · costScore
- *       + 0.05 · latencyScore
+ *       + 0.10 · providerSpread
+ *       + 0.07 · loadScore
+ *       + 0.05 · costScore
+ *       + 0.04 · latencyScore
  * ```
  *
  * `specFit` kam mit dem `llm.md` dazu: Stärken und Schwächen, die im
@@ -29,13 +30,14 @@ import type { Capability } from "./types.js"
  * — die Summe bleibt 1.
  */
 export const DEFAULT_WEIGHTS: ScoringWeights = {
-	contextFit: 0.25,
-	capabilityMatch: 0.25,
-	qualityPrior: 0.18,
+	contextFit: 0.23,
+	capabilityMatch: 0.23,
+	qualityPrior: 0.16,
 	specFit: 0.12,
-	loadScore: 0.08,
-	costScore: 0.07,
-	latencyScore: 0.05,
+	providerSpread: 0.1,
+	loadScore: 0.07,
+	costScore: 0.05,
+	latencyScore: 0.04,
 	hostLoad: 0, // M8: aus — Host-RAM-Last wird erst aktiv, wenn der Nutzer sie gewichtet
 }
 
@@ -49,6 +51,7 @@ export function costAwareWeights(base: ScoringWeights = DEFAULT_WEIGHTS): Scorin
 		capabilityMatch: scale(base.capabilityMatch),
 		qualityPrior: scale(base.qualityPrior),
 		specFit: scale(base.specFit ?? 0),
+		providerSpread: scale(base.providerSpread ?? 0),
 		loadScore: scale(base.loadScore),
 		costScore: cost,
 		latencyScore: scale(base.latencyScore),
@@ -60,6 +63,7 @@ export function costAwareWeights(base: ScoringWeights = DEFAULT_WEIGHTS): Scorin
 export function normalizeWeights(weights: ScoringWeights): ScoringWeights {
 	const hostLoad = weights.hostLoad ?? 0
 	const specFit = weights.specFit ?? 0
+	const spread = weights.providerSpread ?? 0
 	const sum =
 		weights.contextFit +
 		weights.capabilityMatch +
@@ -68,6 +72,7 @@ export function normalizeWeights(weights: ScoringWeights): ScoringWeights {
 		weights.costScore +
 		weights.latencyScore +
 		specFit +
+		spread +
 		hostLoad
 	if (sum <= 0) {
 		return { ...DEFAULT_WEIGHTS }
@@ -77,6 +82,7 @@ export function normalizeWeights(weights: ScoringWeights): ScoringWeights {
 		capabilityMatch: weights.capabilityMatch / sum,
 		qualityPrior: weights.qualityPrior / sum,
 		specFit: specFit / sum,
+		providerSpread: spread / sum,
 		loadScore: weights.loadScore / sum,
 		costScore: weights.costScore / sum,
 		latencyScore: weights.latencyScore / sum,
@@ -119,6 +125,20 @@ export function capabilityMatchScore(
 	}
 	const preferredHits = preferred.filter(has).length
 	return Math.min(1, 0.6 + 0.05 * preferredHits)
+}
+
+/**
+ * Freier Rechner: 1.0, wenn dort gerade nichts läuft, danach fallend
+ * (1 Auftrag → 0.5, 2 → 0.33). Damit wandert der nächste Auftrag von selbst
+ * auf die unbeschäftigte Maschine, statt sich auf der schnellsten zu stapeln.
+ *
+ * Bewusst kein hartes Gate: Ist der zweite Rechner deutlich schlechter
+ * bestückt, darf der bessere trotzdem gewinnen — die Achse verschiebt, sie
+ * verbietet nicht.
+ */
+export function providerSpreadScore(activeCount: number | undefined): number {
+	const active = Math.max(0, activeCount ?? 0)
+	return 1 / (1 + active)
 }
 
 /** Lokale Instanz = kostenlos; Cloud = f(Preis, Budget), 0.3–1.0. */

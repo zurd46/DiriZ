@@ -12,7 +12,7 @@ import { loadConfig } from "./config.js"
 import { openDatabase } from "./db/connection.js"
 import { migrate } from "./db/migrate.js"
 import { getRepo, getSetting, persistLog, providerApiKeyEnc, setTaskRepo } from "./db/repositories.js"
-import { DEFAULT_RETENTION, purgeOldData, type RetentionSettings } from "./db/retention.js"
+import { DEFAULT_RETENTION, failOrphanedRuns, purgeOldData, type RetentionSettings } from "./db/retention.js"
 import {
 	refreshCatalogAgents,
 	refreshCatalogSwarms,
@@ -135,6 +135,13 @@ async function main(): Promise<void> {
 	}
 
 	await registry.bootstrap()
+
+	// Läufe, die ein früherer Prozess hielt, sind mit ihm gestorben — sie als
+	// „läuft" stehen zu lassen, wäre eine Lüge im Dashboard.
+	const verwaist = failOrphanedRuns(db)
+	if (verwaist > 0) {
+		log("warn", "core", `${verwaist} Lauf/Läufe aus einem früheren Prozess als abgebrochen markiert`)
+	}
 
 	// Einmal beim Start und danach täglich aufräumen: Logs, Stream-Schnipsel und
 	// abgelaufene Sitzungen wachsen sonst unbegrenzt.

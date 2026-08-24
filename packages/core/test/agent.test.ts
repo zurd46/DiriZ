@@ -20,7 +20,7 @@ import type {
 import { describe, expect, it } from "vitest"
 import { runAgentLoop, trimContext } from "../src/execution/agent.js"
 
-type Behavior = "write-then-done" | "loop" | "stumm" | "kaputt" | "doppelt"
+type Behavior = "write-then-done" | "loop" | "stumm" | "kaputt" | "doppelt" | "schreibschleife"
 
 class ToolFakeAdapter implements LLMProvider {
 	readonly label = "ToolFake"
@@ -48,6 +48,21 @@ class ToolFakeAdapter implements LLMProvider {
 				yield { type: "delta", text: "Abschluss: Ich habe out/hello.txt geschrieben." }
 			}
 			yield { type: "usage", tokensIn: 4, tokensOut: 2 }
+			yield { type: "done" }
+			return
+		}
+		if (this.behavior === "schreibschleife") {
+			// Schreibt immer wieder dieselbe Datei mit demselben Inhalt — genau
+			// das Muster, das 51-mal in Folge beobachtet wurde.
+			yield {
+				type: "tool_call",
+				call: {
+					id: `c${this.requests.length}`,
+					name: "write_file",
+					arguments: { path: "check.mjs", content: "console.log(1)" },
+				},
+			}
+			yield { type: "usage", tokensIn: 2, tokensOut: 1 }
 			yield { type: "done" }
 			return
 		}
@@ -96,7 +111,12 @@ class ToolFakeAdapter implements LLMProvider {
 				call: {
 					id: `c${this.requests.length}`,
 					name: "write_file",
-					arguments: { path: "out/hello.txt", content: "hallo" },
+					arguments:
+						this.behavior === "loop"
+							? // Jeder Schritt schreibt etwas **Neues** — sonst wäre es keine
+								// Arbeit, sondern die Schleife, die die Reissleine stoppt.
+								{ path: `out/hello-${this.requests.length}.txt`, content: `hallo ${this.requests.length}` }
+							: { path: "out/hello.txt", content: "hallo" },
 				},
 			}
 		} else {
@@ -199,6 +219,31 @@ describe("agent: Tool-Loop", () => {
 		// Der zweite Aufruf wird beantwortet, aber nicht mehr ausgeführt:
 		// Deshalb meldet nur der erste eine echte Tool-Operation.
 		expect(ops.filter((o) => o.name === "read_file")).toHaveLength(1)
+	})
+
+	it("bricht ab, wenn dieselbe Datei immer wieder identisch geschrieben wird", async () => {
+		// Erfolgreiches Nichtstun ist keine Arbeit: Der Fehlschlag-Zähler allein
+		// greift hier nicht, weil jeder Schreibvorgang mit „ok" quittiert wird.
+		const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-agent-schleife-"))
+		const adapter = new ToolFakeAdapter("fake", "ollama", "schreibschleife")
+		const ops: { name: string; ok: boolean }[] = []
+
+		const result = await runAgentLoop({
+			maxSteps: 0, // unbegrenzt — nur die Reissleine kann hier stoppen
+			adapter,
+			model: "m1",
+			userPrompt: "Schreib und prüfe",
+			baseDir,
+			executionId: "e-schleife",
+			onDelta: () => {},
+			emitToolCall: (d) => ops.push({ name: d.name, ok: d.ok }),
+			log: () => {},
+		})
+
+		// Einmal geschrieben, dann drei Wiederholungen ohne Fortschritt → Schluss.
+		expect(result.steps).toBeLessThanOrEqual(5)
+		expect(ops.filter((o) => o.name === "write_file")).toHaveLength(1)
+		expect(result.text.trim()).not.toBe("")
 	})
 
 	it("bricht ab, wenn mehrere Schritte in Folge nur fehlschlagen (kein Einfrieren)", async () => {

@@ -14,7 +14,7 @@ import type { Db } from "../src/db/connection.js"
 import { openDatabase } from "../src/db/connection.js"
 import { migrate } from "../src/db/migrate.js"
 import { createExecution, createTask } from "../src/db/repositories.js"
-import { purgeOldData } from "../src/db/retention.js"
+import { failOrphanedRuns, purgeOldData } from "../src/db/retention.js"
 
 let db: Db
 let alteExecution: string
@@ -75,5 +75,41 @@ describe("purgeOldData", () => {
 	it("ist wiederholbar und meldet dann nichts mehr", () => {
 		const res = purgeOldData(db, { logDays: 14, chunkDays: 30, metricsDays: 180 })
 		expect(res.logs + res.chunks + res.metrics).toBe(0)
+	})
+})
+
+/**
+ * Ein Lauf, dessen Prozess nicht mehr lebt, ist kein laufender Lauf. Ihn als
+ * „running" stehen zu lassen, macht das Dashboard unehrlich.
+ */
+describe("failOrphanedRuns", () => {
+	it("markiert Läufe eines früheren Prozesses als abgebrochen", () => {
+		const task = createTask(db, { prompt: "Hängengeblieben" })
+		const exec = createExecution(db, { taskId: task.id })
+		db.prepare("UPDATE executions SET status = 'running' WHERE id = ?").run(exec.id)
+		db.prepare("UPDATE tasks SET status = 'running' WHERE id = ?").run(task.id)
+
+		expect(failOrphanedRuns(db)).toBeGreaterThanOrEqual(1)
+
+		const nachher = db.prepare("SELECT status, error FROM executions WHERE id = ?").get(exec.id) as {
+			status: string
+			error: string
+		}
+		expect(nachher.status).toBe("failed")
+		expect(nachher.error).toContain("neu gestartet")
+		expect(
+			(db.prepare("SELECT status FROM tasks WHERE id = ?").get(task.id) as { status: string }).status,
+		).toBe("failed")
+	})
+
+	it("lässt abgeschlossene Läufe in Ruhe", () => {
+		const vorher = db.prepare("SELECT COUNT(*) AS n FROM executions WHERE status = 'done'").get() as {
+			n: number
+		}
+		failOrphanedRuns(db)
+		const nachher = db.prepare("SELECT COUNT(*) AS n FROM executions WHERE status = 'done'").get() as {
+			n: number
+		}
+		expect(nachher.n).toBe(vorher.n)
 	})
 })

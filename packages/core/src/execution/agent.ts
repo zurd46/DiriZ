@@ -31,9 +31,17 @@ import { executeTool, TOOL_SPECS, type ToolOpResult } from "./tools.js"
 export const MAX_AGENT_STEPS = readMaxStepsEnv() ?? 0
 
 /**
- * So viele Schritte in Folge darf **jede** Tool-Operation scheitern, bevor der
- * Loop abbricht. Drei sind genug für einen Ausrutscher (falscher Pfad, den das
- * Modell korrigiert) und wenig genug, um eine Endlosschleife zu stoppen.
+ * So viele Schritte in Folge darf ein Schritt **ohne Fortschritt** bleiben,
+ * bevor der Loop abbricht.
+ *
+ * Ohne Fortschritt heisst: Jede Operation dieses Schritts ist entweder
+ * gescheitert **oder** war eine wortgleiche Wiederholung. Beobachtet wurde
+ * genau das — ein Modell schrieb dieselbe Datei mit demselben Inhalt 51-mal,
+ * über 20 Minuten, jedes Mal mit „ok" quittiert. Der Fehlschlag-Zähler allein
+ * greift dort nicht: Erfolgreiches Nichtstun sieht für ihn aus wie Arbeit.
+ *
+ * Drei sind genug für einen Ausrutscher (ein zweiter Anlauf nach einer
+ * Korrektur) und wenig genug, um eine Schleife zu stoppen.
  */
 const MAX_FAILED_TOOL_STREAK = 3
 
@@ -173,6 +181,9 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 	// Kurze Tool-Anleitung — lokale Modelle brauchen den Hinweis explizit.
 	const toolHint =
 		`Du kannst im Workspace die Tools ${toolNames.join(", ")} nutzen. ` +
+		"Mehr gibt es nicht: Du kannst **keinen Code ausführen**, keine Tests laufen lassen, keine Befehle " +
+		"absetzen und keine Ausgabe eines Programms sehen. Ein Prüfskript zu schreiben und auf sein Ergebnis " +
+		"zu warten führt zu nichts — beschreibe stattdessen, was zu prüfen ist. " +
 		"Nutze die Tools, um die Aufgabe zu erledigen; gib am Ende eine vollständige Textantwort. " +
 		(unlimited
 			? "Du hast kein Schritt-Limit — arbeite so gründlich, wie die Aufgabe es verlangt, " +
@@ -203,6 +214,14 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 	 * etwas entsteht.
 	 */
 	let failedStreak = 0
+	/**
+	 * Fingerabdrücke aller bisher ausgeführten Aufrufe (Name + Argumente).
+	 *
+	 * Auch schreibende: Dieselbe Datei mit **demselben** Inhalt ein zweites Mal
+	 * zu schreiben ändert nichts — es ist der Beweis, dass das Modell im Kreis
+	 * läuft, nicht ein Arbeitsschritt.
+	 */
+	const gesehen = new Set<string>()
 	/**
 	 * Ergebnisse bereits ausgeführter Lese-Aufrufe.
 	 *
@@ -265,17 +284,35 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 		// Tools ausführen und die Ergebnisse dem Modell zurückgeben.
 		messages.push({ role: "assistant", content: stepText, toolCalls: calls })
 		let failedInStep = 0
+		/** Operationen dieses Schritts, die nichts bewegt haben. */
+		let ohneFortschritt = 0
 		for (const call of calls) {
 			const key = `${call.name}:${JSON.stringify(call.arguments ?? {})}`
 			const wiederholung = call.name !== "write_file" ? gelesen.get(key) : undefined
-			const result = wiederholung
+			// Wortgleicher Schreibvorgang: nicht noch einmal ausführen, sondern
+			// sagen, dass er nichts ändert. Sonst quittiert DiriZ Stillstand mit
+			// „ok" und das Modell hat keinen Grund, damit aufzuhören.
+			const nochmalGeschrieben = call.name === "write_file" && gesehen.has(key)
+			const result = nochmalGeschrieben
 				? {
-						ok: true,
+						ok: false,
 						detail:
-							`Bereits in einem früheren Schritt gelesen — Inhalt steht oben im Verlauf. ` +
-							`Lies nicht erneut, sondern arbeite damit weiter. (${wiederholung.detail.slice(0, 120)})`,
+							"Diese Datei hast du bereits mit exakt diesem Inhalt geschrieben — der Aufruf ändert " +
+							"nichts. Wenn du nicht weiterkommst, beschreibe das Ergebnis in Worten und beende die " +
+							"Aufgabe.",
 					}
-				: executeTool(opts.baseDir, call, opts.emitToolCall, opts.log)
+				: wiederholung
+					? {
+							ok: true,
+							detail:
+								`Bereits in einem früheren Schritt gelesen — Inhalt steht oben im Verlauf. ` +
+								`Lies nicht erneut, sondern arbeite damit weiter. (${wiederholung.detail.slice(0, 120)})`,
+						}
+					: executeTool(opts.baseDir, call, opts.emitToolCall, opts.log)
+			if (nochmalGeschrieben || wiederholung) {
+				ohneFortschritt++
+			}
+			gesehen.add(key)
 			if (!wiederholung && result.ok && call.name !== "write_file") {
 				gelesen.set(key, result)
 			}
@@ -298,17 +335,17 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 		// fehlschlagen, kommt das Modell aus eigener Kraft nicht mehr heraus.
 		// Dann lieber sauber abbrechen und mit dem Erreichten antworten, als
 		// stundenlang denselben Fehler zu wiederholen.
-		failedStreak = failedInStep === calls.length ? failedStreak + 1 : 0
+		failedStreak = failedInStep + ohneFortschritt >= calls.length ? failedStreak + 1 : 0
 		if (failedStreak >= MAX_FAILED_TOOL_STREAK) {
 			opts.log(
 				"warn",
 				"agent",
-				`${failedStreak} Schritte in Folge ohne erfolgreiche Tool-Operation — Loop beendet ` +
-					"(häufigste Ursache: ein zu kleines Max-Tokens schneidet den Tool-Aufruf ab).",
+				`${failedStreak} Schritte in Folge ohne Fortschritt — Loop beendet (gescheiterte oder ` +
+					"wortgleich wiederholte Operationen).",
 			)
 			opts.onDelta(
-				`\n\n[Agentik: ${failedStreak} Schritte in Folge ohne erfolgreiche Tool-Operation — ` +
-					"abgebrochen. Prüfe die Voreinstellungen des Modells (Max-Tokens) und den Auftrag.]\n\n",
+				`\n\n[Agentik: ${failedStreak} Schritte in Folge ohne Fortschritt — abgebrochen. ` +
+					"Das Modell hat dieselbe Operation wiederholt, ohne etwas zu verändern.]\n\n",
 			)
 			stepLimitReached = true
 			break

@@ -66,3 +66,27 @@ export function purgeOldData(db: Db, settings: RetentionSettings = DEFAULT_RETEN
 	}
 	return { logs, chunks, metrics, sessions }
 }
+
+/**
+ * Hängengebliebene Läufe aufräumen — beim Start.
+ *
+ * Wird der Core beendet, während eine Ausführung läuft, bleibt sie in der
+ * Datenbank auf „running" stehen: Das Dashboard zählt sie ewig als aktiv, und
+ * die Task sieht aus, als arbeite noch jemand daran. Niemand tut das — der
+ * Prozess, der sie hielt, ist fort.
+ *
+ * Der Arbeitsstand geht nicht verloren: Was das Modell geschrieben hat, liegt
+ * im Arbeitsverzeichnis, und der **Fortsetzen**-Knopf nimmt ihn wieder auf.
+ */
+export function failOrphanedRuns(db: Db): number {
+	const now = new Date().toISOString()
+	const executions = db
+		.prepare(
+			`UPDATE executions SET status = 'failed', finished_at = ?,
+				error = 'Abgebrochen: Der Core wurde neu gestartet, während dieser Lauf noch arbeitete.'
+			 WHERE status IN ('running', 'pending')`,
+		)
+		.run(now).changes
+	db.prepare("UPDATE tasks SET status = 'failed' WHERE status IN ('running', 'routing')").run()
+	return executions
+}

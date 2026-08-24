@@ -15,6 +15,7 @@ import {
 	type AgentScore,
 	type CandidateScore,
 	type ChatMessage,
+	type ConcurrencySettings,
 	type CoreEvent,
 	composeSystemPrompt,
 	DEFAULT_CONCURRENCY,
@@ -108,6 +109,9 @@ interface ActiveRun {
 	abort: AbortController
 	taskId: string
 	cancelled: boolean
+	/** Rechner und Modell — Grundlage des GPU-Schutzes im Routing. */
+	providerId?: string
+	modelId?: string
 }
 
 /** Ergebnis der Agenten-Auswahl — rein, ohne Seiteneffekte (runTask & Preview). */
@@ -122,6 +126,11 @@ interface AgentSelection {
 /** Konservative Basis-Qualität ohne Feedback-Historie. */
 const BASIS_PRIOR = 0.6
 
+/** Positive ganze Zahl aus den Einstellungen, sonst der Default. */
+function positive(value: number | undefined, fallback: number): number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 1 ? Math.floor(value) : fallback
+}
+
 export class ExecutionEngine {
 	private active = new Map<string, ActiveRun>()
 	private roundRobinCursor = new Map<string, number>()
@@ -132,8 +141,34 @@ export class ExecutionEngine {
 		return this.active.size
 	}
 
+	/** Parallelitäts- und GPU-Grenzen (Einstellungen, sonst Plan-Defaults). */
+	limits(): ConcurrencySettings {
+		const stored = getSetting<Partial<ConcurrencySettings>>(this.deps.db, "concurrency")
+		return {
+			global: positive(stored?.global, DEFAULT_CONCURRENCY.global),
+			perProvider: positive(stored?.perProvider, DEFAULT_CONCURRENCY.perProvider),
+			maxModelsPerProvider: positive(stored?.maxModelsPerProvider, DEFAULT_CONCURRENCY.maxModelsPerProvider),
+		}
+	}
+
 	get concurrencyLimit(): number {
-		return DEFAULT_CONCURRENCY.global
+		return this.limits().global
+	}
+
+	/** Was läuft gerade auf einem Rechner? (Anzahl + belegte Modell-Plätze) */
+	private activityOf(providerId: string): { count: number; models: string[] } {
+		const models = new Set<string>()
+		let count = 0
+		for (const run of this.active.values()) {
+			if (run.providerId !== providerId) {
+				continue
+			}
+			count++
+			if (run.modelId) {
+				models.add(run.modelId)
+			}
+		}
+		return { count, models: [...models] }
 	}
 
 	/** Routing-Gewichte aus den Settings (Fallback: Plan-Defaults, §6.2). */
@@ -205,6 +240,9 @@ export class ExecutionEngine {
 
 	private async buildCandidates(): Promise<PolicyCandidate[]> {
 		const { registry } = this.deps
+		// Was liegt gerade auf den Grafikkarten? Ohne diese Auskunft könnte das
+		// Routing keinen Ladevorgang vermeiden (und der kostet Minuten).
+		await registry.refreshLoads()
 		let host: HostMetrics | null = null
 		try {
 			host = await getHostMetrics()
@@ -233,10 +271,13 @@ export class ExecutionEngine {
 				local: ExecutionEngine.LOCAL_TYPES.includes(type),
 				hostRamUsagePct: host?.ramUsagePct,
 			}
+			const activity = this.activityOf(inst.providerId)
 			result.push({
 				...info,
 				providerType: type,
 				providerOnline: providerStatus === "online" && !registry.isCircuitOpen(inst.providerId),
+				providerActiveCount: activity.count,
+				providerActiveModels: activity.models,
 			})
 		}
 		return result
@@ -385,7 +426,12 @@ export class ExecutionEngine {
 		const agent = sel.ok ? sel.agent : undefined
 		const profile = this.applyAgentConstraints(extractProfile(task), agent)
 		const candidates = await this.buildCandidates()
-		const { weights, excluded, allowed } = applyPolicies(candidates, profile, this.baseWeights())
+		const { weights, excluded, allowed } = applyPolicies(
+			candidates,
+			profile,
+			this.baseWeights(),
+			this.limits(),
+		)
 		const scored = allowed
 			.map((c) => scoreCandidate(c, profile, weights, this.deps.feedback))
 			.sort((a, b) => b.score - a.score)
@@ -485,7 +531,12 @@ export class ExecutionEngine {
 		const agent = this.resolveAgent(task)
 		const profile = this.applyAgentConstraints(extractProfile(task), agent)
 		const candidates = await this.buildCandidates()
-		const { weights, excluded, allowed } = applyPolicies(candidates, profile, this.baseWeights())
+		const { weights, excluded, allowed } = applyPolicies(
+			candidates,
+			profile,
+			this.baseWeights(),
+			this.limits(),
+		)
 
 		if (allowed.length === 0) {
 			const reason = `Keine Instanz verfügbar (${excluded.length} ausgeschlossen)`
@@ -651,7 +702,13 @@ export class ExecutionEngine {
 		updateExecution(db, execution.id, { status: "running", startedAt: new Date().toISOString() })
 
 		const controller = new AbortController()
-		this.active.set(execution.id, { abort: controller, taskId: task.id, cancelled: false })
+		this.active.set(execution.id, {
+			abort: controller,
+			taskId: task.id,
+			cancelled: false,
+			providerId: choice.instance.providerId,
+			modelId: choice.instance.modelId,
+		})
 
 		// Gesamt-Timeout + Chunk-Timeout (keine Aktivität → Failover).
 		const totalTimer = setTimeout(

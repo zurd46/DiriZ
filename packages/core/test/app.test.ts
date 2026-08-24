@@ -276,6 +276,38 @@ describe("api: Settings, Export & Import", () => {
 	})
 })
 
+describe("api: Parallelitäts- und GPU-Grenzen", () => {
+	it("liefert Vorgaben und speichert geänderte Grenzen", async () => {
+		const before = await app.inject({ method: "GET", url: "/api/settings" })
+		expect(before.json().concurrency).toEqual({ global: 4, perProvider: 2, maxModelsPerProvider: 1 })
+
+		// Teil-Update: Nur eine Zahl ändern, der Rest bleibt stehen.
+		const saved = await app.inject({
+			method: "PUT",
+			url: "/api/settings",
+			payload: { concurrency: { maxModelsPerProvider: 2 } },
+		})
+		expect(saved.statusCode).toBe(200)
+		expect(saved.json().concurrency).toEqual({ global: 4, perProvider: 2, maxModelsPerProvider: 2 })
+
+		// Und die Engine liest denselben Wert — sonst wäre die Einstellung Zierde.
+		expect(ctx.engine.limits().maxModelsPerProvider).toBe(2)
+
+		await app.inject({
+			method: "PUT",
+			url: "/api/settings",
+			payload: { concurrency: { maxModelsPerProvider: 1 } },
+		})
+	})
+
+	it("weist unsinnige Grenzen ab", async () => {
+		for (const concurrency of [{ global: 0 }, { perProvider: 1.5 }, { maxModelsPerProvider: -1 }]) {
+			const res = await app.inject({ method: "PUT", url: "/api/settings", payload: { concurrency } })
+			expect(res.statusCode, JSON.stringify(concurrency)).toBe(400)
+		}
+	})
+})
+
 describe("api: SSE-Stream", () => {
 	it("liefert Events über den echten HTTP-Stream", async () => {
 		await app.listen({ port: 0, host: "127.0.0.1" })

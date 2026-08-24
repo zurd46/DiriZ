@@ -7,6 +7,7 @@ import {
 	AGENT_DOC_FILES,
 	AGENT_DOC_KINDS,
 	type AgentDocKind,
+	type ConcurrencySettings,
 	DEFAULT_WEIGHTS,
 	type DocOwnerKind,
 	type DocTemplateSettings,
@@ -24,6 +25,7 @@ import {
 	IconInfo,
 	IconRefresh,
 	IconRoute,
+	IconServer,
 	IconSliders,
 	IconTemplate,
 	IconUpload,
@@ -60,6 +62,11 @@ export default function Settings() {
 	const [importMsg, setImportMsg] = useState<string | undefined>()
 	const fileRef = useRef<HTMLInputElement>(null)
 
+	// Parallelität & GPU-Schutz: harte Grenzen, keine Gewichte.
+	const [limits, setLimits] = useState<ConcurrencySettings | null>(null)
+	const [limitsBusy, setLimitsBusy] = useState(false)
+	const [limitsSaved, setLimitsSaved] = useState(false)
+
 	// Dokument-Vorlagen (M9): je Besitzer-Art und Dokumenttyp.
 	const [tplOwner, setTplOwner] = useState<DocOwnerKind>("agent")
 	const [tplKind, setTplKind] = useState<AgentDocKind>("plan")
@@ -78,6 +85,30 @@ export default function Settings() {
 			setTemplates(settings.docTemplates ?? {})
 		}
 	}, [settings, templates])
+
+	useEffect(() => {
+		if (settings?.concurrency && limits === null) {
+			setLimits(settings.concurrency)
+		}
+	}, [settings, limits])
+
+	const limitsDirty =
+		limits !== null && JSON.stringify(limits) !== JSON.stringify(settings?.concurrency ?? null)
+
+	const saveLimits = async () => {
+		if (!limits) return
+		setLimitsBusy(true)
+		try {
+			await api.put("/api/settings", { concurrency: limits })
+			await useStore.getState().refreshSettings()
+			setLimitsSaved(true)
+			setTimeout(() => setLimitsSaved(false), 2500)
+		} catch (e) {
+			setImportMsg(e instanceof Error ? e.message : String(e))
+		} finally {
+			setLimitsBusy(false)
+		}
+	}
 
 	const tplValue = templates?.[tplOwner]?.[tplKind] ?? ""
 	const tplDirty =
@@ -239,6 +270,73 @@ export default function Settings() {
 							Gespeichert — gilt ab der nächsten Task.
 						</span>
 					)}
+				</div>
+			</div>
+
+
+			<div className="card">
+				<div className="card-head">
+					<div>
+						<div className="card-title">
+							<IconServer size={16} />
+							Parallelität & GPU-Schutz
+						</div>
+						<div className="card-sub">
+							Harte Grenzen, keine Gewichte. Sie verhindern, dass ein Rechner mehrere Modelle gleichzeitig
+							in den Grafikspeicher lädt — die Arbeit wandert stattdessen auf einen anderen Rechner.
+						</div>
+					</div>
+					{limitsDirty && <span className="pill warn">ungespeichert</span>}
+				</div>
+
+				{limits && (
+					<div className="limits">
+						{(
+							[
+								{
+									key: "maxModelsPerProvider" as const,
+									label: "Modelle je Rechner gleichzeitig",
+									hint: "1 = strikter GPU-Schutz. Höher nur, wenn der Grafikspeicher wirklich für mehrere Modelle reicht.",
+								},
+								{
+									key: "perProvider" as const,
+									label: "Aufträge je Rechner gleichzeitig",
+									hint: "Mehrere Aufträge auf demselben Modell sind unkritisch — sie teilen sich den Speicher.",
+								},
+								{
+									key: "global" as const,
+									label: "Aufträge insgesamt gleichzeitig",
+									hint: "Obergrenze über alle Rechner hinweg.",
+								},
+							]
+						).map((row) => (
+							<label key={row.key} className="limit-row">
+								<span className="limit-label">{row.label}</span>
+								<input
+									type="number"
+									min={1}
+									step={1}
+									value={limits[row.key]}
+									onChange={(e) =>
+										setLimits({ ...limits, [row.key]: Math.max(1, Number(e.target.value) || 1) })
+									}
+								/>
+								<span className="field-hint">{row.hint}</span>
+							</label>
+						))}
+					</div>
+				)}
+
+				<div className="card-actions">
+					{limitsSaved && <span className="pill ok">gespeichert</span>}
+					<button
+						type="button"
+						className="btn primary"
+						onClick={() => void saveLimits()}
+						disabled={!limitsDirty || limitsBusy}
+					>
+						Grenzen speichern
+					</button>
 				</div>
 			</div>
 

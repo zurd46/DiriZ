@@ -59,6 +59,7 @@ export class ProviderRegistry {
 	/** Zuletzt protokollierter Polling-Fehler je Provider (Entprellung). */
 	private readonly lastPollError = new Map<string, string>()
 	private statuses = new Map<string, ProviderStatus>()
+	private loadsRefreshedAt = 0
 	private loads = new Map<
 		string,
 		{ loadedModels: { modelId: string; memoryBytes: number }[]; totalMemoryBytes?: number }
@@ -297,6 +298,28 @@ export class ProviderRegistry {
 
 	/* ------------------------------- Load-Balancing ---------------------------- */
 
+	/**
+	 * Load-Info aller Provider auffrischen — höchstens alle `maxAgeMs`.
+	 * Wird vor jeder Routing-Entscheidung aufgerufen: Ohne aktuelle Angabe,
+	 * was geladen ist, kann das Routing keine Ladevorgänge vermeiden.
+	 */
+	async refreshLoads(maxAgeMs = 5000): Promise<void> {
+		const now = Date.now()
+		if (now - this.loadsRefreshedAt < maxAgeMs) {
+			return
+		}
+		this.loadsRefreshedAt = now
+		await Promise.all(
+			[...this.adapters.keys()].map(async (providerId) => {
+				try {
+					await this.loadInfo(providerId)
+				} catch {
+					// Kein Grund, das Routing zu stoppen — die Achse bleibt neutral.
+				}
+			}),
+		)
+	}
+
 	/** Load-Info des Adapters laden (Ollama: `/api/ps`), sonst `undefined`. */
 	async loadInfo(
 		providerId: string,
@@ -320,23 +343,22 @@ export class ProviderRegistry {
 	}
 
 	/**
-	 * Load-Faktor einer Instanz: 0 = unbekannt/frei, bis 1 = stark belegt.
-	 * Ollama meldet VRAM je geladenem Modell (`/api/ps`), relativ zum VRAM-Gesamt.
+	 * Load-Faktor einer Instanz: **wie stark ist der Rechner durch _andere_
+	 * Modelle belegt** (0 = frei, 1 = voll).
+	 *
+	 * Entscheidend ist die Richtung: Ist genau dieses Modell bereits geladen,
+	 * kostet seine Nutzung keinen zusätzlichen Speicher und keine Ladezeit —
+	 * das ist der **beste** Fall, nicht der schlechteste. Teuer wird es, wenn
+	 * fremde Modelle den Speicher belegen: Dann muss die Grafikkarte auslagern
+	 * und neu laden, was Minuten dauert (genau die Erst-Token-Zeitüberschreitungen).
 	 */
 	loadFactorOf(providerId: string, modelId: string): number {
-		const load = this.loads.get(providerId)
-		if (!load || load.loadedModels.length === 0) {
-			return 0
-		}
-		const hit = load.loadedModels.find((m) => m.modelId === modelId)
-		if (!hit || hit.memoryBytes === 0) {
-			return 0
-		}
-		const total = load.totalMemoryBytes
-		if (!total || total <= 0) {
-			return 0.5
-		}
-		return Math.min(1, hit.memoryBytes / total)
+		return loadFactorFrom(this.loads.get(providerId), modelId)
+	}
+
+	/** Modelle, die auf einem Rechner gerade geladen sind (leer = keine Auskunft). */
+	loadedModelsOf(providerId: string): string[] {
+		return (this.loads.get(providerId)?.loadedModels ?? []).map((m) => m.modelId)
 	}
 
 	/* --------------------------------- Instanzen ------------------------------- */
@@ -385,4 +407,31 @@ export class ProviderRegistry {
 			this.startPolling(p.id)
 		}
 	}
+}
+
+/**
+ * Wie stark ist ein Rechner durch **andere** Modelle belegt (0 = frei, 1 = voll)?
+ *
+ * Rein und exportiert, damit die Richtung testbar bleibt: Ein bereits geladenes
+ * Modell kostet keinen zusätzlichen Speicher (0), fremde Modelle kosten den
+ * Umweg über einen Ladevorgang.
+ */
+export function loadFactorFrom(
+	load: { loadedModels: { modelId: string; memoryBytes: number }[]; totalMemoryBytes?: number } | undefined,
+	modelId: string,
+): number {
+	if (!load || load.loadedModels.length === 0) {
+		return 0
+	}
+	if (load.loadedModels.some((m) => m.modelId === modelId)) {
+		return 0
+	}
+	const foreignBytes = load.loadedModels.reduce((sum, m) => sum + m.memoryBytes, 0)
+	const total = load.totalMemoryBytes
+	if (!total || total <= 0 || foreignBytes === 0) {
+		// Speichergrössen unbekannt (z. B. LM Studio) — aber es liegt etwas
+		// Fremdes auf der Karte. Halbe Belegung ist die ehrliche Schätzung.
+		return 0.5
+	}
+	return Math.min(1, foreignBytes / total)
 }

@@ -2,16 +2,26 @@
  * Zentrale Konstanten & Defaults (`01-plan.md` §7.4, §13, §15).
  */
 
+import type { ConcurrencySettings } from "./routing.js"
+
 export const CORE_HOST = "127.0.0.1"
 export const CORE_PORT = 8787
 export const WEB_PORT = 5173
 /** CORS wird nur für die lokale Vite-UI erlaubt (§13). */
 export const WEB_ORIGIN = `http://localhost:${WEB_PORT}`
 
-export const DEFAULT_CONCURRENCY = {
+/**
+ * Parallelitäts-Grenzen. `maxModelsPerProvider` ist der GPU-Schutz: Ein
+ * Rechner darf nie zwei **verschiedene** Modelle gleichzeitig ausführen —
+ * jedes zusätzliche Modell belegt eigenen VRAM, und zwei Modelle auf einer
+ * Karte bedeuten Auslagern, Ladezeiten von Minuten oder einen Absturz.
+ * Ist ein Rechner belegt, weicht das Routing auf einen anderen aus.
+ */
+export const DEFAULT_CONCURRENCY: ConcurrencySettings = {
 	perProvider: 2,
 	global: 4,
-} as const
+	maxModelsPerProvider: 1,
+}
 
 export const DEFAULT_TIMEOUTS = {
 	/**

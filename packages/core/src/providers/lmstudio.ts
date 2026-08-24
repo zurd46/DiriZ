@@ -67,6 +67,25 @@ export class LmStudioProvider extends OpenAiCompatProvider {
 	}
 
 	/**
+	 * Welche Modelle sind gerade **geladen**? LM Studio meldet das in der
+	 * nativen API als `state`. Die Größe im VRAM nennt es nicht — für den
+	 * GPU-Schutz zählt aber ohnehin die Anzahl belegter Modell-Plätze, nicht
+	 * das Byte. Ohne native API (reiner OpenAI-Modus) gibt es keine Auskunft;
+	 * dann bleibt die Achse neutral statt zu raten.
+	 */
+	async loadInfo(): Promise<{ loadedModels: { modelId: string; memoryBytes: number }[] }> {
+		const data = await fetchJson<{ data?: NativeModel[] }>(`${this.root}/api/v0/models`, {
+			headers: this.headers(),
+			timeoutMs: 5000,
+		})
+		return {
+			loadedModels: (data.data ?? [])
+				.filter((m) => m.state === "loaded")
+				.map((m) => ({ modelId: m.id, memoryBytes: 0 })),
+		}
+	}
+
+	/**
 	 * Erst die native API (mit Kontextgröße und Quantisierung), sonst der
 	 * OpenAI-kompatible Weg. Ältere LM-Studio-Versionen kennen `/api/v0` nicht.
 	 */

@@ -315,3 +315,15 @@ describe("Kontextgröße aus unterschiedlichen Feldnamen", () => {
 		expect(readContextWindow({ id: "f", context_length: 0 })).toBeUndefined()
 	})
 })
+
+/**
+ * GPU-Schutz braucht die Auskunft, was auf der Karte liegt. LM Studio meldet
+ * das als `state` in der nativen API — ohne diese Abfrage könnte das Routing
+ * keinen Ladevorgang vermeiden.
+ */
+describe("LM Studio: geladene Modelle melden", () => {
+	it("liefert nur Modelle mit state=loaded", async () => {
+		const info = await new LmStudioProvider("lms-load", baseUrl).loadInfo()
+		expect(info.loadedModels.map((m) => m.modelId)).toEqual(["qwen3-coder-30b"])
+	})
+})

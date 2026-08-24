@@ -5,6 +5,7 @@
 
 import type {
 	Agent,
+	ConcurrencySettings,
 	CoreEvent,
 	DocTemplateSettings,
 	Execution,
@@ -89,7 +90,11 @@ interface State {
 	logs: LogLine[]
 	metrics: MetricsView | null
 	timeseries: { bucket: string; requests: number; tokens: number; costUsd: number; errors: number }[]
-	settings: { routingWeights: ScoringWeights; docTemplates?: DocTemplateSettings } | null
+	settings: {
+		routingWeights: ScoringWeights
+		docTemplates?: DocTemplateSettings
+		concurrency?: ConcurrencySettings
+	} | null
 	live: Record<string, LiveRun>
 	taskDetails: Record<string, TaskDetail>
 	lastError?: string

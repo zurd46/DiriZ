@@ -8,6 +8,7 @@
 import {
 	AGENT_DOC_KINDS,
 	type AgentDocKind,
+	type ConcurrencySettings,
 	DEFAULT_WEIGHTS,
 	type DocTemplateSettings,
 	isAgentDocKind,
@@ -42,6 +43,30 @@ const WEIGHT_KEYS: (keyof ScoringWeights)[] = [
 	"costScore",
 	"latencyScore",
 ]
+
+/**
+ * Parallelitäts- und GPU-Grenzen. Nur ganze Zahlen ≥ 1 — eine 0 würde jedes
+ * Routing blockieren, ein Bruch wäre sinnlos. Fehlende Felder behalten ihren
+ * bisherigen Wert, damit ein Teil-Update nichts stillschweigend zurücksetzt.
+ */
+function parseConcurrency(
+	body: Partial<ConcurrencySettings>,
+	current: ConcurrencySettings,
+): ConcurrencySettings | undefined {
+	const keys: (keyof ConcurrencySettings)[] = ["global", "perProvider", "maxModelsPerProvider"]
+	const next = { ...current }
+	for (const key of keys) {
+		const v = body[key]
+		if (v === undefined) {
+			continue
+		}
+		if (typeof v !== "number" || !Number.isInteger(v) || v < 1) {
+			return undefined
+		}
+		next[key] = v
+	}
+	return next
+}
 
 /** M8: optionale 7. Achse — darf beim PUT fehlen (Backward-Kompatibilität). */
 const OPTIONAL_WEIGHT_KEYS: (keyof ScoringWeights)[] = ["hostLoad"]
@@ -108,38 +133,58 @@ function parseDocTemplates(body: unknown): DocTemplateSettings | undefined {
 }
 
 export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
-	app.get("/api/settings", () => {
-		const weights = getSetting<ScoringWeights>(ctx.db, "routing_weights") ?? DEFAULT_WEIGHTS
-		return { routingWeights: normalizeWeights(weights), docTemplates: getDocTemplates(ctx.db) ?? {} }
+	const currentSettings = () => ({
+		routingWeights: normalizeWeights(
+			getSetting<ScoringWeights>(ctx.db, "routing_weights") ?? DEFAULT_WEIGHTS,
+		),
+		docTemplates: getDocTemplates(ctx.db) ?? {},
+		concurrency: ctx.engine.limits(),
 	})
 
-	app.put<{ Body: { routingWeights?: ScoringWeights; docTemplates?: DocTemplateSettings } }>(
-		"/api/settings",
-		(req, reply) => {
-			const body = req.body ?? {}
-			if (body.routingWeights === undefined && body.docTemplates === undefined) {
-				return reply.code(400).send({ error: "routingWeights oder docTemplates erforderlich" })
+	app.get("/api/settings", () => currentSettings())
+
+	app.put<{
+		Body: {
+			routingWeights?: ScoringWeights
+			docTemplates?: DocTemplateSettings
+			concurrency?: Partial<ConcurrencySettings>
+		}
+	}>("/api/settings", (req, reply) => {
+		const body = req.body ?? {}
+		if (
+			body.routingWeights === undefined &&
+			body.docTemplates === undefined &&
+			body.concurrency === undefined
+		) {
+			return reply.code(400).send({ error: "routingWeights, docTemplates oder concurrency erforderlich" })
+		}
+		if (body.concurrency !== undefined) {
+			const parsed = parseConcurrency(body.concurrency, ctx.engine.limits())
+			if (!parsed) {
+				return reply
+					.code(400)
+					.send({ error: "concurrency braucht ganze Zahlen ≥ 1 (global, perProvider, maxModelsPerProvider)" })
 			}
-			if (body.routingWeights !== undefined) {
-				const parsed = parseWeights(body.routingWeights)
-				if (!parsed) {
-					return reply.code(400).send({ error: "routingWeights muss Zahlen zwischen 0 und 1 sein" })
-				}
-				setSetting(ctx.db, "routing_weights", parsed)
+			setSetting(ctx.db, "concurrency", parsed)
+		}
+		if (body.routingWeights !== undefined) {
+			const parsed = parseWeights(body.routingWeights)
+			if (!parsed) {
+				return reply.code(400).send({ error: "routingWeights muss Zahlen zwischen 0 und 1 sein" })
 			}
-			if (body.docTemplates !== undefined) {
-				const templates = parseDocTemplates(body.docTemplates)
-				if (!templates) {
-					return reply
-						.code(400)
-						.send({ error: "docTemplates muss { agent?, instance? } mit Text-Vorlagen sein" })
-				}
-				setSetting(ctx.db, "doc_templates", templates)
+			setSetting(ctx.db, "routing_weights", parsed)
+		}
+		if (body.docTemplates !== undefined) {
+			const templates = parseDocTemplates(body.docTemplates)
+			if (!templates) {
+				return reply
+					.code(400)
+					.send({ error: "docTemplates muss { agent?, instance? } mit Text-Vorlagen sein" })
 			}
-			const weights = getSetting<ScoringWeights>(ctx.db, "routing_weights") ?? DEFAULT_WEIGHTS
-			return { routingWeights: normalizeWeights(weights), docTemplates: getDocTemplates(ctx.db) ?? {} }
-		},
-	)
+			setSetting(ctx.db, "doc_templates", templates)
+		}
+		return currentSettings()
+	})
 
 	app.get("/api/export", () => {
 		const weights = getSetting<ScoringWeights>(ctx.db, "routing_weights") ?? DEFAULT_WEIGHTS

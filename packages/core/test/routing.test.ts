@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import { Feedback } from "../src/routing/feedback.js"
 import type { PolicyCandidate } from "../src/routing/policies.js"
 import { applyPolicies } from "../src/routing/policies.js"
+import { loadFactorFrom } from "../src/providers/registry.js"
 import { scoreCandidate } from "../src/routing/scorer.js"
 
 function instance(over: Partial<InstanceModel>): InstanceModel {
@@ -190,5 +191,104 @@ describe("routing: Scorer", () => {
 		expect(scoreCandidate(idle, base, DEFAULT_WEIGHTS, feedback).score).toBeGreaterThan(
 			scoreCandidate(busy, base, DEFAULT_WEIGHTS, feedback).score,
 		)
+	})
+})
+
+/**
+ * GPU-Schutz: Ein Rechner darf nie zwei **verschiedene** Modelle gleichzeitig
+ * ausführen — jedes zusätzliche Modell belegt eigenen Grafikspeicher. Statt den
+ * Rechner zu überfahren, weicht das Routing auf einen anderen aus.
+ */
+describe("routing: GPU-Schutz & Verteilung auf mehrere Rechner", () => {
+	const limits = { global: 4, perProvider: 2, maxModelsPerProvider: 1 }
+
+	it("schliesst ein zweites Modell auf einem belegten Rechner aus", () => {
+		const anderes = candidate(instance({ id: "i-2", modelId: "m-2" }), {
+			providerActiveCount: 1,
+			providerActiveModels: ["m-1"],
+		})
+		const { allowed, excluded } = applyPolicies([anderes], profile, DEFAULT_WEIGHTS, limits)
+		expect(allowed).toHaveLength(0)
+		expect(excluded[0]?.reason).toContain("GPU-Schutz")
+		expect(excluded[0]?.reason).toContain("m-1")
+	})
+
+	it("lässt dasselbe Modell weiterlaufen — es ist bereits geladen", () => {
+		const gleiches = candidate(instance({ id: "i-1", modelId: "m-1" }), {
+			providerActiveCount: 1,
+			providerActiveModels: ["m-1"],
+		})
+		const { allowed } = applyPolicies([gleiches], profile, DEFAULT_WEIGHTS, limits)
+		expect(allowed.map((c) => c.instance.id)).toEqual(["i-1"])
+	})
+
+	it("verteilt auf einen zweiten Rechner, statt den ersten zu überfahren", () => {
+		const belegt = candidate(instance({ id: "i-1", providerId: "p-1", modelId: "m-1" }), {
+			providerActiveCount: 1,
+			providerActiveModels: ["m-9"],
+		})
+		const frei = candidate(instance({ id: "i-2", providerId: "p-2", modelId: "m-2" }), {
+			providerActiveCount: 0,
+			providerActiveModels: [],
+		})
+		const { allowed } = applyPolicies([belegt, frei], profile, DEFAULT_WEIGHTS, limits)
+		expect(allowed.map((c) => c.instance.id)).toEqual(["i-2"])
+	})
+
+	it("hält die Grenze gleichzeitiger Ausführungen pro Rechner ein", () => {
+		const voll = candidate(instance({ id: "i-1", modelId: "m-1" }), {
+			providerActiveCount: 2,
+			providerActiveModels: ["m-1"],
+		})
+		const { allowed, excluded } = applyPolicies([voll], profile, DEFAULT_WEIGHTS, limits)
+		expect(allowed).toHaveLength(0)
+		expect(excluded[0]?.reason).toContain("Rechner ausgelastet")
+	})
+
+	it("erlaubt mehrere Modelle, wenn die Grenze höher steht (viel VRAM)", () => {
+		const zweites = candidate(instance({ id: "i-2", modelId: "m-2" }), {
+			providerActiveCount: 1,
+			providerActiveModels: ["m-1"],
+		})
+		const { allowed } = applyPolicies([zweites], profile, DEFAULT_WEIGHTS, {
+			...limits,
+			maxModelsPerProvider: 2,
+		})
+		expect(allowed.map((c) => c.instance.id)).toEqual(["i-2"])
+	})
+
+	it("ohne Grenzen bleibt alles beim Alten (Rückwärtskompatibilität)", () => {
+		const belegt = candidate(instance({ id: "i-1", modelId: "m-2" }), {
+			providerActiveCount: 9,
+			providerActiveModels: ["m-1"],
+		})
+		expect(applyPolicies([belegt], profile, DEFAULT_WEIGHTS).allowed).toHaveLength(1)
+	})
+})
+
+/**
+ * Die Richtung der Last-Achse ist entscheidend: Ein bereits geladenes Modell
+ * ist der **günstigste** Kandidat (kein zusätzlicher Grafikspeicher, kein
+ * Ladevorgang) — nicht der teuerste.
+ */
+describe("routing: Lastfaktor eines Rechners", () => {
+	it("wertet ein bereits geladenes Modell als frei", () => {
+		const load = { loadedModels: [{ modelId: "m-1", memoryBytes: 8e9 }], totalMemoryBytes: 16e9 }
+		expect(loadFactorFrom(load, "m-1")).toBe(0)
+	})
+
+	it("bestraft fremde Modelle anteilig am Grafikspeicher", () => {
+		const load = { loadedModels: [{ modelId: "m-9", memoryBytes: 12e9 }], totalMemoryBytes: 16e9 }
+		expect(loadFactorFrom(load, "m-1")).toBeCloseTo(0.75)
+	})
+
+	it("schätzt halbe Belegung, wenn die Speichergrössen fehlen (LM Studio)", () => {
+		const load = { loadedModels: [{ modelId: "m-9", memoryBytes: 0 }] }
+		expect(loadFactorFrom(load, "m-1")).toBe(0.5)
+	})
+
+	it("bleibt neutral, wenn der Rechner keine Auskunft gibt", () => {
+		expect(loadFactorFrom(undefined, "m-1")).toBe(0)
+		expect(loadFactorFrom({ loadedModels: [] }, "m-1")).toBe(0)
 	})
 })

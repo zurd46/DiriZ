@@ -33,3 +33,22 @@ export interface ScoringWeights {
 	/** M8: Host-RAM-Last bestraft lokale Instanzen (0 = aus, Default). */
 	hostLoad?: number
 }
+
+/**
+ * Parallelitäts- und GPU-Grenzen (Einstellungen, `settings.concurrency`).
+ *
+ * Sie greifen als **harte Gates** im Routing, nicht als Score: Ein
+ * überfahrener Rechner liefert keine schlechteren Antworten, sondern gar
+ * keine — er lädt minutenlang Modelle nach oder stirbt am Speicher.
+ */
+export interface ConcurrencySettings {
+	/** Gleichzeitige Ausführungen über alle Rechner. */
+	global: number
+	/** Gleichzeitige Ausführungen auf **einem** Rechner. */
+	perProvider: number
+	/**
+	 * Wie viele **verschiedene** Modelle ein Rechner gleichzeitig ausführen
+	 * darf. 1 = strikter GPU-Schutz (empfohlen für eine einzelne Grafikkarte).
+	 */
+	maxModelsPerProvider: number
+}

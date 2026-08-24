@@ -6,11 +6,14 @@
  * - `pinned` → nur die gepinnte Instanz
  * - Context-Gate: `contextWindow < 1.2·estTokens` → Ausschluss
  * - Pflicht-Capabilities fehlen → Ausschluss
+ * - Rechner ausgelastet bzw. führt schon ein anderes Modell aus → Ausschluss
+ *   (GPU-Schutz; die Arbeit wandert auf einen anderen Rechner)
  *
  * Jeder Ausschluss wird mit Begründung persistiert (Explainability, §6.4).
  */
 
 import {
+	type ConcurrencySettings,
 	costAwareWeights,
 	type ExcludedInstance,
 	normalizeWeights,
@@ -26,6 +29,10 @@ const CLOUD_TYPES: ProviderType[] = ["openrouter", "openai"]
 export interface PolicyCandidate extends CandidateInfo {
 	providerType: ProviderType
 	providerOnline: boolean
+	/** Laufende Ausführungen auf diesem Rechner (GPU-Schutz). */
+	providerActiveCount?: number
+	/** Modelle, die dieser Rechner **gerade ausführt** (GPU-Schutz). */
+	providerActiveModels?: string[]
 }
 
 export interface PolicyResult {
@@ -38,6 +45,7 @@ export function applyPolicies(
 	candidates: PolicyCandidate[],
 	profile: TaskProfile,
 	baseWeights: ScoringWeights,
+	limits?: ConcurrencySettings,
 ): PolicyResult {
 	const weights =
 		profile.mode === "cost-aware"
@@ -63,6 +71,28 @@ export function applyPolicies(
 		if (!c.providerOnline) {
 			pushExcluded(c, "Provider offline oder Circuit-Breaker offen")
 			continue
+		}
+		// GPU-Schutz (harte Gates, vor allem Scoring): Ein überfahrener Rechner
+		// antwortet nicht schlechter, sondern gar nicht — er lädt minutenlang
+		// Modelle um oder stirbt am Speicher. Beide Gates schliessen nur diesen
+		// einen Rechner aus; andere bleiben Kandidaten, die Arbeit verteilt sich.
+		if (limits) {
+			const active = c.providerActiveCount ?? 0
+			if (active >= limits.perProvider) {
+				pushExcluded(
+					c,
+					`Rechner ausgelastet: ${active} gleichzeitige Ausführungen (Grenze ${limits.perProvider})`,
+				)
+				continue
+			}
+			const running = c.providerActiveModels ?? []
+			if (!running.includes(c.instance.modelId) && running.length >= limits.maxModelsPerProvider) {
+				pushExcluded(
+					c,
+					`GPU-Schutz: Rechner führt bereits ${running.length} Modell(e) aus (${running.join(", ")}) — ein weiteres würde zusätzlichen Grafikspeicher belegen`,
+				)
+				continue
+			}
 		}
 		if (profile.privacy === "local-only" && CLOUD_TYPES.includes(c.providerType)) {
 			pushExcluded(c, "Privatsphäre: local-only schließt Cloud-Provider aus")

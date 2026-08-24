@@ -2900,10 +2900,20 @@ pre.code {
  * Der Verlauf füllt die Höhe, die Eingabe klebt unten — sonst wandert das
  * Textfeld mit jeder Antwort weiter nach unten aus dem Bild.
  */
+/*
+ * Echte Spaltenhöhe statt „mindestens": Nur so scrollt der Verlauf **in sich**
+ * und die Eingabe bleibt darunter stehen. Vorher wuchs die Seite mit, die
+ * klebende Eingabe legte sich über den Text — die letzte Antwort verschwand
+ * hinter ihr, und jedes Nachscrollen bewegte die ganze Seite.
+ *
+ * Höhe = Fenster − Innenabstand oben − (Statusleiste + Innenabstand unten),
+ * exakt die Werte aus `.main`.
+ */
 .chat-view {
 	display: flex;
 	flex-direction: column;
-	min-height: calc(100vh - 140px);
+	height: calc(100vh - var(--sp-6) - var(--statusbar-h) - var(--sp-8));
+	min-height: 420px;
 }
 
 /* Verlauf links, Unterhaltung rechts — unter 900 px gestapelt. */
@@ -2913,6 +2923,8 @@ pre.code {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr);
 	gap: var(--sp-4);
+	/* `min-height: 0` ist die Bedingung dafür, dass ein Flex-/Grid-Kind
+	   überhaupt schrumpfen und damit innen scrollen darf. */
 	min-height: 0;
 }
 
@@ -2923,6 +2935,13 @@ pre.code {
 @media (max-width: 900px) {
 	.chat-layout.with-history {
 		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+/* `.main` hat unter 1200 px kleinere Innenabstände — die Höhe zieht mit. */
+@media (max-width: 1200px) {
+	.chat-view {
+		height: calc(100vh - var(--sp-5) - var(--statusbar-h) - var(--sp-6));
 	}
 }
 
@@ -3011,6 +3030,7 @@ pre.code {
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
+	min-height: 0;
 }
 
 /* Was gerade passiert — Ladephase, Schreiben, Tempo. */
@@ -3073,8 +3093,9 @@ pre.code {
 }
 
 .chat-answer {
-	border-top: 1px solid var(--border-soft);
+	margin-top: var(--sp-3);
 	padding-top: var(--sp-3);
+	border-top: 1px solid var(--border-soft);
 }
 
 .chat-answer.streaming::after {
@@ -3119,21 +3140,28 @@ pre.code {
 	flex: 1;
 	display: flex;
 	flex-direction: column;
-	gap: var(--sp-5);
-	padding-bottom: var(--sp-5);
+	gap: var(--sp-6);
+	min-height: 0;
+	padding: var(--sp-2) var(--sp-2) var(--sp-5) 0;
 	overflow-y: auto;
+	overscroll-behavior: contain;
 }
 
+/*
+ * Frage und Antwort stehen eng beieinander (sie gehören zusammen), zwischen
+ * zwei Runden liegt dagegen deutlich mehr Luft — daran erkennt das Auge die
+ * Gliederung, ohne dass es Trennlinien braucht.
+ */
 .chat-turn {
 	display: flex;
 	flex-direction: column;
-	gap: var(--sp-2);
+	gap: var(--sp-3);
 }
 
 .chat-msg {
 	border: 1px solid var(--border);
 	border-radius: var(--r-md);
-	padding: var(--sp-3);
+	padding: var(--sp-4);
 	background: var(--surface);
 }
 
@@ -3141,7 +3169,7 @@ pre.code {
 	background: var(--accent-soft);
 	border-color: var(--accent-line);
 	align-self: flex-end;
-	max-width: 80%;
+	max-width: 78%;
 }
 
 .chat-role {
@@ -3153,12 +3181,14 @@ pre.code {
 	letter-spacing: 0.05em;
 	color: var(--muted);
 	margin-bottom: var(--sp-2);
+	opacity: 0.85;
 }
 
 .chat-body {
 	white-space: pre-wrap;
 	word-break: break-word;
 	font-size: var(--fs-base);
+	line-height: 1.65;
 }
 
 .chat-meta {
@@ -3186,17 +3216,19 @@ pre.code {
 	flex-wrap: wrap;
 	align-items: center;
 	gap: var(--sp-1);
-	margin-top: var(--sp-2);
+	margin-top: var(--sp-3);
 	font-size: var(--fs-sm);
 }
 
+/* Fester Fuss der Spalte — nicht mehr klebend, dadurch keine Überlappung. */
 .chat-composer {
-	position: sticky;
-	bottom: 0;
+	flex: none;
 	display: flex;
 	flex-direction: column;
 	gap: var(--sp-2);
-	padding: var(--sp-3);
+	margin-top: var(--sp-4);
+	padding: var(--sp-3) var(--sp-4);
+	background: var(--surface);
 }
 
 .chat-targets {
@@ -3259,18 +3291,11 @@ pre.code {
 }
 
 .chat-thoughts {
-	margin-bottom: var(--sp-2);
-	font-size: var(--fs-sm);
-	color: var(--muted);
-}
-
-.chat-thoughts summary {
-	cursor: pointer;
+	margin-bottom: var(--sp-3);
 }
 
 .chat-thoughts .output {
-	margin-top: var(--sp-2);
-	max-height: 220px;
+	max-height: 260px;
 }
 
 /* Hinweis, wenn die Zielwahl nicht zur Absicht im Text passt. */
@@ -3305,7 +3330,7 @@ pre.code {
 	display: flex;
 	align-items: center;
 	gap: var(--sp-2);
-	margin-bottom: var(--sp-2);
+	margin-bottom: var(--sp-3);
 }
 
 .chat-avatar {
@@ -3462,8 +3487,8 @@ pre.code {
 
 .chat-diff,
 .chat-github {
-	margin-top: var(--sp-4);
-	padding-top: var(--sp-3);
+	margin-top: var(--sp-5);
+	padding-top: var(--sp-4);
 	border-top: 1px solid var(--border-soft);
 }
 
@@ -3493,4 +3518,65 @@ pre.code {
 .tool-more:hover {
 	color: var(--text);
 	border-color: var(--accent-line);
+}
+
+/* --------------------------------- Akkordeon -------------------------------- */
+
+/*
+ * Zugeklappt als Standard. Die Voreinstellung des Browsers (schwarzes Dreieck,
+ * keine Fläche) wirkt wie ein vergessenes Element — hier bekommt sie eine
+ * anklickbare Zeile mit Pfeil, Beschriftung und Umfang.
+ */
+.accordion {
+	border: 1px solid var(--border-soft);
+	border-radius: var(--r-md);
+	background: var(--bg-soft);
+}
+
+.accordion > summary {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-2);
+	padding: 5px var(--sp-2);
+	cursor: pointer;
+	font-size: var(--fs-sm);
+	color: var(--muted);
+	list-style: none;
+	user-select: none;
+}
+
+/* Das eingebaute Dreieck in beiden Engines abschalten. */
+.accordion > summary::-webkit-details-marker {
+	display: none;
+}
+
+.accordion > summary::marker {
+	content: "";
+}
+
+.accordion > summary:hover {
+	color: var(--text);
+}
+
+.accordion-arrow {
+	flex: none;
+	transition: transform 0.15s ease;
+}
+
+.accordion[open] > summary .accordion-arrow {
+	transform: rotate(90deg);
+}
+
+.accordion[open] > summary {
+	border-bottom: 1px solid var(--border-soft);
+}
+
+.accordion > *:not(summary) {
+	margin: var(--sp-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.accordion-arrow {
+		transition: none;
+	}
 }

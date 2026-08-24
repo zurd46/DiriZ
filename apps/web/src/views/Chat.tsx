@@ -22,6 +22,7 @@ import {
 	IconAgents,
 	IconAlert,
 	IconChat,
+	IconChevronRight,
 	IconDoc,
 	IconEdit,
 	IconGitBranch,
@@ -410,6 +411,7 @@ export default function Chat() {
 	/** Sekundentakt — nur damit Wartezeiten mitlaufen. */
 	const [tick, setTick] = useState(0)
 	const endRef = useRef<HTMLDivElement>(null)
+	const logRef = useRef<HTMLDivElement>(null)
 
 	const loadChats = useCallback(async () => {
 		try {
@@ -481,12 +483,35 @@ export default function Chat() {
 	 * ruhig mit. `behavior: "auto"` statt „smooth“, weil sich sonst mehrere
 	 * angefangene Bewegungen überlagern und das Bild zittert.
 	 */
+	/**
+	 * Ans Ende springen — **nur den Verlauf**, nie die Seite. `scrollIntoView`
+	 * bewegt jeden scrollbaren Vorfahren mit; dadurch sprang die ganze Ansicht.
+	 */
+	const scrollToEnd = useCallback(() => {
+		const el = logRef.current
+		if (el) {
+			el.scrollTop = el.scrollHeight
+		}
+	}, [])
+
+	// Neue Nachricht: einmal ans Ende — die hat man gerade selbst abgeschickt.
 	useEffect(() => {
-		if (turns.length === 0) {
+		if (turns.length > 0) {
+			scrollToEnd()
+		}
+	}, [turns.length, scrollToEnd])
+
+	/**
+	 * Mitlaufen **nur, solange gearbeitet wird**. Ist der Lauf fertig, gehört
+	 * die Ansicht der Leserin: Wer nach oben scrollt, um die Antwort noch
+	 * einmal zu lesen, darf nicht wieder nach unten gerissen werden.
+	 */
+	useEffect(() => {
+		if (!running) {
 			return
 		}
-		endRef.current?.scrollIntoView({ block: "end" })
-	}, [turns.length, tick, running])
+		scrollToEnd()
+	}, [tick, running, scrollToEnd])
 
 	const runOf = (taskId: string) => Object.values(live).find((r) => r.taskId === taskId)
 	const instanceOf = (id?: string) => instances.find((i) => i.id === id)
@@ -689,7 +714,7 @@ export default function Chat() {
 				)}
 
 				<div className="chat-main">
-					<div className="chat-log">
+					<div className="chat-log" ref={logRef}>
 						{turns.length === 0 && (
 							<div className="empty">
 								<span className="icon-chip">
@@ -821,9 +846,21 @@ export default function Chat() {
 
 										{badges.length > 0 && <ToolStrip badges={badges} total={toolOps.length} />}
 
+										{/*
+										 * Der Gedankengang bleibt zugeklappt: Er ist oft zehnmal
+										 * länger als die Antwort und würde sie sonst begraben.
+										 * Wer wissen will, wie das Modell zum Ergebnis kam, klappt auf.
+										 */}
 										{run?.reasoning && (
-											<details className="chat-thoughts">
-												<summary>Gedankengang ({run.reasoning.length} Zeichen)</summary>
+											<details className="accordion chat-thoughts">
+												<summary>
+													<IconChevronRight size={13} className="accordion-arrow" />
+													<span>Gedankengang</span>
+													<span className="badge">
+														{run.reasoning.length.toLocaleString("de-CH")} Zeichen
+													</span>
+													{isRunning && <span className="dot-pulse" />}
+												</summary>
 												<pre className="output">{run.reasoning}</pre>
 											</details>
 										)}
@@ -932,7 +969,7 @@ export default function Chat() {
 									void send()
 								}
 							}}
-							rows={3}
+							rows={2}
 							placeholder="Aufgabe beschreiben … (Enter sendet, Umschalt+Enter macht eine neue Zeile)"
 						/>
 						<div className="chat-actions">

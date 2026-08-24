@@ -106,9 +106,12 @@ describe("llm.md", () => {
 	it("legt genau ein Startdokument an — das Datenblatt", () => {
 		const docs = instanceDocs({ modelId: "phi4:14b", displayName: "Phi 4" }, DATE)
 		expect(Object.keys(docs)).toEqual(["llm"])
-		// Die Model-Parameter stehen darin, nicht in einem eigenen `init.md`.
+		// Die Model-Parameter stehen darin, nicht in einem eigenen `init.md` —
+		// aber leer: Die Katalog-Werte sind eine Empfehlung, kein Override.
+		// Ein gesetztes Max-Tokens deckelt sonst jede Antwort dieses Modells.
 		expect(docs.llm).toContain("## Voreinstellungen")
-		expect(parseLlmDoc(docs.llm ?? "").settings.temperature).toBeDefined()
+		expect(docs.llm).toContain("Empfehlung aus dem Katalog")
+		expect(parseLlmDoc(docs.llm ?? "").settings).toEqual({})
 	})
 
 	it("trägt vorhandene Overrides ins Datenblatt, statt sie zu verlieren", () => {

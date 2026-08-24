@@ -30,6 +30,13 @@ import { executeTool, TOOL_SPECS } from "./tools.js"
  */
 export const MAX_AGENT_STEPS = readMaxStepsEnv() ?? 0
 
+/**
+ * So viele Schritte in Folge darf **jede** Tool-Operation scheitern, bevor der
+ * Loop abbricht. Drei sind genug für einen Ausrutscher (falscher Pfad, den das
+ * Modell korrigiert) und wenig genug, um eine Endlosschleife zu stoppen.
+ */
+const MAX_FAILED_TOOL_STREAK = 3
+
 function readMaxStepsEnv(): number | undefined {
 	const raw = Number.parseInt(process.env.DIRIZ_AGENT_MAX_STEPS ?? "", 10)
 	return Number.isFinite(raw) && raw > 0 ? raw : undefined
@@ -115,6 +122,16 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 	let stepLimitReached = false
 	/** Kurzprotokoll der Tool-Operationen — Basis der Notfall-Zusammenfassung. */
 	const toolTrail: string[] = []
+	/**
+	 * Schritte in Folge, in denen **jede** Tool-Operation gescheitert ist.
+	 *
+	 * Ohne Schritt-Limit (`maxSteps: 0`) läuft der Loop sonst endlos: Ein Modell,
+	 * dessen Tool-Aufruf abgeschnitten ankommt (etwa weil `Max-Tokens` zu klein
+	 * ist), schickt denselben kaputten Aufruf beliebig oft — beobachtet als
+	 * „write_file → Ungültiger Pfad" über dutzende Schritte, ohne dass je
+	 * etwas entsteht.
+	 */
+	let failedStreak = 0
 
 	for (let step = 1; step <= maxSteps; step++) {
 		steps = step
@@ -156,9 +173,13 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 
 		// Tools ausführen und die Ergebnisse dem Modell zurückgeben.
 		messages.push({ role: "assistant", content: stepText, toolCalls: calls })
+		let failedInStep = 0
 		for (const call of calls) {
 			const result = executeTool(opts.baseDir, call, opts.emitToolCall, opts.log)
 			toolOps++
+			if (!result.ok) {
+				failedInStep++
+			}
 			toolTrail.push(
 				`${call.name}(${summarizeArgs(call)}) → ${result.ok ? "ok" : `Fehler: ${result.detail}`}`,
 			)
@@ -169,6 +190,27 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 			})
 		}
 		opts.log("info", "agent", `Schritt ${step}: ${calls.length} Tool-Operation(en) ausgeführt`)
+
+		// Reissleine: Wenn mehrere Schritte hintereinander ausschliesslich
+		// fehlschlagen, kommt das Modell aus eigener Kraft nicht mehr heraus.
+		// Dann lieber sauber abbrechen und mit dem Erreichten antworten, als
+		// stundenlang denselben Fehler zu wiederholen.
+		failedStreak = failedInStep === calls.length ? failedStreak + 1 : 0
+		if (failedStreak >= MAX_FAILED_TOOL_STREAK) {
+			opts.log(
+				"warn",
+				"agent",
+				`${failedStreak} Schritte in Folge ohne erfolgreiche Tool-Operation — Loop beendet ` +
+					"(häufigste Ursache: ein zu kleines Max-Tokens schneidet den Tool-Aufruf ab).",
+			)
+			opts.onDelta(
+				`\n\n[Agentik: ${failedStreak} Schritte in Folge ohne erfolgreiche Tool-Operation — ` +
+					"abgebrochen. Prüfe die Voreinstellungen des Modells (Max-Tokens) und den Auftrag.]\n\n",
+			)
+			stepLimitReached = true
+			break
+		}
+
 		if (!unlimited && step === maxSteps) {
 			stepLimitReached = true
 		}

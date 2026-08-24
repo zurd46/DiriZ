@@ -49,7 +49,12 @@ export interface AgentBlueprint {
 	requiredCapabilities: Capability[]
 	preferredCapabilities: Capability[]
 	privacy: AgentPrivacy
-	/** Wird als `init.md` gerendert (Temperatur, Max-Tokens, …). */
+	/**
+	 * Wird als `init.md` gerendert (Temperatur, …). **Ohne `maxTokens`**: Eine
+	 * Obergrenze deckelt die Antwort mitten im Satz — und im Agentik-Modus auch
+	 * den Dateiinhalt eines `write_file`-Aufrufs. Wie lang eine Antwort sein
+	 * muss, entscheidet die Aufgabe; die Grenze ist die Laufzeit.
+	 */
 	modelSettings: ModelSettings
 }
 
@@ -198,7 +203,7 @@ export const SOFTWARE_TEAM: AgentBlueprint[] = [
 		requiredCapabilities: ["reasoning"],
 		preferredCapabilities: ["longform", "json"],
 		privacy: "any",
-		modelSettings: { temperature: 0.3, maxTokens: 4096 },
+		modelSettings: { temperature: 0.3 },
 	},
 	{
 		slug: "software-architekt",
@@ -234,7 +239,7 @@ export const SOFTWARE_TEAM: AgentBlueprint[] = [
 		requiredCapabilities: ["reasoning", "code"],
 		preferredCapabilities: ["longform"],
 		privacy: "any",
-		modelSettings: { temperature: 0.3, maxTokens: 8192 },
+		modelSettings: { temperature: 0.3 },
 	},
 	{
 		slug: "api-designer",
@@ -270,7 +275,7 @@ export const SOFTWARE_TEAM: AgentBlueprint[] = [
 		requiredCapabilities: ["code", "reasoning"],
 		preferredCapabilities: ["json", "longform"],
 		privacy: "any",
-		modelSettings: { temperature: 0.2, maxTokens: 6144 },
+		modelSettings: { temperature: 0.2 },
 	},
 	{
 		slug: "datenbank-architekt",
@@ -305,7 +310,7 @@ export const SOFTWARE_TEAM: AgentBlueprint[] = [
 		requiredCapabilities: ["code", "reasoning"],
 		preferredCapabilities: ["longform"],
 		privacy: "any",
-		modelSettings: { temperature: 0.2, maxTokens: 6144 },
+		modelSettings: { temperature: 0.2 },
 	},
 	{
 		slug: "frontend-entwickler",
@@ -340,7 +345,7 @@ export const SOFTWARE_TEAM: AgentBlueprint[] = [
 		requiredCapabilities: ["code"],
 		preferredCapabilities: ["reasoning", "vision"],
 		privacy: "any",
-		modelSettings: { temperature: 0.2, maxTokens: 8192 },
+		modelSettings: { temperature: 0.2 },
 	},
 	{
 		slug: "backend-entwickler",
@@ -376,7 +381,7 @@ export const SOFTWARE_TEAM: AgentBlueprint[] = [
 		requiredCapabilities: ["code"],
 		preferredCapabilities: ["reasoning", "tools"],
 		privacy: "any",
-		modelSettings: { temperature: 0.2, maxTokens: 8192 },
+		modelSettings: { temperature: 0.2 },
 	},
 	{
 		slug: "code-reviewer",
@@ -412,7 +417,7 @@ export const SOFTWARE_TEAM: AgentBlueprint[] = [
 		requiredCapabilities: ["code", "reasoning"],
 		preferredCapabilities: ["longform"],
 		privacy: "any",
-		modelSettings: { temperature: 0.15, maxTokens: 8192 },
+		modelSettings: { temperature: 0.15 },
 	},
 	{
 		slug: "test-engineer",
@@ -447,7 +452,7 @@ export const SOFTWARE_TEAM: AgentBlueprint[] = [
 		requiredCapabilities: ["code"],
 		preferredCapabilities: ["reasoning", "tools"],
 		privacy: "any",
-		modelSettings: { temperature: 0.15, maxTokens: 8192 },
+		modelSettings: { temperature: 0.15 },
 	},
 	{
 		slug: "debugging-spezialist",
@@ -482,7 +487,7 @@ export const SOFTWARE_TEAM: AgentBlueprint[] = [
 		requiredCapabilities: ["code", "reasoning"],
 		preferredCapabilities: ["tools", "longform"],
 		privacy: "any",
-		modelSettings: { temperature: 0.15, maxTokens: 8192 },
+		modelSettings: { temperature: 0.15 },
 	},
 	{
 		slug: "refactoring-spezialist",
@@ -517,7 +522,7 @@ export const SOFTWARE_TEAM: AgentBlueprint[] = [
 		requiredCapabilities: ["code", "reasoning"],
 		preferredCapabilities: ["longform"],
 		privacy: "any",
-		modelSettings: { temperature: 0.2, maxTokens: 8192 },
+		modelSettings: { temperature: 0.2 },
 	},
 	{
 		slug: "security-engineer",
@@ -553,7 +558,7 @@ export const SOFTWARE_TEAM: AgentBlueprint[] = [
 		requiredCapabilities: ["code", "reasoning"],
 		preferredCapabilities: ["longform"],
 		privacy: "local-only",
-		modelSettings: { temperature: 0.15, maxTokens: 8192 },
+		modelSettings: { temperature: 0.15 },
 	},
 	{
 		slug: "devops-engineer",
@@ -588,7 +593,7 @@ export const SOFTWARE_TEAM: AgentBlueprint[] = [
 		requiredCapabilities: ["code"],
 		preferredCapabilities: ["tools", "reasoning"],
 		privacy: "any",
-		modelSettings: { temperature: 0.2, maxTokens: 6144 },
+		modelSettings: { temperature: 0.2 },
 	},
 ]
 

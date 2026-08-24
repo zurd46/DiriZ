@@ -61,7 +61,11 @@ export interface ModelProfile {
 	capabilities: Capability[]
 	quality: ModelQuality
 	speed: ModelSpeed
-	/** Startwerte für `init.md`. */
+	/**
+	 * Empfohlene Startwerte. Bewusst **ohne** `maxTokens`: Eine Obergrenze
+	 * schneidet Antworten und Tool-Aufrufe mitten im Satz ab, und wie lang eine
+	 * Antwort sein muss, weiss die Aufgabe — nicht der Katalog.
+	 */
 	settings: ModelSettings
 }
 
@@ -162,7 +166,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: [],
 			quality: "niedrig",
 			speed: "schnell",
-			settings: { temperature: 0, maxTokens: 512 },
+			settings: { temperature: 0 },
 		},
 	},
 	{
@@ -176,7 +180,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: [],
 			quality: "niedrig",
 			speed: "schnell",
-			settings: { temperature: 0, maxTokens: 512 },
+			settings: { temperature: 0 },
 		},
 	},
 	{
@@ -197,7 +201,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["code"],
 			quality: "mittel",
 			speed: "schnell",
-			settings: { temperature: 0.1, maxTokens: 2048 },
+			settings: { temperature: 0.1 },
 		},
 	},
 	{
@@ -218,7 +222,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["vision"],
 			quality: "mittel",
 			speed: "mittel",
-			settings: { temperature: 0.3, maxTokens: 2048 },
+			settings: { temperature: 0.3 },
 		},
 	},
 	{
@@ -243,7 +247,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["code", "json"],
 			quality: "hoch",
 			speed: "mittel",
-			settings: { temperature: 0.2, maxTokens: 4096 },
+			settings: { temperature: 0.2 },
 		},
 	},
 	{
@@ -268,7 +272,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["reasoning", "longform"],
 			quality: "hoch",
 			speed: "langsam",
-			settings: { temperature: 0.6, maxTokens: 8192 },
+			settings: { temperature: 0.6 },
 		},
 	},
 	{
@@ -286,7 +290,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["reasoning", "code", "tools", "json"],
 			quality: "hoch",
 			speed: "mittel",
-			settings: { temperature: 0.7, maxTokens: 4096 },
+			settings: { temperature: 0.7 },
 		},
 	},
 	{
@@ -305,7 +309,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["reasoning", "code", "json"],
 			quality: "hoch",
 			speed: "mittel",
-			settings: { temperature: 0.7, maxTokens: 4096 },
+			settings: { temperature: 0.7 },
 		},
 	},
 	{
@@ -323,7 +327,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["reasoning", "tools", "json"],
 			quality: "mittel",
 			speed: "schnell",
-			settings: { temperature: 0.7, maxTokens: 4096 },
+			settings: { temperature: 0.7 },
 		},
 	},
 	{
@@ -341,7 +345,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["longform", "reasoning"],
 			quality: "mittel",
 			speed: "mittel",
-			settings: { temperature: 0.7, maxTokens: 4096 },
+			settings: { temperature: 0.7 },
 		},
 	},
 	{
@@ -360,7 +364,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["tools", "json", "reasoning"],
 			quality: "mittel",
 			speed: "schnell",
-			settings: { temperature: 0.6, maxTokens: 3072 },
+			settings: { temperature: 0.6 },
 		},
 	},
 	{
@@ -378,7 +382,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["reasoning"],
 			quality: "mittel",
 			speed: "schnell",
-			settings: { temperature: 0.7, maxTokens: 2048 },
+			settings: { temperature: 0.7 },
 		},
 	},
 	{
@@ -396,7 +400,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["reasoning"],
 			quality: "mittel",
 			speed: "schnell",
-			settings: { temperature: 0.4, maxTokens: 2048 },
+			settings: { temperature: 0.4 },
 		},
 	},
 	{
@@ -414,7 +418,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["tools", "json", "longform"],
 			quality: "mittel",
 			speed: "mittel",
-			settings: { temperature: 0.4, maxTokens: 4096 },
+			settings: { temperature: 0.4 },
 		},
 	},
 	{
@@ -432,7 +436,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["tools", "longform", "json"],
 			quality: "hoch",
 			speed: "mittel",
-			settings: { temperature: 0.4, maxTokens: 4096 },
+			settings: { temperature: 0.4 },
 		},
 	},
 	{
@@ -450,7 +454,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["longform"],
 			quality: "mittel",
 			speed: "schnell",
-			settings: { temperature: 0.4, maxTokens: 4096 },
+			settings: { temperature: 0.4 },
 		},
 	},
 	{
@@ -464,7 +468,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["json", "reasoning"],
 			quality: "mittel",
 			speed: "schnell",
-			settings: { temperature: 0.7, maxTokens: 3072 },
+			settings: { temperature: 0.7 },
 		},
 	},
 	{
@@ -478,7 +482,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["longform", "reasoning"],
 			quality: "mittel",
 			speed: "mittel",
-			settings: { temperature: 0.7, maxTokens: 4096 },
+			settings: { temperature: 0.7 },
 		},
 	},
 	{
@@ -496,7 +500,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["code", "reasoning", "json"],
 			quality: "hoch",
 			speed: "mittel",
-			settings: { temperature: 0.4, maxTokens: 4096 },
+			settings: { temperature: 0.4 },
 		},
 	},
 	{
@@ -517,7 +521,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["reasoning", "code", "tools", "json", "longform"],
 			quality: "hoch",
 			speed: "mittel",
-			settings: { temperature: 0.7, maxTokens: 4096 },
+			settings: { temperature: 0.7 },
 		},
 	},
 	{
@@ -535,7 +539,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["reasoning", "code", "tools", "json", "longform"],
 			quality: "hoch",
 			speed: "mittel",
-			settings: { temperature: 0.7, maxTokens: 4096 },
+			settings: { temperature: 0.7 },
 		},
 	},
 	{
@@ -553,7 +557,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["longform", "vision", "reasoning", "json"],
 			quality: "hoch",
 			speed: "schnell",
-			settings: { temperature: 0.7, maxTokens: 4096 },
+			settings: { temperature: 0.7 },
 		},
 	},
 	{
@@ -567,7 +571,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["longform"],
 			quality: "mittel",
 			speed: "mittel",
-			settings: { temperature: 0.3, maxTokens: 3072 },
+			settings: { temperature: 0.3 },
 		},
 	},
 	{
@@ -581,7 +585,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["reasoning", "code", "longform"],
 			quality: "hoch",
 			speed: "mittel",
-			settings: { temperature: 0.7, maxTokens: 4096 },
+			settings: { temperature: 0.7 },
 		},
 	},
 	{
@@ -595,7 +599,7 @@ export const MODEL_FAMILIES: ModelFamilyRule[] = [
 			capabilities: ["reasoning", "tools", "json"],
 			quality: "mittel",
 			speed: "schnell",
-			settings: { temperature: 0.7, maxTokens: 4096 },
+			settings: { temperature: 0.7 },
 		},
 	},
 ]
@@ -612,7 +616,7 @@ const GENERIC_PROFILE: ModelProfile = {
 	capabilities: [],
 	quality: "mittel",
 	speed: "mittel",
-	settings: { temperature: 0.7, maxTokens: 4096 },
+	settings: { temperature: 0.7 },
 }
 
 /* ------------------------------- Heuristiken --------------------------------- */
@@ -870,30 +874,42 @@ export function renderLlmDoc(identity: ModelIdentity, isoDate: string): string {
 	// Zum Schluss die Model-Parameter: Ein Modell hat genau ein Datenblatt, und
 	// Temperatur & Co. sind eine seiner Eigenschaften.
 	//
-	// Bereits gesetzte Overrides gelten **anstelle** der Katalog-Empfehlung,
-	// nicht zusätzlich: Wer nur die Temperatur gesetzt hatte, wollte für alles
-	// andere die Werte des Rechners — ein hinzugemischtes Max-Tokens würde sie
-	// stillschweigend aushebeln.
+	// **Leer, solange niemand sie gesetzt hat.** Die Empfehlung des Katalogs
+	// steht als Text daneben, nicht als Wert: Ein eingetragenes `Max-Tokens`
+	// wirkt sofort als harte Obergrenze — und deckelt damit auch Antworten und
+	// Tool-Aufrufe, die vorher unbegrenzt liefen. Was das Modell tatsächlich
+	// darf, entscheidet der Rechner, bis hier bewusst etwas anderes steht.
 	const own = identity.settings ?? undefined
-	const settings: ModelSettings = own && Object.keys(own).length > 0 ? own : profile.settings
+	const settings: ModelSettings = own && Object.keys(own).length > 0 ? own : {}
 	lines.push(
 		"",
 		"## Voreinstellungen",
 		"",
-		"Gilt für dieses Modell; ein Spezialist oder eine Task schlägt es.",
+		"Overrides für dieses Modell. Leer heisst: Es gelten die Werte des Rechners.",
+		"Ein Spezialist oder eine Task schlägt, was hier steht.",
 		"",
 	)
-	for (const { key, label } of SETTING_LABELS) {
-		const value = settings[key]
-		if (value !== undefined) {
-			lines.push(`- ${label}: ${value}`)
+	const written = SETTING_LABELS.filter(({ key }) => settings[key] !== undefined)
+	if (written.length === 0 && !settings.stop?.length) {
+		lines.push("- Temperature: —", "- Max-Tokens: —")
+	} else {
+		for (const { key, label } of written) {
+			lines.push(`- ${label}: ${settings[key]}`)
 		}
-	}
-	if (settings.stop?.length) {
-		lines.push(`- Stop: ${settings.stop.join(", ")}`)
+		if (settings.stop?.length) {
+			lines.push(`- Stop: ${settings.stop.join(", ")}`)
+		}
 	}
 	if (settings.systemPrompt?.trim()) {
 		lines.push("", "## System-Prompt", "", settings.systemPrompt.trim())
+	}
+	// Die Empfehlung als Fliesstext — bewusst ohne `Schlüssel: Wert` je Zeile,
+	// damit sie nicht versehentlich als gesetzter Wert gelesen wird.
+	const advice = SETTING_LABELS.filter(({ key }) => profile.settings[key] !== undefined)
+		.map(({ key, label }) => `${label} ${profile.settings[key]}`)
+		.join(", ")
+	if (advice) {
+		lines.push("", `Empfehlung aus dem Katalog (nicht gesetzt): ${advice}.`)
 	}
 	lines.push("")
 	return lines.join("\n")

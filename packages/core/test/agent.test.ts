@@ -19,7 +19,7 @@ import type {
 import { describe, expect, it } from "vitest"
 import { runAgentLoop } from "../src/execution/agent.js"
 
-type Behavior = "write-then-done" | "loop" | "stumm"
+type Behavior = "write-then-done" | "loop" | "stumm" | "kaputt"
 
 class ToolFakeAdapter implements LLMProvider {
 	readonly label = "ToolFake"
@@ -47,6 +47,18 @@ class ToolFakeAdapter implements LLMProvider {
 				yield { type: "delta", text: "Abschluss: Ich habe out/hello.txt geschrieben." }
 			}
 			yield { type: "usage", tokensIn: 4, tokensOut: 2 }
+			yield { type: "done" }
+			return
+		}
+		if (this.behavior === "kaputt") {
+			// Abgeschnittener Tool-Aufruf: leerer Pfad — genau das Bild, das ein
+			// zu kleines `Max-Tokens` erzeugt. Das Modell wiederholt ihn endlos.
+			yield { type: "delta", text: "Ich schreibe gleich. " }
+			yield {
+				type: "tool_call",
+				call: { id: `c${this.requests.length}`, name: "write_file", arguments: { path: "", content: "x" } },
+			}
+			yield { type: "usage", tokensIn: 5, tokensOut: 3 }
 			yield { type: "done" }
 			return
 		}
@@ -126,6 +138,32 @@ describe("agent: Tool-Loop", () => {
 
 		// Tool-Specs wurden mitgeschickt.
 		expect(adapter.requests[0].tools?.map((t) => t.name)).toContain("write_file")
+	})
+
+	it("bricht ab, wenn mehrere Schritte in Folge nur fehlschlagen (kein Einfrieren)", async () => {
+		// Ohne Reissleine liefe das ohne Schritt-Limit endlos: Der abgeschnittene
+		// Aufruf scheitert, das Modell schickt ihn erneut — beobachtet als
+		// „write_file → Ungültiger Pfad" über dutzende Schritte.
+		const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-agent-kaputt-"))
+		const adapter = new ToolFakeAdapter("fake", "ollama", "kaputt")
+		const toolCalls: { name: string; ok: boolean }[] = []
+
+		const result = await runAgentLoop({
+			maxSteps: 0, // unbegrenzt — nur die Reissleine kann hier stoppen
+			adapter,
+			model: "m1",
+			userPrompt: "Schreib etwas",
+			baseDir,
+			executionId: "e-kaputt",
+			onDelta: () => {},
+			emitToolCall: (d) => toolCalls.push({ name: d.name, ok: d.ok }),
+			log: () => {},
+		})
+
+		expect(result.steps).toBe(3)
+		expect(toolCalls.every((c) => !c.ok)).toBe(true)
+		// Trotz Abbruch bleibt eine verwertbare Antwort zurück.
+		expect(result.text.trim()).not.toBe("")
 	})
 
 	it("beendet die Tool-Nutzung am Limit, liefert aber trotzdem eine vollständige Antwort", async () => {

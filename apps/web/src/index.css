@@ -3306,3 +3306,10 @@ pre.code {
 	flex: 1;
 	min-width: 200px;
 }
+
+/* Git-Bereich innerhalb einer Chat-Antwort — abgesetzt, aber kein zweites Fenster. */
+.chat-git {
+	margin-top: var(--sp-3);
+	padding-top: var(--sp-3);
+	border-top: 1px solid var(--border-soft);
+}

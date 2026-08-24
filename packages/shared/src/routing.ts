@@ -69,3 +69,17 @@ export interface TimeoutSettings {
 	/** Gesamtdauer einer Ausführung. */
 	totalMs: number
 }
+
+/**
+ * Umgang mit Repository-Arbeit (Einstellungen, `settings.git`).
+ *
+ * Beides zielt **immer** auf den Arbeitsbranch der Task (`diriz/…`), nie auf
+ * den Basis-Branch: Ein Modell soll `main` nicht anfassen können, auch nicht
+ * versehentlich.
+ */
+export interface GitSettings {
+	/** Nach einem erfolgreichen Lauf automatisch committen. */
+	autoCommit: boolean
+	/** Den Arbeitsbranch danach zu GitHub pushen. */
+	autoPush: boolean
+}

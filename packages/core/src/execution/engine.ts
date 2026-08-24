@@ -24,6 +24,7 @@ import {
 	type Execution,
 	estimateTokens,
 	extractDirective,
+	type GitSettings,
 	type HostMetrics,
 	MAX_FAILOVER_HOPS,
 	MIN_AGENT_SCORE,
@@ -38,6 +39,7 @@ import {
 	type TaskProfile,
 	type TimeoutSettings,
 	toAgentCandidate,
+	workBranchName,
 } from "@diriz/shared"
 import type { Db } from "../db/connection.js"
 import {
@@ -59,9 +61,11 @@ import {
 	saveDecision,
 	saveFile,
 	setTaskAgentSelection,
+	setTaskRepo,
 	setTaskStatus,
 	updateExecution,
 } from "../db/repositories.js"
+import { commitAll, isWorktree, push } from "../git/repo.js"
 import type { LogEntry } from "../logger.js"
 import { getHostMetrics } from "../monitoring/host.js"
 import type { ProviderRegistry } from "../providers/registry.js"
@@ -105,6 +109,8 @@ export interface EngineDeps {
 	 * Workspace-Sandbox; mit gepinntem Repository ein Git-Worktree (M10).
 	 */
 	resolveTaskDir?: (task: Task) => Promise<string>
+	/** GitHub-Token für automatisches Pushen (M10) — ohne bleibt es beim Commit. */
+	githubToken?: () => string | undefined
 }
 
 interface ActiveRun {
@@ -198,6 +204,69 @@ export class ExecutionEngine {
 
 	get concurrencyLimit(): number {
 		return this.limits().global
+	}
+
+	/** Einstellungen zur Repository-Arbeit (Auto-Commit / Auto-Push). */
+	gitSettings(): GitSettings {
+		const stored = getSetting<Partial<GitSettings>>(this.deps.db, "git")
+		return {
+			autoCommit: stored?.autoCommit !== false,
+			autoPush: stored?.autoPush !== false,
+		}
+	}
+
+	/**
+	 * Sichert die Arbeit einer Task im Repository: committen und — sofern
+	 * eingeschaltet — auf den **Arbeitsbranch** pushen.
+	 *
+	 * Immer auf `diriz/…`, nie auf den Basis-Branch: Was ein Modell schreibt,
+	 * gehört auf einen eigenen Zweig, den man ansehen und verwerfen kann. Ohne
+	 * Auto-Commit bliebe die Arbeit als uncommitteter Stand im Worktree liegen
+	 * und wäre beim nächsten Lauf schwer von neuem zu unterscheiden.
+	 */
+	private async autoCommit(task: Task): Promise<void> {
+		if (!task.repoId) {
+			return
+		}
+		const { autoCommit, autoPush } = this.gitSettings()
+		if (!autoCommit) {
+			return
+		}
+		const dir = await this.taskDir(task)
+		if (!isWorktree(dir)) {
+			return
+		}
+		try {
+			const branch = task.workBranch ?? workBranchName(task.title || task.id, task.id)
+			const result = await commitAll({
+				worktreePath: dir,
+				message: `${task.title?.trim() || "DiriZ-Änderung"}\n\nAutomatisch committet von DiriZ (Task ${task.id}).`,
+			})
+			if (!result) {
+				return
+			}
+			this.deps.log(
+				"info",
+				"git",
+				`Task ${task.id}: Commit ${result.shortSha} auf ${branch} (${result.filesChanged} Datei(en))`,
+			)
+			if (!autoPush) {
+				return
+			}
+			const token = this.deps.githubToken?.()
+			await push({ worktreePath: dir, branch, token })
+			setTaskRepo(this.deps.db, task.id, { pushedAt: new Date().toISOString() })
+			this.deps.emit({ event: "task.pushed", data: { taskId: task.id, branch, toBase: false } })
+			this.deps.log("info", "git", `Task ${task.id}: ${branch} zu GitHub gepusht`)
+		} catch (e) {
+			// Ein gescheiterter Push macht die Antwort nicht ungültig — die
+			// Änderungen liegen im Worktree und lassen sich von Hand pushen.
+			this.deps.log(
+				"warn",
+				"git",
+				`Task ${task.id}: Automatisches Sichern fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`,
+			)
+		}
 	}
 
 	/** Gedankengang eines laufenden Streams anhängen. */
@@ -987,6 +1056,7 @@ export class ExecutionEngine {
 		setTaskStatus(db, task.id, "done", now)
 		registry.recordSuccess(choice.instance.providerId)
 		feedback.record(choice.instance.id, true)
+		await this.autoCommit(task)
 		log(
 			"info",
 			"engine",

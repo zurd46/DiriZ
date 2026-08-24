@@ -15,7 +15,7 @@
  * das Modell noch geladen wird, was es gerade schreibt, welche Dateien es anfasst.
  */
 
-import type { InstanceModel, Repo } from "@diriz/shared"
+import type { InstanceModel, Repo, Task } from "@diriz/shared"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
 	IconAgents,
@@ -31,6 +31,7 @@ import {
 	IconWorkspace,
 } from "../components/icons.js"
 import Markdown from "../components/Markdown.js"
+import TaskGitPanel from "../components/TaskGitPanel.js"
 import { api } from "../lib/api.js"
 import { useStore } from "../store.js"
 
@@ -98,6 +99,39 @@ function withHistory(prompt: string, history: { prompt: string; answer: string }
 	}
 	lines.push("Neue Aufgabe:", prompt)
 	return lines.join("\n")
+}
+
+/**
+ * Git-Bereich einer Chat-Nachricht: zeigt den Diff dessen, was der Spezialist
+ * im Repository geändert hat, und bringt es mit Commit, Push und Pull-Request
+ * zu GitHub.
+ *
+ * Wiederverwendet bewusst denselben Bereich wie die Task-Ansicht — zwei
+ * Oberflächen für dieselbe Sache würden auseinanderlaufen. Die Task wird hier
+ * nachgeladen, weil der Chat-Verlauf nur die Kurzfassung kennt.
+ */
+function ChatGitPanel({ taskId }: { taskId: string }) {
+	const [task, setTask] = useState<Task | null>(null)
+
+	const load = useCallback(() => {
+		api
+			.get<Task>(`/api/tasks/${taskId}`)
+			.then(setTask)
+			.catch(() => setTask(null))
+	}, [taskId])
+
+	useEffect(() => {
+		load()
+	}, [load])
+
+	if (!task) {
+		return null
+	}
+	return (
+		<div className="chat-git">
+			<TaskGitPanel task={task} onTaskChanged={load} />
+		</div>
+	)
 }
 
 const seconds = (ms: number) => `${Math.max(0, Math.round(ms / 1000))} s`
@@ -531,6 +565,9 @@ export default function Chat() {
 										)}
 
 										{turn.error && <div className="chat-error">{turn.error}</div>}
+
+										{/* Repository-Arbeit: Diff und der Weg zu GitHub, direkt hier. */}
+										{turn.repoId && !isRunning && <ChatGitPanel taskId={turn.taskId} />}
 
 										{files.length > 0 && (
 											<div className="chat-files">

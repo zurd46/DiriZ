@@ -94,6 +94,15 @@ function withHistory(prompt: string, history: { prompt: string; answer: string }
 
 const seconds = (ms: number) => `${Math.max(0, Math.round(ms / 1000))} s`
 
+/** Längere Zeiträume als `m:ss` — „412 s“ liest niemand als sieben Minuten. */
+function duration(ms: number): string {
+	const total = Math.max(0, Math.round(ms / 1000))
+	if (total < 60) {
+		return `${total} s`
+	}
+	return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")} min`
+}
+
 export default function Chat() {
 	const connected = useStore((s) => s.connected)
 	const live = useStore((s) => s.live)
@@ -411,6 +420,9 @@ export default function Chat() {
 								run?.startedAt !== undefined ? (run.firstActivityAt ?? Date.now()) - run.startedAt : undefined
 							const toolOps = run?.toolOps ?? []
 							const lastTool = toolOps.at(-1)
+							// Gesamtdauer mitlaufen lassen: Ohne sie wirkt ein Lauf, der
+							// minutenlang nur nachdenkt, wie ein hängendes Programm.
+							const elapsedMs = run?.startedAt !== undefined ? Date.now() - run.startedAt : undefined
 							const files = turn.files
 							return (
 								<div key={turn.taskId} className="chat-turn">
@@ -455,7 +467,7 @@ export default function Chat() {
 												{loading ? (
 													<>
 														<span className="dot-pulse" />
-														Modell wird geladen{loadMs !== undefined ? ` … ${seconds(loadMs)}` : " …"}
+														Modell wird geladen{loadMs !== undefined ? ` … ${duration(loadMs)}` : " …"}
 														<span className="field-hint">
 															Beim ersten Aufruf wandert das Modell in den Grafikspeicher — das dauert bei
 															grossen Modellen Minuten.
@@ -473,7 +485,9 @@ export default function Chat() {
 																	: "arbeitet …"}
 														{run?.usage ? ` ${run.usage.tokensOut} Tokens` : ""}
 														{run?.usage?.tps ? ` · ${run.usage.tps.toFixed(1)} Tokens/s` : ""}
+														{run?.reasoning ? ` · Gedankengang ${run.reasoning.length} Zeichen` : ""}
 														{loadMs !== undefined ? ` · Ladezeit ${seconds(loadMs)}` : ""}
+														{elapsedMs !== undefined ? ` · läuft seit ${duration(elapsedMs)}` : ""}
 													</>
 												)}
 											</div>

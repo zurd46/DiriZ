@@ -357,6 +357,32 @@ describe("api: Parallelitäts- und GPU-Grenzen", () => {
 		})
 	})
 
+	it("liefert und speichert Zeitgrenzen; Agentik bekommt die dreifache Gesamtdauer", async () => {
+		const before = (await app.inject({ method: "GET", url: "/api/settings" })).json()
+		expect(before.timeouts.totalMs).toBeGreaterThan(0)
+
+		const saved = await app.inject({
+			method: "PUT",
+			url: "/api/settings",
+			payload: { timeouts: { totalMs: 1_800_000 } },
+		})
+		expect(saved.statusCode).toBe(200)
+		expect(saved.json().timeouts.totalMs).toBe(1_800_000)
+		// Ein Agentik-Lauf liest Dateien, denkt nach und antwortet in Schritten —
+		// mit derselben Frist scheitert er regelmässig kurz vor dem Ziel.
+		expect(ctx.engine.timeouts(true).totalMs).toBe(5_400_000)
+		expect(ctx.engine.timeouts(false).totalMs).toBe(1_800_000)
+	})
+
+	it("weist zu kurze Zeitgrenzen ab", async () => {
+		const res = await app.inject({
+			method: "PUT",
+			url: "/api/settings",
+			payload: { timeouts: { totalMs: 100 } },
+		})
+		expect(res.statusCode).toBe(400)
+	})
+
 	it("weist unsinnige Grenzen ab", async () => {
 		for (const concurrency of [{ global: 0 }, { perProvider: 1.5 }, { maxModelsPerProvider: -1 }]) {
 			const res = await app.inject({ method: "PUT", url: "/api/settings", payload: { concurrency } })

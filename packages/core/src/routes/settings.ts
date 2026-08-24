@@ -14,6 +14,7 @@ import {
 	isAgentDocKind,
 	normalizeWeights,
 	type ScoringWeights,
+	type TimeoutSettings,
 } from "@diriz/shared"
 import type { FastifyInstance } from "fastify"
 import type { AppContext } from "../app.js"
@@ -133,12 +134,36 @@ function parseDocTemplates(body: unknown): DocTemplateSettings | undefined {
 }
 
 export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
+	/**
+	 * Zeitgrenzen: nur ganze Millisekunden ≥ 5000. Kürzere Fristen wären keine
+	 * Einstellung, sondern eine Garantie fürs Scheitern.
+	 */
+	const parseTimeouts = (
+		body: Partial<TimeoutSettings>,
+		current: TimeoutSettings,
+	): TimeoutSettings | undefined => {
+		const keys: (keyof TimeoutSettings)[] = ["firstChunkMs", "chunkMs", "totalMs"]
+		const next = { ...current }
+		for (const key of keys) {
+			const v = body[key]
+			if (v === undefined) {
+				continue
+			}
+			if (typeof v !== "number" || !Number.isInteger(v) || v < 5000) {
+				return undefined
+			}
+			next[key] = v
+		}
+		return next
+	}
+
 	const currentSettings = () => ({
 		routingWeights: normalizeWeights(
 			getSetting<ScoringWeights>(ctx.db, "routing_weights") ?? DEFAULT_WEIGHTS,
 		),
 		docTemplates: getDocTemplates(ctx.db) ?? {},
 		concurrency: ctx.engine.limits(),
+		timeouts: ctx.engine.timeouts(),
 	})
 
 	app.get("/api/settings", () => currentSettings())
@@ -148,15 +173,28 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			routingWeights?: ScoringWeights
 			docTemplates?: DocTemplateSettings
 			concurrency?: Partial<ConcurrencySettings>
+			timeouts?: Partial<TimeoutSettings>
 		}
 	}>("/api/settings", (req, reply) => {
 		const body = req.body ?? {}
 		if (
 			body.routingWeights === undefined &&
 			body.docTemplates === undefined &&
-			body.concurrency === undefined
+			body.concurrency === undefined &&
+			body.timeouts === undefined
 		) {
-			return reply.code(400).send({ error: "routingWeights, docTemplates oder concurrency erforderlich" })
+			return reply
+				.code(400)
+				.send({ error: "routingWeights, docTemplates, concurrency oder timeouts erforderlich" })
+		}
+		if (body.timeouts !== undefined) {
+			const parsed = parseTimeouts(body.timeouts, ctx.engine.timeouts())
+			if (!parsed) {
+				return reply
+					.code(400)
+					.send({ error: "timeouts brauchen ganze Millisekunden ≥ 5000 (firstChunkMs, chunkMs, totalMs)" })
+			}
+			setSetting(ctx.db, "timeouts", parsed)
 		}
 		if (body.concurrency !== undefined) {
 			const parsed = parseConcurrency(body.concurrency, ctx.engine.limits())

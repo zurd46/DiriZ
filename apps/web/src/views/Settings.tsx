@@ -14,6 +14,7 @@ import {
 	defaultDoc,
 	normalizeWeights,
 	type ScoringWeights,
+	type TimeoutSettings,
 } from "@diriz/shared"
 import { useEffect, useRef, useState } from "react"
 import {
@@ -62,6 +63,11 @@ export default function Settings() {
 	const [importMsg, setImportMsg] = useState<string | undefined>()
 	const fileRef = useRef<HTMLInputElement>(null)
 
+	// Zeitgrenzen: Sekunden in der Oberfläche, Millisekunden im Kontrakt.
+	const [times, setTimes] = useState<TimeoutSettings | null>(null)
+	const [timesBusy, setTimesBusy] = useState(false)
+	const [timesSaved, setTimesSaved] = useState(false)
+
 	// Parallelität & GPU-Schutz: harte Grenzen, keine Gewichte.
 	const [limits, setLimits] = useState<ConcurrencySettings | null>(null)
 	const [limitsBusy, setLimitsBusy] = useState(false)
@@ -91,6 +97,29 @@ export default function Settings() {
 			setLimits(settings.concurrency)
 		}
 	}, [settings, limits])
+
+	useEffect(() => {
+		if (settings?.timeouts && times === null) {
+			setTimes(settings.timeouts)
+		}
+	}, [settings, times])
+
+	const timesDirty = times !== null && JSON.stringify(times) !== JSON.stringify(settings?.timeouts ?? null)
+
+	const saveTimes = async () => {
+		if (!times) return
+		setTimesBusy(true)
+		try {
+			await api.put("/api/settings", { timeouts: times })
+			await useStore.getState().refreshSettings()
+			setTimesSaved(true)
+			setTimeout(() => setTimesSaved(false), 2500)
+		} catch (e) {
+			setImportMsg(e instanceof Error ? e.message : String(e))
+		} finally {
+			setTimesBusy(false)
+		}
+	}
 
 	const limitsDirty =
 		limits !== null && JSON.stringify(limits) !== JSON.stringify(settings?.concurrency ?? null)
@@ -270,6 +299,71 @@ export default function Settings() {
 							Gespeichert — gilt ab der nächsten Task.
 						</span>
 					)}
+				</div>
+			</div>
+
+			<div className="card">
+				<div className="card-head">
+					<div>
+						<div className="card-title">
+							<IconRefresh size={16} />
+							Zeitgrenzen
+						</div>
+						<div className="card-sub">
+							Wie lange DiriZ auf ein Modell wartet. Zu knapp gesetzt, stirbt ein Lauf kurz vor dem Ziel und
+							die gesamte Arbeit ist verloren. Agentik-Läufe bekommen automatisch die dreifache Gesamtdauer —
+							sie lesen Dateien, denken nach und antworten in mehreren Schritten.
+						</div>
+					</div>
+					{timesDirty && <span className="pill warn">ungespeichert</span>}
+				</div>
+
+				{times && (
+					<div className="limits">
+						{[
+							{
+								key: "firstChunkMs" as const,
+								label: "Warten auf das erste Lebenszeichen",
+								hint: "Deckt das Laden des Modells in den Grafikspeicher ab — bei grossen Modellen Minuten.",
+							},
+							{
+								key: "chunkMs" as const,
+								label: "Warten zwischen zwei Lebenszeichen",
+								hint: "Ein Stream, der mittendrin verstummt, ist ein Fehler und löst ein Failover aus.",
+							},
+							{
+								key: "totalMs" as const,
+								label: "Gesamtdauer einer Ausführung",
+								hint: "Obergrenze für einen Lauf. Im Agentik-Modus gilt das Dreifache.",
+							},
+						].map((row) => (
+							<label key={row.key} className="limit-row">
+								<span className="limit-label">{row.label}</span>
+								<input
+									type="number"
+									min={5}
+									step={5}
+									value={Math.round(times[row.key] / 1000)}
+									onChange={(e) =>
+										setTimes({ ...times, [row.key]: Math.max(5, Number(e.target.value) || 5) * 1000 })
+									}
+								/>
+								<span className="field-hint">{row.hint} Angabe in Sekunden.</span>
+							</label>
+						))}
+					</div>
+				)}
+
+				<div className="card-actions">
+					{timesSaved && <span className="pill ok">gespeichert</span>}
+					<button
+						type="button"
+						className="btn primary"
+						onClick={() => void saveTimes()}
+						disabled={!timesDirty || timesBusy}
+					>
+						Zeitgrenzen speichern
+					</button>
 				</div>
 			</div>
 

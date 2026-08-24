@@ -36,6 +36,7 @@ import {
 	scoreAgents,
 	type Task,
 	type TaskProfile,
+	type TimeoutSettings,
 	toAgentCandidate,
 } from "@diriz/shared"
 import type { Db } from "../db/connection.js"
@@ -53,6 +54,7 @@ import {
 	getSwarm,
 	getTask,
 	listAgents,
+	replayOutput,
 	saveAgentSelection,
 	saveDecision,
 	saveFile,
@@ -123,8 +125,27 @@ interface AgentSelection {
 	ok: boolean
 }
 
+/** Agentik-Läufe dürfen dreimal so lange dauern wie eine einzelne Antwort. */
+const AGENT_TOTAL_FACTOR = 3
+
 /** Konservative Basis-Qualität ohne Feedback-Historie. */
 const BASIS_PRIOR = 0.6
+
+/**
+ * Teilergebnis eines gescheiterten Laufs — Text, sonst der Gedankengang.
+ *
+ * Beides ist wertvoll: Der Text ist die halbe Antwort, der Gedankengang zeigt,
+ * wie weit das Modell kam und woran es hängen blieb.
+ */
+function partialOutput(text: string, reasoning: string): string | undefined {
+	if (text.trim().length > 0) {
+		return `${text}\n\n[Abgebrochen — dies ist der Stand bis zum Fehler.]`
+	}
+	if (reasoning.trim().length > 0) {
+		return `[Abgebrochen, keine Antwort — nur der Gedankengang bis zum Fehler.]\n\n${reasoning}`
+	}
+	return undefined
+}
 
 /** Positive ganze Zahl aus den Einstellungen, sonst der Default. */
 function positive(value: number | undefined, fallback: number): number {
@@ -133,12 +154,36 @@ function positive(value: number | undefined, fallback: number): number {
 
 export class ExecutionEngine {
 	private active = new Map<string, ActiveRun>()
+	/**
+	 * Gedankengang je laufender Execution. Der Stream lebt eine Ebene tiefer als
+	 * die Fehlerbehandlung; ohne diese Ablage wäre bei einem Timeout nicht mehr
+	 * daran heranzukommen — und genau dann braucht man ihn.
+	 */
+	private reasoningByExecution = new Map<string, string>()
 	private roundRobinCursor = new Map<string, number>()
 
 	constructor(private deps: EngineDeps) {}
 
 	get activeCount(): number {
 		return this.active.size
+	}
+
+	/**
+	 * Zeitgrenzen (Einstellungen, sonst Umgebung bzw. Plan-Defaults).
+	 *
+	 * Agentik-Läufe bekommen die **dreifache** Gesamtdauer: Sie lesen Dateien,
+	 * denken nach und antworten in mehreren Schritten — mit derselben Frist wie
+	 * eine einzelne Antwort scheitern sie regelmässig kurz vor dem Ziel und die
+	 * gesamte Arbeit ist verloren.
+	 */
+	timeouts(agentMode = false): TimeoutSettings {
+		const stored = getSetting<Partial<TimeoutSettings>>(this.deps.db, "timeouts")
+		const totalMs = positive(stored?.totalMs, DEFAULT_TIMEOUTS.totalMs)
+		return {
+			firstChunkMs: positive(stored?.firstChunkMs, DEFAULT_TIMEOUTS.firstChunkMs),
+			chunkMs: positive(stored?.chunkMs, DEFAULT_TIMEOUTS.chunkMs),
+			totalMs: agentMode ? totalMs * AGENT_TOTAL_FACTOR : totalMs,
+		}
 	}
 
 	/** Parallelitäts- und GPU-Grenzen (Einstellungen, sonst Plan-Defaults). */
@@ -153,6 +198,11 @@ export class ExecutionEngine {
 
 	get concurrencyLimit(): number {
 		return this.limits().global
+	}
+
+	/** Gedankengang eines laufenden Streams anhängen. */
+	private appendReasoning(executionId: string, text: string): void {
+		this.reasoningByExecution.set(executionId, (this.reasoningByExecution.get(executionId) ?? "") + text)
 	}
 
 	/** Was läuft gerade auf einem Rechner? (Anzahl + belegte Modell-Plätze) */
@@ -622,11 +672,21 @@ export class ExecutionEngine {
 				lastError = e instanceof Error ? e.message : String(e)
 				this.deps.registry.recordFailure(choice.instance.providerId, lastError)
 				feedback.record(choice.instance.id, false)
+				// Was bis hierher entstand, bleibt erhalten. Ein Lauf, der nach 15
+				// Minuten am Gesamt-Timeout stirbt, hat womöglich Dateien gelesen,
+				// analysiert und halb geantwortet — das alles zu verwerfen und nur
+				// „Timeout“ zu zeigen, macht die Arbeit wertlos.
+				const partial = partialOutput(
+					replayOutput(db, execution.id),
+					this.reasoningByExecution.get(execution.id) ?? "",
+				)
 				updateExecution(db, execution.id, {
 					status: "failed",
 					error: lastError,
 					finishedAt: new Date().toISOString(),
+					...(partial ? { output: partial } : {}),
 				})
+				this.reasoningByExecution.delete(execution.id)
 			}
 		}
 
@@ -711,20 +771,21 @@ export class ExecutionEngine {
 		})
 
 		// Gesamt-Timeout + Chunk-Timeout (keine Aktivität → Failover).
+		const limitsMs = this.timeouts(task.metadata.agentMode === true)
 		const totalTimer = setTimeout(
-			() => controller.abort(new Error(`Gesamt-Timeout nach ${DEFAULT_TIMEOUTS.totalMs / 1000} s`)),
-			DEFAULT_TIMEOUTS.totalMs,
+			() => controller.abort(new Error(`Gesamt-Timeout nach ${Math.round(limitsMs.totalMs / 1000)} s`)),
+			limitsMs.totalMs,
 		)
 		// Bis zum ersten Token gilt eine großzügige Frist (Modell laden + Prompt
 		// verarbeiten), danach die strenge: Ein Stream, der mittendrin
 		// verstummt, ist ein Fehler — ein Server, der lange nachdenkt, nicht.
 		let firstChunkSeen = false
-		const chunkDeadline = () => (firstChunkSeen ? DEFAULT_TIMEOUTS.chunkMs : DEFAULT_TIMEOUTS.firstChunkMs)
+		const chunkDeadline = () => (firstChunkSeen ? limitsMs.chunkMs : limitsMs.firstChunkMs)
 		const chunkTimeoutError = () =>
 			firstChunkSeen
-				? new Error(`Kein Chunk seit ${Math.round(DEFAULT_TIMEOUTS.chunkMs / 1000)} s`)
+				? new Error(`Kein Chunk seit ${Math.round(limitsMs.chunkMs / 1000)} s`)
 				: new Error(
-						`Keine Antwort seit ${Math.round(DEFAULT_TIMEOUTS.firstChunkMs / 1000)} s — Modell zu langsam oder Server überlastet`,
+						`Keine Antwort seit ${Math.round(limitsMs.firstChunkMs / 1000)} s — Modell zu langsam oder Server überlastet`,
 					)
 		let chunkTimer = setTimeout(() => controller.abort(chunkTimeoutError()), chunkDeadline())
 		const resetChunkTimer = () => {
@@ -734,8 +795,6 @@ export class ExecutionEngine {
 		}
 
 		let fullText = ""
-		// Gedankengang getrennt sammeln (siehe `execution.reasoning`).
-		let reasoningText = ""
 		let seq = 0
 		let tokensIn = 0
 		let tokensOut = 0
@@ -809,7 +868,7 @@ export class ExecutionEngine {
 					},
 					onReasoning: (text) => {
 						resetChunkTimer()
-						reasoningText += text
+						this.appendReasoning(execution.id, text)
 						emit({ event: "execution.reasoning", data: { executionId: execution.id, delta: text } })
 					},
 					emitToolCall: (data) => {
@@ -843,7 +902,7 @@ export class ExecutionEngine {
 						// Denk-Tokens halten den Stream am Leben und werden live gezeigt,
 						// landen aber nicht in der Antwort.
 						resetChunkTimer()
-						reasoningText += chunk.text
+						this.appendReasoning(execution.id, chunk.text)
 						emit({
 							event: "execution.reasoning",
 							data: { executionId: execution.id, delta: chunk.text },
@@ -871,6 +930,8 @@ export class ExecutionEngine {
 		// und keine einzige Zeile Antwort liefern. Eine leere Antwort bei
 		// tausenden verbrauchten Tokens ist für niemanden brauchbar — dann gilt
 		// der Gedankengang als Ergebnis, ausdrücklich gekennzeichnet.
+		const reasoningText = this.reasoningByExecution.get(execution.id) ?? ""
+		this.reasoningByExecution.delete(execution.id)
 		if (fullText.trim().length === 0 && reasoningText.trim().length > 0) {
 			fullText = `[Nur Gedankengang — das Modell hat keine eigentliche Antwort ausgegeben.]\n\n${reasoningText}`
 			appendChunk(db, execution.id, seq++, fullText)

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/de/2.0
 
 ## Unreleased
 
+### Fixed (Ausführung)
+- **Ein gescheiterter Lauf verlor seine gesamte Arbeit.** Bei Timeout oder Fehler wurden nur Status und Fehlertext gespeichert — der bereits erzeugte Text lag zwar in den Chunks, aber nie in `output`, und der Chat zeigte allein „Gesamt-Timeout nach 900 s". Jetzt wird das Teilergebnis gesichert: der Text bis zum Abbruch, ersatzweise der Gedankengang — beides gekennzeichnet
+- **Der Gesamt-Timeout war fest verdrahtet (15 min).** Ein Agentik-Lauf, der ein Repository liest und analysiert, braucht auf einem grossen lokalen Modell leicht länger und starb regelmässig kurz vor dem Ziel
+
+### Added (Ausführung)
+- **Zeitgrenzen sind einstellbar** (Einstellungen → „Zeitgrenzen", `PUT /api/settings` mit `timeouts`): Warten auf das erste Lebenszeichen, Warten zwischen zwei Lebenszeichen, Gesamtdauer — in Sekunden statt Millisekunden. **Agentik-Läufe bekommen automatisch die dreifache Gesamtdauer**
+- Die Phasenanzeige im Chat nennt jetzt auch die **Gesamtlaufzeit** (`läuft seit 7:12 min`) und die Grösse des Gedankengangs — ein Lauf, der minutenlang nur nachdenkt, wirkte vorher wie ein hängendes Programm
+
 ### Added
 - **Chat-Verlauf mit allen Gesprächen** — geladen aus `/api/chats`, gruppiert über `metadata.chatId`. Der Verlauf **ist** die Datenbank: Nichts liegt nur im Browser, also überlebt er Neuladen, Browserwechsel und Neustart und bleibt unter „Tasks" mit Routing-Entscheidung nachvollziehbar
   - Gespräche lassen sich **löschen** (`DELETE /api/chats/:chatId`, mit Rückfrage). Läuft im Gespräch noch eine Aufgabe, wird abgelehnt statt heimlich abgebrochen

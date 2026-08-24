@@ -52,3 +52,20 @@ export interface ConcurrencySettings {
 	 */
 	maxModelsPerProvider: number
 }
+
+/**
+ * Zeitgrenzen einer Ausführung (Einstellungen, `settings.timeouts`).
+ *
+ * Sie sind kein Feintuning, sondern entscheiden über Erfolg oder Verlust: Ein
+ * Agentik-Lauf, der ein Repository liest und analysiert, braucht auf einem
+ * grossen lokalen Modell leicht eine halbe Stunde. Läuft er in den
+ * Gesamt-Timeout, ist die gesamte Arbeit gescheitert.
+ */
+export interface TimeoutSettings {
+	/** Frist bis zum **ersten** Lebenszeichen — deckt das Laden des Modells ab. */
+	firstChunkMs: number
+	/** Frist zwischen zwei Lebenszeichen; ein verstummter Stream ist ein Fehler. */
+	chunkMs: number
+	/** Gesamtdauer einer Ausführung. */
+	totalMs: number
+}

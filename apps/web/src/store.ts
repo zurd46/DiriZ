@@ -15,6 +15,7 @@ import type {
 	ScoringWeights,
 	Swarm,
 	Task,
+	TimeoutSettings,
 } from "@diriz/shared"
 import { create } from "zustand"
 import { api } from "./lib/api.js"
@@ -110,6 +111,7 @@ interface State {
 		routingWeights: ScoringWeights
 		docTemplates?: DocTemplateSettings
 		concurrency?: ConcurrencySettings
+		timeouts?: TimeoutSettings
 	} | null
 	live: Record<string, LiveRun>
 	taskDetails: Record<string, TaskDetail>

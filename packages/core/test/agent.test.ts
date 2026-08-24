@@ -184,3 +184,42 @@ describe("agent: Tool-Loop", () => {
 		expect(deltas.join("")).toContain("Arbeitsstand")
 	})
 })
+
+/**
+ * Ohne Schritt-Limit endet der Loop erst, wenn das Modell fertig ist — oder
+ * wenn das Gesamt-Timeout abbricht. Ein Budget, das mitten in der Arbeit
+ * zuschlägt, kostet mehr, als es schützt.
+ */
+describe("agent: unbegrenztes Tool-Budget", () => {
+	it("läuft weiter, wo ein Budget von 3 längst abgebrochen hätte", async () => {
+		const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-agent-unlimited-"))
+		const adapter = new ToolFakeAdapter("fake", "ollama", "loop")
+		const controller = new AbortController()
+
+		// Der Fake ruft endlos Tools auf; gestoppt wird über das Signal —
+		// genau wie im Betrieb durch das Gesamt-Timeout.
+		let steps = 0
+		const lauf = runAgentLoop({
+			adapter,
+			model: "m1",
+			userPrompt: "Endlos",
+			baseDir,
+			executionId: "e-unlimited",
+			maxSteps: 0,
+			signal: controller.signal,
+			onDelta: () => {},
+			emitToolCall: () => {
+				steps++
+				if (steps >= 12) {
+					controller.abort()
+				}
+			},
+			log: () => {},
+		})
+
+		await expect(lauf).rejects.toThrow(/Abgebrochen/)
+		// Deutlich mehr als die frühere Grenze von 8 bzw. 24 Schritten.
+		expect(steps).toBeGreaterThanOrEqual(12)
+		fs.rmSync(baseDir, { recursive: true, force: true })
+	})
+})

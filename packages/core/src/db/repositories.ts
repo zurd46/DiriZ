@@ -1339,6 +1339,73 @@ export function timeseries(db: Db, hours: number): TimeseriesPoint[] {
 	}))
 }
 
+/* --------------------------- Tool-Operationen (M8) ---------------------------- */
+
+/** Eine Datei-Operation des Modells — sichtbar im Chat, auch nach Neuladen. */
+export interface ToolCallRecord {
+	executionId: string
+	taskId: string
+	seq: number
+	name: string
+	argsSummary: string
+	ok: boolean
+	detail?: string
+	createdAt: string
+}
+
+export function appendToolCall(
+	db: Db,
+	call: Omit<ToolCallRecord, "seq" | "createdAt"> & { seq?: number },
+): void {
+	const seq =
+		call.seq ??
+		((
+			db.prepare("SELECT COALESCE(MAX(seq), 0) AS s FROM tool_calls WHERE execution_id = ?").get(
+				call.executionId,
+			) as { s: number }
+		).s +
+			1)
+	db.prepare(
+		`INSERT INTO tool_calls (execution_id, task_id, seq, name, args_summary, ok, detail, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+	).run(
+		call.executionId,
+		call.taskId,
+		seq,
+		call.name,
+		call.argsSummary,
+		call.ok ? 1 : 0,
+		call.detail ?? null,
+		new Date().toISOString(),
+	)
+}
+
+/** Tool-Operationen einer Task, in Ausführungsreihenfolge. */
+export function listToolCallsByTask(db: Db, taskId: string): ToolCallRecord[] {
+	const rows = db
+		.prepare("SELECT * FROM tool_calls WHERE task_id = ? ORDER BY id")
+		.all(taskId) as unknown as {
+		execution_id: string
+		task_id: string
+		seq: number
+		name: string
+		args_summary: string
+		ok: number
+		detail: string | null
+		created_at: string
+	}[]
+	return rows.map((r) => ({
+		executionId: r.execution_id,
+		taskId: r.task_id,
+		seq: r.seq,
+		name: r.name,
+		argsSummary: r.args_summary,
+		ok: r.ok === 1,
+		detail: r.detail ?? undefined,
+		createdAt: r.created_at,
+	}))
+}
+
 /* ------------------------------------ Agents ---------------------------------- */
 
 interface AgentRow {

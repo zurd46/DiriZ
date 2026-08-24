@@ -13,6 +13,7 @@ import {
 	type Agent,
 	type AgentProfile,
 	type AgentScore,
+	type AgentSettings,
 	type CandidateScore,
 	type ChatMessage,
 	type ConcurrencySettings,
@@ -75,7 +76,7 @@ import { applyPolicies } from "../routing/policies.js"
 import { extractProfile } from "../routing/profile.js"
 import type { CandidateInfo } from "../routing/scorer.js"
 import { scoreCandidate } from "../routing/scorer.js"
-import { runAgentLoop } from "./agent.js"
+import { MAX_AGENT_STEPS, runAgentLoop } from "./agent.js"
 import { parseFileBlocks, writeWorkspaceFilesAt } from "./files.js"
 import { taskWorktreePath } from "./worktree.js"
 
@@ -204,6 +205,15 @@ export class ExecutionEngine {
 
 	get concurrencyLimit(): number {
 		return this.limits().global
+	}
+
+	/** Agentik-Einstellungen (Tool-Budget; 0 = unbegrenzt). */
+	agentSettings(): AgentSettings {
+		const stored = getSetting<Partial<AgentSettings>>(this.deps.db, "agent")
+		const raw = stored?.maxSteps
+		return {
+			maxSteps: typeof raw === "number" && Number.isInteger(raw) && raw >= 0 ? raw : MAX_AGENT_STEPS,
+		}
 	}
 
 	/** Einstellungen zur Repository-Arbeit (Auto-Commit / Auto-Push). */
@@ -918,6 +928,7 @@ export class ExecutionEngine {
 				fs.mkdirSync(baseDir, { recursive: true })
 				log("info", "agent", `Agentik-Modus aktiv für Task ${task.id} (${choice.instance.modelId})`)
 				const result = await runAgentLoop({
+					maxSteps: this.agentSettings().maxSteps,
 					adapter,
 					model: choice.instance.modelId,
 					settings: effective,

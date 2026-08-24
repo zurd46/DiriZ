@@ -5,6 +5,7 @@
 
 import type {
 	Agent,
+	AgentSettings,
 	ConcurrencySettings,
 	CoreEvent,
 	DocTemplateSettings,
@@ -112,6 +113,7 @@ interface State {
 		docTemplates?: DocTemplateSettings
 		concurrency?: ConcurrencySettings
 		timeouts?: TimeoutSettings
+		agent?: AgentSettings
 	} | null
 	live: Record<string, LiveRun>
 	taskDetails: Record<string, TaskDetail>

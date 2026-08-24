@@ -23,7 +23,12 @@ import { executeTool, TOOL_SPECS } from "./tools.js"
  * Begrenzt nur die Tool-Nutzung — die Antwort folgt danach garantiert.
  * Über `DIRIZ_AGENT_MAX_STEPS` anpassbar (z. B. für grosse Repositories).
  */
-export const MAX_AGENT_STEPS = readMaxStepsEnv() ?? 24
+/**
+ * Vorgabe für das Tool-Budget. **0 = unbegrenzt** — die Gesamtdauer ist die
+ * Grenze, nicht eine geratene Schrittzahl. Über `DIRIZ_AGENT_STEPS` oder die
+ * Einstellungen überschreibbar.
+ */
+export const MAX_AGENT_STEPS = readMaxStepsEnv() ?? 0
 
 function readMaxStepsEnv(): number | undefined {
 	const raw = Number.parseInt(process.env.DIRIZ_AGENT_MAX_STEPS ?? "", 10)
@@ -69,13 +74,21 @@ export interface AgentLoopResult {
 }
 
 export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopResult> {
-	const maxSteps = Math.max(1, opts.maxSteps ?? MAX_AGENT_STEPS)
+	// 0 (oder negativ) bedeutet unbegrenzt — dann bestimmt allein das
+	// Gesamt-Timeout das Ende. Ein Tool-Budget, das mitten in der Arbeit
+	// zuschlägt, kostet den Lauf mehr, als es je an Schutz bringt.
+	const requested = opts.maxSteps ?? MAX_AGENT_STEPS
+	const maxSteps = requested > 0 ? requested : Number.POSITIVE_INFINITY
+	const unlimited = !Number.isFinite(maxSteps)
 	// Kurze Tool-Anleitung — lokale Modelle brauchen den Hinweis explizit.
 	const toolHint =
 		"Du kannst Dateien im Workspace mit den Tools list_files, read_file und write_file lesen und schreiben. " +
 		"Nutze die Tools, um die Aufgabe zu erledigen; gib am Ende eine vollständige Textantwort. " +
-		`Dein Tool-Budget beträgt ${maxSteps} Schritte — plane sparsam und beantworte die Aufgabe, ` +
-		"bevor es aufgebraucht ist."
+		(unlimited
+			? "Du hast kein Schritt-Limit — arbeite so gründlich, wie die Aufgabe es verlangt, " +
+				"und vermeide es, dieselbe Datei mehrfach zu lesen."
+			: `Dein Tool-Budget beträgt ${maxSteps} Schritte — plane sparsam und beantworte die Aufgabe, ` +
+				"bevor es aufgebraucht ist.")
 	const systemContent = opts.systemPrompt ? `${opts.systemPrompt}\n\n${toolHint}` : toolHint
 	const messages: ChatMessage[] = [
 		{ role: "system", content: systemContent },
@@ -144,7 +157,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 			})
 		}
 		opts.log("info", "agent", `Schritt ${step}: ${calls.length} Tool-Operation(en) ausgeführt`)
-		if (step === maxSteps) {
+		if (!unlimited && step === maxSteps) {
 			stepLimitReached = true
 		}
 	}

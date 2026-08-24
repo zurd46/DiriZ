@@ -83,3 +83,17 @@ export interface GitSettings {
 	/** Den Arbeitsbranch danach zu GitHub pushen. */
 	autoPush: boolean
 }
+
+/**
+ * Agentik-Einstellungen (`settings.agent`).
+ *
+ * `maxSteps: 0` heisst **unbegrenzt**: Wie viele Dateien ein Auftrag braucht,
+ * weiss vorher niemand — ein Repository zu verstehen kostet leicht dutzende
+ * Leseschritte. Die eigentliche Grenze ist die Gesamtdauer
+ * (`TimeoutSettings.totalMs`, im Agentik-Modus verdreifacht): Sie stoppt
+ * zuverlässig, ohne mitten in der Arbeit eine willkürliche Zahl zu erzwingen.
+ */
+export interface AgentSettings {
+	/** Erlaubte Tool-Schritte; **0 = unbegrenzt**. */
+	maxSteps: number
+}

@@ -8,6 +8,7 @@
 import {
 	AGENT_DOC_KINDS,
 	type AgentDocKind,
+	type AgentSettings,
 	type ConcurrencySettings,
 	DEFAULT_WEIGHTS,
 	type DocTemplateSettings,
@@ -166,6 +167,7 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 		concurrency: ctx.engine.limits(),
 		timeouts: ctx.engine.timeouts(),
 		git: ctx.engine.gitSettings(),
+		agent: ctx.engine.agentSettings(),
 	})
 
 	app.get("/api/settings", () => currentSettings())
@@ -177,6 +179,7 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			concurrency?: Partial<ConcurrencySettings>
 			timeouts?: Partial<TimeoutSettings>
 			git?: Partial<GitSettings>
+			agent?: Partial<AgentSettings>
 		}
 	}>("/api/settings", (req, reply) => {
 		const body = req.body ?? {}
@@ -185,11 +188,22 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			body.docTemplates === undefined &&
 			body.concurrency === undefined &&
 			body.timeouts === undefined &&
-			body.git === undefined
+			body.git === undefined &&
+			body.agent === undefined
 		) {
 			return reply
 				.code(400)
-				.send({ error: "routingWeights, docTemplates, concurrency, timeouts oder git erforderlich" })
+				.send({ error: "routingWeights, docTemplates, concurrency, timeouts, git oder agent erforderlich" })
+		}
+		if (body.agent !== undefined) {
+			const maxSteps = body.agent.maxSteps
+			// 0 ist ausdrücklich erlaubt und heisst „unbegrenzt“.
+			if (maxSteps !== undefined && (!Number.isInteger(maxSteps) || (maxSteps as number) < 0)) {
+				return reply
+					.code(400)
+					.send({ error: "agent.maxSteps muss eine ganze Zahl ≥ 0 sein (0 = unbegrenzt)" })
+			}
+			setSetting(ctx.db, "agent", { maxSteps: maxSteps ?? ctx.engine.agentSettings().maxSteps })
 		}
 		if (body.git !== undefined) {
 			const current = ctx.engine.gitSettings()

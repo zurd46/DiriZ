@@ -63,6 +63,9 @@ export default function Settings() {
 	const [importMsg, setImportMsg] = useState<string | undefined>()
 	const fileRef = useRef<HTMLInputElement>(null)
 
+	// Tool-Budget der Agentik — 0 heisst unbegrenzt.
+	const [steps, setSteps] = useState<number | null>(null)
+
 	// Zeitgrenzen: Sekunden in der Oberfläche, Millisekunden im Kontrakt.
 	const [times, setTimes] = useState<TimeoutSettings | null>(null)
 	const [timesBusy, setTimesBusy] = useState(false)
@@ -104,13 +107,21 @@ export default function Settings() {
 		}
 	}, [settings, times])
 
-	const timesDirty = times !== null && JSON.stringify(times) !== JSON.stringify(settings?.timeouts ?? null)
+	useEffect(() => {
+		if (settings?.agent && steps === null) {
+			setSteps(settings.agent.maxSteps)
+		}
+	}, [settings, steps])
+
+	const timesDirty =
+		(times !== null && JSON.stringify(times) !== JSON.stringify(settings?.timeouts ?? null)) ||
+		(steps !== null && steps !== settings?.agent?.maxSteps)
 
 	const saveTimes = async () => {
 		if (!times) return
 		setTimesBusy(true)
 		try {
-			await api.put("/api/settings", { timeouts: times })
+			await api.put("/api/settings", { timeouts: times, agent: { maxSteps: steps ?? 0 } })
 			await useStore.getState().refreshSettings()
 			setTimesSaved(true)
 			setTimeout(() => setTimesSaved(false), 2500)
@@ -351,6 +362,26 @@ export default function Settings() {
 								<span className="field-hint">{row.hint} Angabe in Sekunden.</span>
 							</label>
 						))}
+					</div>
+				)}
+
+				{steps !== null && (
+					<div className="limits">
+						<label className="limit-row">
+							<span className="limit-label">Tool-Schritte im Agentik-Modus</span>
+							<input
+								type="number"
+								min={0}
+								step={1}
+								value={steps}
+								onChange={(e) => setSteps(Math.max(0, Number(e.target.value) || 0))}
+							/>
+							<span className="field-hint">
+								<strong>0 = unbegrenzt</strong> (empfohlen). Wie viele Dateien ein Auftrag braucht, weiss
+								vorher niemand — ein Budget, das mitten in der Arbeit zuschlägt, kostet den Lauf. Die
+								Gesamtdauer oben ist die eigentliche Grenze.
+							</span>
+						</label>
 					</div>
 				)}
 

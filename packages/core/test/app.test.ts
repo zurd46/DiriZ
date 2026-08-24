@@ -386,6 +386,34 @@ describe("api: Parallelitäts- und GPU-Grenzen", () => {
 		expect(ctx.engine.timeouts(false).totalMs).toBe(1_800_000)
 	})
 
+	it("erlaubt ein unbegrenztes Tool-Budget (0) und weist Unsinn ab", async () => {
+		const before = (await app.inject({ method: "GET", url: "/api/settings" })).json()
+		expect(before.agent).toEqual({ maxSteps: 0 })
+
+		const saved = await app.inject({
+			method: "PUT",
+			url: "/api/settings",
+			payload: { agent: { maxSteps: 50 } },
+		})
+		expect(saved.json().agent.maxSteps).toBe(50)
+		expect(ctx.engine.agentSettings().maxSteps).toBe(50)
+
+		// 0 heisst ausdrücklich „unbegrenzt" und ist kein Fehler.
+		const zurueck = await app.inject({
+			method: "PUT",
+			url: "/api/settings",
+			payload: { agent: { maxSteps: 0 } },
+		})
+		expect(zurueck.json().agent.maxSteps).toBe(0)
+
+		const falsch = await app.inject({
+			method: "PUT",
+			url: "/api/settings",
+			payload: { agent: { maxSteps: -3 } },
+		})
+		expect(falsch.statusCode).toBe(400)
+	})
+
 	it("weist zu kurze Zeitgrenzen ab", async () => {
 		const res = await app.inject({
 			method: "PUT",

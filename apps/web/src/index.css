@@ -3177,25 +3177,6 @@ pre.code {
 	margin-top: var(--sp-2);
 }
 
-.chat-tools {
-	list-style: none;
-	margin: 0 0 var(--sp-2);
-	padding: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-	font-family: var(--mono);
-	font-size: var(--fs-xs);
-}
-
-.chat-tools li.ok {
-	color: var(--ok-text);
-}
-
-.chat-tools li.err {
-	color: var(--err-text);
-}
-
 .chat-files {
 	display: flex;
 	flex-wrap: wrap;
@@ -3312,4 +3293,187 @@ pre.code {
 	margin-top: var(--sp-3);
 	padding-top: var(--sp-3);
 	border-top: 1px solid var(--border-soft);
+}
+
+/* ------------------------- Chat: Kopfzeile & Badges ------------------------- */
+
+.chat-head {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--sp-2);
+	margin-bottom: var(--sp-3);
+}
+
+.chat-avatar {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	flex: none;
+	border-radius: 8px;
+	background: var(--accent-soft);
+	color: var(--accent);
+	border: 1px solid var(--accent-line);
+}
+
+.chat-ident {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.chat-name {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-2);
+	font-size: var(--fs-base);
+	font-weight: 600;
+	color: var(--text-strong);
+}
+
+.chat-worker {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 5px;
+	font-size: var(--fs-xs);
+	color: var(--muted);
+}
+
+.chat-at {
+	opacity: 0.7;
+}
+
+/* Kleines, ruhiges Etikett — im Gegensatz zur `pill` ohne Statusfarbe. */
+.badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 1px var(--sp-2);
+	border-radius: 999px;
+	border: 1px solid var(--border);
+	background: var(--surface-2);
+	color: var(--muted);
+	font-size: var(--fs-xs);
+	font-weight: 500;
+	white-space: nowrap;
+}
+
+.badge.soft {
+	background: var(--surface-3);
+}
+
+.badge.mono {
+	font-family: var(--mono);
+}
+
+/* Werkzeug-Badges: was das Modell wirklich angefasst hat. */
+/*
+ * Eine Zeile, umbrechend, linksbündig. Die erste Fassung stapelte die Badges
+ * mittig untereinander — 20 Operationen füllten damit den halben Bildschirm,
+ * ohne mehr zu sagen.
+ */
+.chat-tools {
+	display: flex;
+	flex-flow: row wrap;
+	align-items: center;
+	justify-content: flex-start;
+	gap: 4px;
+	margin-bottom: var(--sp-3);
+}
+
+.chat-tools-label {
+	font-size: var(--fs-xs);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--faint);
+	margin-right: var(--sp-1);
+	white-space: nowrap;
+}
+
+.tool-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	max-width: 34ch;
+	padding: 1px 7px;
+	border-radius: 5px;
+	border: 1px solid var(--border);
+	background: var(--bg-soft);
+	font-size: var(--fs-xs);
+	line-height: 1.7;
+	color: var(--muted);
+}
+
+.tool-badge .icon {
+	flex: none;
+	opacity: 0.7;
+}
+
+.tool-badge.write_file {
+	border-color: var(--ok-soft);
+	background: var(--ok-soft);
+	color: var(--ok-text);
+}
+
+.tool-badge.err {
+	border-color: var(--err-soft);
+	background: var(--err-soft);
+	color: var(--err-text);
+}
+
+.tool-verb {
+	flex: none;
+}
+
+/* Lange Pfade von **links** kürzen — der Dateiname trägt die Information. */
+.tool-target {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	direction: rtl;
+	text-align: left;
+	color: var(--text);
+	font-family: var(--mono);
+}
+
+.tool-count {
+	flex: none;
+	font-variant-numeric: tabular-nums;
+	opacity: 0.75;
+}
+
+/* Abschnittsüberschrift innerhalb einer Antwort (Diff, GitHub). */
+.chat-block-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-2);
+	margin-bottom: var(--sp-2);
+	font-size: var(--fs-sm);
+	font-weight: 600;
+	color: var(--text-strong);
+}
+
+.chat-diff,
+.chat-github {
+	margin-top: var(--sp-4);
+	padding-top: var(--sp-3);
+	border-top: 1px solid var(--border-soft);
+}
+
+.chat-github-meta {
+	font-size: var(--fs-sm);
+	color: var(--muted);
+	margin-bottom: var(--sp-2);
+}
+
+.chat-github-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--sp-2);
 }

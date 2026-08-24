@@ -15,8 +15,9 @@
  * das Modell noch geladen wird, was es gerade schreibt, welche Dateien es anfasst.
  */
 
-import { findBlueprint, type InstanceModel, type Repo, type Task } from "@diriz/shared"
+import { type FileDiff, findBlueprint, type GitStatus, type InstanceModel, type Repo } from "@diriz/shared"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import DiffView from "../components/DiffView.js"
 import {
 	IconAgents,
 	IconAlert,
@@ -29,10 +30,10 @@ import {
 	IconServer,
 	IconStop,
 	IconTrash,
+	IconUpload,
 	IconWorkspace,
 } from "../components/icons.js"
 import Markdown from "../components/Markdown.js"
-import TaskGitPanel from "../components/TaskGitPanel.js"
 import { api } from "../lib/api.js"
 import { useStore } from "../store.js"
 
@@ -107,34 +108,158 @@ function withHistory(prompt: string, history: { prompt: string; answer: string }
 }
 
 /**
- * Git-Bereich einer Chat-Nachricht: zeigt den Diff dessen, was der Spezialist
- * im Repository geändert hat, und bringt es mit Commit, Push und Pull-Request
- * zu GitHub.
- *
- * Wiederverwendet bewusst denselben Bereich wie die Task-Ansicht — zwei
- * Oberflächen für dieselbe Sache würden auseinanderlaufen. Die Task wird hier
- * nachgeladen, weil der Chat-Verlauf nur die Kurzfassung kennt.
+ * Die Änderungen des Spezialisten als Diff — Datei für Datei, mit alter und
+ * neuer Zeilennummer. Steht direkt bei der Antwort, weil das die eigentliche
+ * Arbeit ist; GitHub kommt danach.
  */
-function ChatGitPanel({ taskId, refreshKey }: { taskId: string; refreshKey: number }) {
-	const [task, setTask] = useState<Task | null>(null)
+function ChatDiff({ taskId, refreshKey }: { taskId: string; refreshKey: number }) {
+	const [files, setFiles] = useState<FileDiff[] | null>(null)
+
+	useEffect(() => {
+		let alive = true
+		api
+			.get<{ files: FileDiff[] }>(`/api/tasks/${taskId}/git/diff`)
+			.then((d) => alive && setFiles(d.files))
+			.catch(() => alive && setFiles(null))
+		return () => {
+			alive = false
+		}
+	}, [taskId, refreshKey])
+
+	if (!files || files.length === 0) {
+		return null
+	}
+	return (
+		<div className="chat-diff">
+			<div className="chat-block-head">
+				<IconDoc size={14} />
+				Geänderte Dateien
+				<span className="badge soft">{files.length}</span>
+			</div>
+			<DiffView files={files} defaultOpen={2} />
+		</div>
+	)
+}
+
+/**
+ * GitHub-Abschluss einer Nachricht: Wohin die Arbeit gegangen ist und was noch
+ * fehlt. Bewusst am Ende — erst das Ergebnis, dann die Veröffentlichung.
+ *
+ * Committet und gepusht wird automatisch (Einstellungen → Git); hier steht der
+ * Zustand und der Weg zum Pull-Request.
+ */
+function ChatGitHub({ taskId, refreshKey }: { taskId: string; refreshKey: number }) {
+	const notify = useStore((s) => s.notify)
+	const setLastError = useStore((s) => s.setLastError)
+	const [status, setStatus] = useState<GitStatus | null>(null)
+	const [busy, setBusy] = useState<string | undefined>()
 
 	const load = useCallback(() => {
 		api
-			.get<Task>(`/api/tasks/${taskId}`)
-			.then(setTask)
-			.catch(() => setTask(null))
+			.get<GitStatus>(`/api/tasks/${taskId}/git`)
+			.then(setStatus)
+			.catch(() => setStatus(null))
 	}, [taskId])
 
 	useEffect(() => {
 		load()
-	}, [load])
+	}, [load, refreshKey])
 
-	if (!task) {
+	const run = async (label: string, fn: () => Promise<void>) => {
+		setBusy(label)
+		try {
+			await fn()
+			load()
+		} catch (e) {
+			setLastError(e instanceof Error ? e.message : String(e))
+		} finally {
+			setBusy(undefined)
+		}
+	}
+
+	if (!status) {
 		return null
 	}
 	return (
-		<div className="chat-git">
-			<TaskGitPanel task={task} onTaskChanged={load} refreshKey={refreshKey} />
+		<div className="chat-github">
+			<div className="chat-block-head">
+				<IconGitBranch size={14} />
+				{status.repo.fullName}
+				<span className="badge mono">{status.workBranch}</span>
+				{status.dirty ? (
+					<span className="pill warn">nicht committet</span>
+				) : status.pushed ? (
+					<span className="pill ok">auf GitHub</span>
+				) : (
+					<span className="pill queued">nur lokal</span>
+				)}
+			</div>
+			<div className="chat-github-meta">
+				<span>
+					+{status.additions} / −{status.deletions} Zeilen · {status.files.length} Datei(en) ·{" "}
+					{status.commits.length} Commit(s) vor <span className="mono">{status.baseBranch}</span>
+				</span>
+			</div>
+			<div className="chat-github-actions">
+				{status.dirty && (
+					<button
+						type="button"
+						className="btn sm"
+						disabled={busy !== undefined}
+						onClick={() =>
+							run("commit", async () => {
+								const r = await api.post<{ shortSha: string; filesChanged: number }>(
+									`/api/tasks/${taskId}/git/commit`,
+									{},
+								)
+								notify("success", `Commit ${r.shortSha} — ${r.filesChanged} Datei(en)`)
+							})
+						}
+					>
+						Committen
+					</button>
+				)}
+				{!status.pushed && (
+					<button
+						type="button"
+						className="btn sm"
+						disabled={busy !== undefined}
+						onClick={() =>
+							run("push", async () => {
+								const r = await api.post<{ branch: string }>(`/api/tasks/${taskId}/git/push`, {})
+								notify("success", `Gepusht nach ${r.branch}`)
+							})
+						}
+					>
+						<IconUpload size={13} />
+						Pushen
+					</button>
+				)}
+				{status.prUrl ? (
+					<a className="btn sm" href={status.prUrl} target="_blank" rel="noreferrer">
+						Pull-Request ansehen
+					</a>
+				) : (
+					<button
+						type="button"
+						className="btn sm primary"
+						disabled={busy !== undefined || !status.pushed}
+						title={status.pushed ? undefined : "Erst pushen"}
+						onClick={() =>
+							run("pr", async () => {
+								const r = await api.post<{ url: string; existed: boolean }>(
+									`/api/tasks/${taskId}/git/pull-request`,
+									{},
+								)
+								notify("success", r.existed ? "Pull-Request existierte bereits" : "Pull-Request geöffnet")
+								window.open(r.url, "_blank", "noreferrer")
+							})
+						}
+					>
+						Pull-Request öffnen
+					</button>
+				)}
+			</div>
 		</div>
 	)
 }
@@ -301,11 +426,20 @@ export default function Chat() {
 		}
 	}, [live, loadChats])
 
+	/**
+	 * Immer das Ende zeigen — neue Nachricht, neues Token, neue Dateioperation.
+	 *
+	 * Der Takt kommt von `tick` (1 s), solange etwas läuft: Bei jedem einzelnen
+	 * Token zu scrollen ruckelt sichtbar, einmal pro Sekunde folgt die Ansicht
+	 * ruhig mit. `behavior: "auto"` statt „smooth“, weil sich sonst mehrere
+	 * angefangene Bewegungen überlagern und das Bild zittert.
+	 */
 	useEffect(() => {
-		if (turns.length > 0) {
-			endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
+		if (turns.length === 0) {
+			return
 		}
-	}, [turns.length])
+		endRef.current?.scrollIntoView({ block: "end" })
+	}, [turns.length, tick, running])
 
 	const runOf = (taskId: string) => Object.values(live).find((r) => r.taskId === taskId)
 	const instanceOf = (id?: string) => instances.find((i) => i.id === id)
@@ -671,8 +805,8 @@ export default function Chat() {
 
 										{turn.error && <div className="chat-error">{turn.error}</div>}
 
-										{/* Repository-Arbeit: Diff und der Weg zu GitHub, direkt hier. */}
-										{turn.repoId && <ChatGitPanel taskId={turn.taskId} refreshKey={toolOps.length} />}
+										{/* Erst die Arbeit … */}
+										{turn.repoId && <ChatDiff taskId={turn.taskId} refreshKey={toolOps.length} />}
 
 										{files.length > 0 && (
 											<div className="chat-files">
@@ -684,6 +818,9 @@ export default function Chat() {
 												))}
 											</div>
 										)}
+
+										{/* … und ganz zum Schluss: wohin sie gegangen ist. */}
+										{turn.repoId && <ChatGitHub taskId={turn.taskId} refreshKey={toolOps.length} />}
 									</div>
 								</div>
 							)

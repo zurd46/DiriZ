@@ -1,5 +1,5 @@
 /**
- * Routing-Scorer (`01-plan.md` §6.2): sechs gewichtete Achsen.
+ * Routing-Scorer (`01-plan.md` §6.2): gewichtete Achsen.
  *
  * Die Basis-Formeln (contextFit, capabilityMatch, costScore) kommen aus
  * `@diriz/shared/scoring` — damit Core & UI exakt dieselbe Formel kennen.
@@ -12,7 +12,9 @@ import {
 	contextFitScore,
 	costScore,
 	type InstanceModel,
+	type ModelSpec,
 	type ScoringWeights,
+	specFitScore,
 	type TaskProfile,
 } from "@diriz/shared"
 import type { Feedback } from "./feedback.js"
@@ -28,12 +30,15 @@ export interface CandidateInfo {
 	local?: boolean
 	/** M8: aktuelle RAM-Belegung des Hosts in % (0–100). */
 	hostRamUsagePct?: number
+	/** Datenblatt (`llm.md`) des Modells — Stärken, Schwächen, Qualitätsklasse. */
+	spec?: ModelSpec
 }
 
 const AXIS_LABELS: Record<keyof ScoringWeights, string> = {
 	contextFit: "Context-Fit",
 	capabilityMatch: "Capability-Match",
 	qualityPrior: "Qualität",
+	specFit: "Eignung",
 	loadScore: "Last",
 	costScore: "Kosten",
 	latencyScore: "Latenz",
@@ -72,6 +77,8 @@ export function scoreCandidate(
 	profile: TaskProfile,
 	weights: ScoringWeights,
 	feedback: Feedback,
+	/** Der Prompt — nur die Eignungs-Achse liest ihn (Stärken/Schwächen). */
+	prompt = "",
 ): CandidateScore {
 	const values: Record<keyof ScoringWeights, number> = {
 		contextFit: contextFitScore(info.instance.contextWindow, profile.estTokens),
@@ -81,6 +88,8 @@ export function scoreCandidate(
 			info.instance.capabilities,
 		),
 		qualityPrior: feedback.prior(info.instance.id, info.basisPrior),
+		// Eignung laut `llm.md`: „Gut für" hebt, „Nicht geeignet für" senkt.
+		specFit: specFitScore(info.spec, prompt).value,
 		loadScore: loadScoreValue(info.loadFactor),
 		costScore: costScore(info.instance.pricePerMTok, profile.budgetUsd),
 		latencyScore: latencyScoreValue(info.providerLatencyMs),

@@ -10,6 +10,7 @@ import {
 	composeSystemPrompt,
 	defaultAgentDoc,
 	defaultDoc,
+	docKindsFor,
 	extractDirective,
 	isAgentDocKind,
 	parseInitDoc,
@@ -100,10 +101,23 @@ describe("appendChangelogEntry", () => {
 })
 
 describe("Dokument-Typen", () => {
-	it("kennt genau plan/changelog/init", () => {
-		expect(AGENT_DOC_FILES).toEqual({ plan: "plan.md", changelog: "changelog.md", init: "init.md" })
+	it("kennt plan/llm/changelog/init", () => {
+		expect(AGENT_DOC_FILES).toEqual({
+			plan: "plan.md",
+			llm: "llm.md",
+			changelog: "changelog.md",
+			init: "init.md",
+		})
 		expect(isAgentDocKind("init")).toBe(true)
+		expect(isAgentDocKind("llm")).toBe(true)
 		expect(isAgentDocKind("readme")).toBe(false)
+	})
+
+	it("gibt jeder Ebene die Dokumente, die zu ihr gehören", () => {
+		// Ein Modell hat keinen Auftrag, ein Spezialist kein Datenblatt.
+		expect(docKindsFor("agent")).toEqual(["plan", "changelog", "init"])
+		expect(docKindsFor("provider")).toEqual(["plan", "changelog", "init"])
+		expect(docKindsFor("instance")).toEqual(["llm", "changelog", "init"])
 	})
 })
 

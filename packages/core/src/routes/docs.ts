@@ -1,6 +1,8 @@
 /**
  * Dokument-Übersicht (M9): ein Aufruf liefert **alle** Deklarations-Dokumente
  * über alle drei Ebenen — Rechner (Provider), Modell (Instanz), Spezialist.
+ * Welche Dokumente eine Ebene führt, sagt `DOC_KINDS`: Rechner und Spezialist
+ * haben einen Auftrag (`plan.md`), ein Modell hat ein Datenblatt (`llm.md`).
  *
  * Die Dokumente-Ansicht im Web braucht das, um über den gesamten Bestand
  * suchen zu können, ohne pro Besitzer eine eigene Anfrage zu stellen.
@@ -42,7 +44,7 @@ function toMap(docs: { kind: AgentDocKind; content: string; updatedAt: string }[
 	content: Record<AgentDocKind, string>
 	updatedAt: string
 } {
-	const content = { plan: "", changelog: "", init: "" } as Record<AgentDocKind, string>
+	const content = { plan: "", llm: "", changelog: "", init: "" } as Record<AgentDocKind, string>
 	let updatedAt = ""
 	for (const doc of docs) {
 		content[doc.kind] = doc.content

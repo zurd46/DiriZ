@@ -1,19 +1,26 @@
 /**
- * Editor für die drei Deklarations-Dokumente — identisch für Spezialisten
- * (`/api/agents/:id`) und LLM-Instanzen (`/api/instances/:id`).
+ * Editor für die Deklarations-Dokumente — identisch für Spezialisten
+ * (`/api/agents/:id`) und Modelle (`/api/instances/:id`). Welche Dokumente eine
+ * Ebene führt, sagt `docKindsFor`: Ein Spezialist hat einen Auftrag
+ * (`plan.md`), ein Modell ein Datenblatt (`llm.md`).
  *
- * Beide wirksamen Dokumente zeigen live, was der Core daraus liest:
+ * Jedes wirksame Dokument zeigt live, was der Core daraus liest — dieselben
+ * Funktionen wie im Backend, keine Drift:
  * - `plan.md` → die verbindliche Arbeitsanweisung im System-Prompt
- *   (`extractDirective` — dieselbe Funktion wie im Backend, keine Drift).
+ *   (`extractDirective`).
+ * - `llm.md`  → Fähigkeiten, Kontext-Fenster und Qualitätsklasse für das
+ *   Routing (`parseLlmDoc`).
  * - `init.md` → die Model-Voreinstellungen (`parseInitDoc`).
  */
 
 import {
 	AGENT_DOC_FILES,
-	AGENT_DOC_KINDS,
 	type AgentDocKind,
+	type DocOwnerKind,
+	docKindsFor,
 	extractDirective,
 	parseInitDoc,
+	parseLlmDoc,
 	renderInitDoc,
 } from "@diriz/shared"
 import { useEffect, useState } from "react"
@@ -27,6 +34,7 @@ interface DocResponse {
 
 const HINTS: Record<AgentDocKind, string> = {
 	plan: "Wirksam: Auftrag, Vorgehen und Leitplanken werden als verbindliche Arbeitsanweisung in den System-Prompt übernommen. Unausgefüllte Vorlagen-Zeilen ignoriert DiriZ.",
+	llm: "Wirksam: Datenblatt des Modells. Fähigkeiten und Kontext-Fenster sind harte Routing-Gates, die Qualitätsklasse ist der Startwert der Qualitäts-Achse, „Gut für“/„Nicht geeignet für“ bewegen die Eignungs-Achse.",
 	changelog: "Änderungsprotokoll — DiriZ hängt bei jeder Bearbeitung automatisch einen Eintrag an.",
 	init: "Wirksam: Zeilen der Form „Temperature: 0.3“ setzen die Voreinstellungen des LLM-Modells.",
 }
@@ -34,6 +42,8 @@ const HINTS: Record<AgentDocKind, string> = {
 export default function DocsEditor(props: {
 	/** Basis-Pfad ohne `/docs`, z. B. `/api/agents/<id>`. */
 	basePath: string
+	/** Welche Ebene — entscheidet, welche Dokumente es hier gibt. */
+	ownerKind: DocOwnerKind
 	/** Name für Überschriften und `init.md`-Aufräumen. */
 	ownerName: string
 	/** Wird nach dem Speichern von `init.md` gerufen (Settings neu laden). */
@@ -41,7 +51,8 @@ export default function DocsEditor(props: {
 	onClose: () => void
 }) {
 	const onError = useStore((s) => s.setLastError)
-	const [kind, setKind] = useState<AgentDocKind>("plan")
+	const kinds = docKindsFor(props.ownerKind)
+	const [kind, setKind] = useState<AgentDocKind>(kinds[0] ?? "plan")
 	const [docs, setDocs] = useState<Record<string, string> | null>(null)
 	const [drafts, setDrafts] = useState<Record<string, string>>({})
 	const [busy, setBusy] = useState(false)
@@ -91,12 +102,13 @@ export default function DocsEditor(props: {
 	const parsed = kind === "init" ? parseInitDoc(content) : undefined
 	const parsedEntries = parsed ? Object.entries(parsed).filter(([, v]) => v !== undefined) : []
 	const directive = kind === "plan" ? extractDirective(content) : undefined
+	const spec = kind === "llm" ? parseLlmDoc(content) : undefined
 
 	return (
 		<div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
 			<div className="card-head">
 				<div className="tabs" style={{ marginBottom: 0, border: "none" }}>
-					{AGENT_DOC_KINDS.map((k) => (
+					{kinds.map((k) => (
 						<button
 							key={k}
 							type="button"
@@ -156,6 +168,20 @@ export default function DocsEditor(props: {
 									</span>
 								</p>
 							)}
+						</div>
+					)}
+
+					{spec && (
+						<div className="row tight" style={{ marginTop: 10 }}>
+							<span className="field-hint">Das Routing liest daraus:</span>
+							<span className={`badge ${spec.capabilities.length > 0 ? "accent" : ""}`}>
+								Fähigkeiten: {spec.capabilities.length > 0 ? spec.capabilities.join(", ") : "keine"}
+							</span>
+							<span className="badge">Kontext: {spec.contextWindow ?? "—"}</span>
+							<span className="badge">Qualität: {spec.quality ?? "mittel"}</span>
+							<span className="badge">
+								Eignung: {spec.goodFor.length} gut / {spec.notFor.length} ungeeignet
+							</span>
 						</div>
 					)}
 

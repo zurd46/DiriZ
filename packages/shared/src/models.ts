@@ -25,6 +25,7 @@
  * sonst gewinnt „qwen" gegen „qwen3-coder".
  */
 
+import { tokenize } from "./agents.js"
 import { type AgentDocKind, renderInitDoc } from "./docs.js"
 import type { Capability, ModelSettings } from "./types.js"
 
@@ -954,4 +955,98 @@ export function instanceDocs(identity: ModelIdentity, isoDate: string): Partial<
 		].join("\n"),
 		init: renderInitDoc(profile.settings, name),
 	}
+}
+
+/* ---------------------- Eignung: Stärken/Schwächen im Routing ----------------- */
+
+/** Das Ergebnis von `specFitScore` — mit Begründung für die Explainability. */
+export interface SpecFit {
+	/** 0–1. 0.6 = neutral (kein Datenblatt oder keine Berührung mit dem Prompt). */
+	value: number
+	/** Getroffene Zeilen aus `## Gut für`. */
+	hits: string[]
+	/** Getroffene Zeilen aus `## Nicht geeignet für`. */
+	misses: string[]
+}
+
+/** Neutralwert, wenn das Datenblatt zum Prompt nichts sagt. */
+const SPEC_FIT_NEUTRAL = 0.6
+
+/** Nur tragende Wörter — kurze Allerweltswörter erzeugen sonst Zufallstreffer. */
+function specTerms(text: string): string[] {
+	return [...new Set(tokenize(text).filter((t) => t.length >= 4))]
+}
+
+/**
+ * Wie gut passt dieses Modell laut seinem `llm.md` zu diesem Prompt?
+ *
+ * Jede Zeile unter `## Gut für`, die den Prompt inhaltlich berührt, hebt den
+ * Wert um 0.1; jede Zeile unter `## Nicht geeignet für` senkt ihn um 0.25 —
+ * eine ausdrückliche Schwäche wiegt schwerer als eine Stärke, weil ein
+ * ungeeignetes Modell echte Arbeit vernichtet, während ein bloss nicht
+ * besonders geeignetes sie nur langsamer erledigt.
+ *
+ * „Berührt" heisst: mindestens zwei tragende Wörter der Zeile stehen im Prompt
+ * (bei einwortigen Zeilen genügt eines). Ohne Datenblatt bleibt es neutral —
+ * ein ungepflegtes Modell wird nicht bestraft, aber auch nicht bevorzugt.
+ */
+export function specFitScore(spec: ModelSpec | undefined, prompt: string): SpecFit {
+	if (!spec || (spec.goodFor.length === 0 && spec.notFor.length === 0)) {
+		return { value: SPEC_FIT_NEUTRAL, hits: [], misses: [] }
+	}
+	const promptTerms = new Set(specTerms(prompt))
+	const touches = (line: string): boolean => {
+		const terms = specTerms(line)
+		if (terms.length === 0) {
+			return false
+		}
+		const hits = terms.filter((t) => promptTerms.has(t)).length
+		return terms.length === 1 ? hits === 1 : hits >= 2
+	}
+
+	const hits = spec.goodFor.filter(touches)
+	const misses = spec.notFor.filter(touches)
+	const value = Math.max(0, Math.min(1, SPEC_FIT_NEUTRAL + 0.1 * hits.length - 0.25 * misses.length))
+	return { value, hits, misses }
+}
+
+/**
+ * Schreibt geänderte Steckbrief-Werte zurück ins Datenblatt, ohne den übrigen
+ * Text anzufassen.
+ *
+ * Nötig, weil dieselben Angaben an zwei Stellen bearbeitbar sind: im
+ * Modell-Formular (Rechner-Ansicht) und im Dokument selbst. Ohne Rückschreiben
+ * würden sie auseinanderlaufen, und der nächste Speichervorgang im Dokument
+ * hätte die Formular-Eingabe stillschweigend überschrieben.
+ */
+export function updateLlmDoc(
+	markdown: string,
+	patch: { contextWindow?: number; capabilities?: Capability[] },
+): string {
+	let out = markdown ?? ""
+
+	if (patch.contextWindow !== undefined) {
+		const line = /^(\s*(?:[-*+]\s*)?\**\s*Kontext-?Fenster\**\s*[:=]\s*).*$/im
+		out = line.test(out)
+			? out.replace(line, `$1${patch.contextWindow}`)
+			: out.replace(/(##\s*Steckbrief\s*\n)/i, `$1\n- Kontext-Fenster: ${patch.contextWindow}\n`)
+	}
+
+	if (patch.capabilities) {
+		const bullets =
+			patch.capabilities.length > 0
+				? patch.capabilities.map((c) => `- ${c}`).join("\n")
+				: "- keine (dieses Modell beantwortet keine Aufträge)"
+		const section = /(^|\n)(#{1,6}\s*Fähigkeiten\s*\n)([\s\S]*?)(?=\n#{1,6}\s|\n*$)/i
+		if (section.test(out)) {
+			out = out.replace(section, `$1$2\n${bullets}\n`)
+		} else {
+			const inline = /^(\s*(?:[-*+]\s*)?\**\s*Fähigkeiten\**\s*[:=]\s*).*$/im
+			out = inline.test(out)
+				? out.replace(inline, `$1${patch.capabilities.join(", ")}`)
+				: `${out.trimEnd()}\n\n## Fähigkeiten\n\n${bullets}\n`
+		}
+	}
+
+	return out
 }

@@ -688,6 +688,7 @@ function AgentList(props: {
 
 						{docsFor === a.id && (
 							<DocsEditor
+								ownerKind="agent"
 								basePath={`/api/agents/${a.id}`}
 								ownerName={a.name}
 								onInitSaved={props.onSettingsChanged}

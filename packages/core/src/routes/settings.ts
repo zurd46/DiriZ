@@ -72,7 +72,10 @@ function parseConcurrency(
 }
 
 /** M8: optionale 7. Achse — darf beim PUT fehlen (Backward-Kompatibilität). */
-const OPTIONAL_WEIGHT_KEYS: (keyof ScoringWeights)[] = ["hostLoad"]
+// Später hinzugekommene Achsen sind optional: Ein Client, der sie nicht
+// kennt, soll die Einstellungen weiterhin speichern können (er schaltet die
+// Achse damit auf 0 — sichtbar in der Oberfläche, nicht stillschweigend).
+const OPTIONAL_WEIGHT_KEYS: (keyof ScoringWeights)[] = ["hostLoad", "specFit"]
 
 function parseWeights(body: unknown): ScoringWeights | undefined {
 	if (!body || typeof body !== "object") {
@@ -98,7 +101,7 @@ function parseWeights(body: unknown): ScoringWeights | undefined {
 }
 
 /**
- * Vorlagen für `plan.md`/`changelog.md`/`init.md` — je Besitzer-Art
+ * Vorlagen für die Dokumente — je Besitzer-Art
  * (`provider`, `instance`, `agent`). Leere Strings bedeuten „eingebaute
  * Vorlage nutzen“ und werden verworfen. `undefined` bei ungültiger Struktur.
  */

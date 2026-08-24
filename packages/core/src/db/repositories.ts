@@ -32,7 +32,15 @@ import type {
 	TaskMetadata,
 	TaskStatus,
 } from "@diriz/shared"
-import { AGENT_DOC_KINDS, defaultDoc, parseInitDoc, renderInitDoc } from "@diriz/shared"
+import {
+	defaultDoc,
+	docKindsFor,
+	instanceDocs,
+	type ModelSpec,
+	parseInitDoc,
+	parseLlmDoc,
+	renderInitDoc,
+} from "@diriz/shared"
 import type { LogEntry } from "../logger.js"
 import type { Db } from "./connection.js"
 
@@ -54,6 +62,26 @@ function templatedDoc(
 	isoDate: string,
 ): string {
 	return defaultDoc(kind, owner, name, isoDate, getDocTemplates(db))
+}
+
+/**
+ * Startinhalt eines Dokuments in der Rangfolge: eigene Vorlage aus den
+ * Einstellungen → vorbelegter Inhalt (Modell-Katalog) → eingebaute Vorlage.
+ * Eine selbst gesetzte Vorlage gewinnt immer; sie ist eine Entscheidung.
+ */
+function startDoc(
+	db: Db,
+	owner: DocOwnerKind,
+	kind: AgentDocKind,
+	name: string,
+	isoDate: string,
+	preset?: Partial<Record<AgentDocKind, string>>,
+): string {
+	const custom = getDocTemplates(db)?.[owner]?.[kind]
+	if (custom && custom.trim().length > 0) {
+		return templatedDoc(db, kind, owner, name, isoDate)
+	}
+	return preset?.[kind] ?? templatedDoc(db, kind, owner, name, isoDate)
 }
 
 /* ---------------------------------- Provider --------------------------------- */
@@ -286,8 +314,30 @@ export function upsertInstance(
 			null,
 			now,
 		)
-		// Dokumente (plan/changelog/init) sofort anlegen — jede LLM-Instanz hat sie.
-		createDocs(db, "instance", id, model.displayName, now)
+		// Dokumente sofort anlegen — mit ausgefülltem `llm.md` aus dem
+		// Modell-Katalog statt leerer Vorlage: Ein Modell ohne Datenblatt ist
+		// für die Orchestrierung ein Modell ohne Eigenschaften.
+		const docs = instanceDocs(
+			{
+				modelId: model.modelId,
+				displayName: model.displayName,
+				contextWindow: model.contextWindow ?? 8192,
+				capabilities: model.capabilities,
+				languages: model.languages,
+				quantization: model.quantization,
+				pricePerMTok: model.pricePerMTok,
+			},
+			now,
+		)
+		createDocs(db, "instance", id, model.displayName, now, docs)
+		// Was im Datenblatt steht, gilt: Fähigkeiten daraus übernehmen — der
+		// Provider meldet meist keine, das Routing bräuchte sie aber.
+		if (docs.llm) {
+			syncInstanceFromLlm(db, id, docs.llm)
+		}
+		if (docs.init) {
+			syncSettingsFromInit(db, DOC_SCOPES.instance, id)
+		}
 		const created = getInstance(db, id)
 		if (!created) {
 			throw new Error("instance create failed")
@@ -417,6 +467,12 @@ interface DocScope {
 	ownerTable: string
 	/** Anzeigename, Anlagedatum und bereits gesetzte Settings des Besitzers. */
 	load(db: Db, id: string): { name: string; createdAt: string; settings?: ModelSettings | null } | undefined
+	/**
+	 * Vorbelegter Startinhalt statt leerer Vorlage. Modelle bekommen hier ihr
+	 * ausgefülltes `llm.md` aus dem Modell-Katalog — eine leere Vorlage wäre
+	 * für die Orchestrierung wertlos.
+	 */
+	defaults?(db: Db, id: string, isoDate: string): Partial<Record<AgentDocKind, string>>
 }
 
 const DOC_SCOPES: Record<DocOwnerKind, DocScope> = {
@@ -438,6 +494,10 @@ const DOC_SCOPES: Record<DocOwnerKind, DocScope> = {
 		load: (db, id) => {
 			const i = getInstance(db, id)
 			return i ? { name: i.displayName, createdAt: i.lastSeenAt, settings: i.modelSettings } : undefined
+		},
+		defaults: (db, id, isoDate) => {
+			const i = getInstance(db, id)
+			return i ? instanceDocs(i, isoDate) : {}
 		},
 	},
 	agent: {
@@ -495,7 +555,13 @@ function listDocs(db: Db, scope: DocScope, ownerId: string): PlainDoc[] {
 		.all(ownerId) as unknown as DocRow[]
 	const byKind = new Map(rows.map((r) => [r.kind, r]))
 	const now = new Date().toISOString()
-	return AGENT_DOC_KINDS.map((kind) => {
+	const kinds = docKindsFor(scope.owner)
+	// Fehlt etwas, wird es angelegt — das kostet einmalig, hält aber Bestände
+	// aktuell, wenn eine Ebene eine neue Dokumentart bekommt (`llm.md`).
+	const preset = kinds.some((k) => !byKind.has(k))
+		? (scope.defaults?.(db, ownerId, owner.createdAt || now) ?? {})
+		: {}
+	return kinds.map((kind) => {
 		const existing = byKind.get(kind)
 		if (existing) {
 			return { kind, content: existing.content, updatedAt: existing.updated_at }
@@ -503,7 +569,7 @@ function listDocs(db: Db, scope: DocScope, ownerId: string): PlainDoc[] {
 		const content =
 			kind === "init" && owner.settings && Object.keys(owner.settings).length > 0
 				? renderInitDoc(owner.settings, owner.name)
-				: templatedDoc(db, kind, scope.owner, owner.name, owner.createdAt || now)
+				: startDoc(db, scope.owner, kind, owner.name, owner.createdAt || now, preset)
 		writeDoc(db, scope, ownerId, kind, content, now)
 		return { kind, content, updatedAt: now }
 	})
@@ -525,6 +591,9 @@ function saveDoc(
 	if (kind === "init") {
 		syncSettingsFromInit(db, scope, ownerId)
 	}
+	if (kind === "llm" && scope.owner === "instance") {
+		syncInstanceFromLlm(db, ownerId, content)
+	}
 	return { kind, content, updatedAt: now }
 }
 
@@ -542,6 +611,33 @@ function syncSettingsFromInit(db: Db, scope: DocScope, ownerId: string): ModelSe
 	return settings
 }
 
+/**
+ * Spiegelt das `llm.md` in die `instances`-Tabelle: Fähigkeiten und
+ * Kontext-Fenster sind harte Routing-Gates, und das Dokument ist ihre Quelle
+ * der Wahrheit — genau wie `init.md` für die Model-Settings. Wer im Datenblatt
+ * `vision` streicht, nimmt das Modell damit aus dem Bild-Routing.
+ *
+ * Das Kontext-Fenster wird nur übernommen, wenn es plausibel ist: Eine
+ * versehentlich gelöschte Zeile darf ein Modell nicht aus jedem Routing werfen.
+ */
+function syncInstanceFromLlm(db: Db, instanceId: string, content: string): ModelSpec {
+	const spec = parseLlmDoc(content)
+	db.prepare("UPDATE instances SET capabilities_json = ? WHERE id = ?").run(
+		JSON.stringify(spec.capabilities),
+		instanceId,
+	)
+	if (spec.contextWindow !== undefined && spec.contextWindow >= 512) {
+		db.prepare("UPDATE instances SET context_window = ? WHERE id = ?").run(spec.contextWindow, instanceId)
+	}
+	return spec
+}
+
+/** Das ausgelesene Datenblatt eines Modells — Grundlage der Orchestrierung. */
+export function getInstanceSpec(db: Db, instanceId: string): ModelSpec | undefined {
+	const doc = getInstanceDoc(db, instanceId, "llm")
+	return doc ? parseLlmDoc(doc.content) : undefined
+}
+
 /** Legt die drei Dokumente an — beim Anlegen eines Besitzers. */
 function createDocs(
 	db: Db,
@@ -552,8 +648,8 @@ function createDocs(
 	preset?: Partial<Record<AgentDocKind, string>>,
 ): void {
 	const scope = DOC_SCOPES[owner]
-	for (const kind of AGENT_DOC_KINDS) {
-		writeDoc(db, scope, ownerId, kind, preset?.[kind] ?? templatedDoc(db, kind, owner, name, now), now)
+	for (const kind of docKindsFor(owner)) {
+		writeDoc(db, scope, ownerId, kind, startDoc(db, owner, kind, name, now, preset), now)
 	}
 }
 

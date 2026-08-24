@@ -40,6 +40,7 @@ import {
 	type TaskProfile,
 	type TimeoutSettings,
 	toAgentCandidate,
+	qualityPriorOf,
 	workBranchName,
 } from "@diriz/shared"
 import type { Db } from "../db/connection.js"
@@ -52,7 +53,7 @@ import {
 	getAgentDoc,
 	getExecution,
 	getInstance,
-	getInstanceDoc,
+	getInstanceSpec,
 	getProvider,
 	getProviderDoc,
 	getSetting,
@@ -458,11 +459,16 @@ export class ExecutionEngine {
 			}
 			const providerStatus = registry.status(inst.providerId)
 			const { p50 } = registry.latency(inst.providerId)
+			// Das Datenblatt (`llm.md`) des Modells: Es liefert die Eignungs-Achse
+			// (Stärken/Schwächen gegen den Prompt) und die Qualitätsklasse als
+			// Startwert — bis genug echtes Feedback vorliegt, das ihn ablöst.
+			const spec = getInstanceSpec(this.deps.db, inst.id)
 			const info: CandidateInfo = {
 				instance: inst,
 				loadFactor: registry.loadFactorOf(inst.providerId, inst.modelId),
 				providerLatencyMs: p50,
-				basisPrior: BASIS_PRIOR,
+				basisPrior: spec ? qualityPriorOf(spec) : BASIS_PRIOR,
+				spec,
 				local: ExecutionEngine.LOCAL_TYPES.includes(type),
 				hostRamUsagePct: host?.ramUsagePct,
 			}
@@ -652,7 +658,7 @@ export class ExecutionEngine {
 			this.limits(),
 		)
 		const scored = allowed
-			.map((c) => scoreCandidate(c, profile, weights, this.deps.feedback))
+			.map((c) => scoreCandidate(c, profile, weights, this.deps.feedback, task.prompt))
 			.sort((a, b) => b.score - a.score)
 		const ordered = this.orderByMode(scored, allowed, profile.mode, false)
 		return {
@@ -773,7 +779,7 @@ export class ExecutionEngine {
 		}
 
 		const scored = allowed
-			.map((c) => scoreCandidate(c, profile, weights, feedback))
+			.map((c) => scoreCandidate(c, profile, weights, feedback, task.prompt))
 			.sort((a, b) => b.score - a.score)
 
 		const ordered = this.orderByMode(scored, allowed, profile.mode)
@@ -983,7 +989,6 @@ export class ExecutionEngine {
 			// ← Task-Override). Zusätzlich wird die `plan.md` jeder Ebene als
 			// verbindliche Arbeitsanweisung angehängt — das Modell arbeitet damit
 			// genau so, wie das System es deklariert hat.
-			const instancePlan = getInstanceDoc(db, choice.instance.id, "plan")?.content
 			const agentPlan = agent ? getAgentDoc(db, agent.id, "plan")?.content : undefined
 			const systemPrompt = composeSystemPrompt([
 				{
@@ -992,8 +997,9 @@ export class ExecutionEngine {
 					systemPrompt: provider?.modelSettings?.systemPrompt,
 				},
 				{
+					// Ein Modell bekommt keinen Auftrag — seine Eigenschaften
+					// stehen im `llm.md` und wirken im Routing, nicht im Prompt.
 					label: `Modell ${choice.instance.displayName}`,
-					plan: instancePlan,
 					systemPrompt: choice.instance.modelSettings?.systemPrompt,
 				},
 				{

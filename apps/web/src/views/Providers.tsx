@@ -791,6 +791,7 @@ export default function Providers() {
 											{instDocs === inst.id && (
 												<div className="subpanel">
 													<DocsEditor
+														ownerKind="instance"
 														basePath={`/api/instances/${inst.id}`}
 														ownerName={inst.displayName}
 														onInitSaved={async () => {

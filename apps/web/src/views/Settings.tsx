@@ -5,7 +5,7 @@
 
 import {
 	AGENT_DOC_FILES,
-	AGENT_DOC_KINDS,
+	docKindsFor,
 	type AgentDocKind,
 	type ConcurrencySettings,
 	DEFAULT_WEIGHTS,
@@ -38,6 +38,11 @@ const WEIGHT_META: { key: keyof ScoringWeights; label: string; hint: string }[] 
 	{ key: "contextFit", label: "Context-Fit", hint: "Passt das Context-Fenster zur Task?" },
 	{ key: "capabilityMatch", label: "Capability-Match", hint: "Erfüllte Modell-Fähigkeiten" },
 	{ key: "qualityPrior", label: "Qualitäts-Prior", hint: "Lernfähige Erfolgshistorie (Ratings)" },
+	{
+		key: "specFit",
+		label: "Eignung",
+		hint: "Stärken und Schwächen aus dem `llm.md` des Modells, gemessen am Prompt",
+	},
 	{ key: "loadScore", label: "Last", hint: "Aktuelle Auslastung des Providers" },
 	{ key: "costScore", label: "Kosten", hint: "Preis pro Token (lokal = 0 $)" },
 	{ key: "latencyScore", label: "Latenz", hint: "Antwortgeschwindigkeit" },
@@ -79,6 +84,10 @@ export default function Settings() {
 	// Dokument-Vorlagen (M9): je Besitzer-Art und Dokumenttyp.
 	const [tplOwner, setTplOwner] = useState<DocOwnerKind>("agent")
 	const [tplKind, setTplKind] = useState<AgentDocKind>("plan")
+	// Ein Modell führt kein `plan.md` — beim Wechsel auf eine Ebene ohne die
+	// gewählte Art fällt die Auswahl auf deren erste Art zurück.
+	const tplKinds = docKindsFor(tplOwner)
+	const activeTplKind = tplKinds.includes(tplKind) ? tplKind : (tplKinds[0] ?? "plan")
 	const [templates, setTemplates] = useState<DocTemplateSettings | null>(null)
 	const [tplBusy, setTplBusy] = useState(false)
 	const [tplSaved, setTplSaved] = useState(false)
@@ -150,7 +159,7 @@ export default function Settings() {
 		}
 	}
 
-	const tplValue = templates?.[tplOwner]?.[tplKind] ?? ""
+	const tplValue = templates?.[tplOwner]?.[activeTplKind] ?? ""
 	const tplDirty =
 		templates !== null && JSON.stringify(templates) !== JSON.stringify(settings?.docTemplates ?? {})
 
@@ -160,9 +169,9 @@ export default function Settings() {
 			const next: DocTemplateSettings = { ...(prev ?? {}) }
 			const group = { ...(next[tplOwner] ?? {}) }
 			if (value.trim().length === 0) {
-				delete group[tplKind]
+				delete group[activeTplKind]
 			} else {
-				group[tplKind] = value
+				group[activeTplKind] = value
 			}
 			if (Object.keys(group).length === 0) {
 				delete next[tplOwner]
@@ -501,11 +510,11 @@ export default function Settings() {
 						))}
 					</div>
 					<div className="seg">
-						{AGENT_DOC_KINDS.map((k) => (
+						{docKindsFor(tplOwner).map((k) => (
 							<button
 								key={k}
 								type="button"
-								className={tplKind === k ? "active" : ""}
+								className={activeTplKind === k ? "active" : ""}
 								onClick={() => setTplKind(k)}
 							>
 								<IconDoc size={13} />
@@ -521,8 +530,8 @@ export default function Settings() {
 					style={{ minHeight: 220, marginTop: 12 }}
 					value={tplValue}
 					onChange={(e) => setTemplate(e.target.value)}
-					placeholder={defaultDoc(tplKind, tplOwner, "{{name}}", "{{datum}}")}
-					aria-label={`Vorlage ${AGENT_DOC_FILES[tplKind]}`}
+					placeholder={defaultDoc(activeTplKind, tplOwner, "{{name}}", "{{datum}}")}
+					aria-label={`Vorlage ${AGENT_DOC_FILES[activeTplKind]}`}
 				/>
 
 				<div className="row" style={{ marginTop: 12 }}>
@@ -537,7 +546,7 @@ export default function Settings() {
 					<button
 						type="button"
 						className="btn"
-						onClick={() => setTemplate(defaultDoc(tplKind, tplOwner, "{{name}}", "{{datum}}"))}
+						onClick={() => setTemplate(defaultDoc(activeTplKind, tplOwner, "{{name}}", "{{datum}}"))}
 					>
 						Eingebaute Vorlage übernehmen
 					</button>

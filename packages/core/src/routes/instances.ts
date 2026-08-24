@@ -2,10 +2,11 @@
  * Instance-Routen: Modelle pro Provider — Übersicht, manuelle Korrektur
  * (Context-Fenster, Fähigkeiten, Sprachen, Preis), Entfernen.
  *
- * Jede LLM-Instanz führt zusätzlich ihre drei Deklarations-Dokumente
- * (`plan.md`, `changelog.md`, `init.md`) — dieselbe Mechanik wie beim
- * Spezialisten: `init.md` setzt die Model-Voreinstellungen, `plan.md` wird
- * zur verbindlichen Arbeitsanweisung im System-Prompt.
+ * Jedes Modell führt drei Dokumente (`llm.md`, `changelog.md`, `init.md`).
+ * Anders als ein Spezialist bekommt es **keinen** Auftrag (`plan.md`), sondern
+ * ein Datenblatt: `llm.md` beschreibt Fähigkeiten, Kontext-Fenster, Stärken und
+ * Schwächen — und ist damit die Quelle der Wahrheit für die Orchestrierung.
+ * `init.md` setzt wie gehabt die Model-Voreinstellungen.
  */
 
 import {
@@ -13,10 +14,13 @@ import {
 	type AgentDocKind,
 	appendChangelogEntry,
 	type Capability,
+	docKindsFor,
 	isAgentDocKind,
 	type ModelSettings,
 	parseInitDoc,
+	parseLlmDoc,
 	renderInitDoc,
+	updateLlmDoc,
 } from "@diriz/shared"
 import type { FastifyInstance } from "fastify"
 import type { AppContext } from "../app.js"
@@ -82,6 +86,22 @@ export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
 				renderInitDoc(body.modelSettings ?? {}, body.displayName?.trim() || before.displayName),
 			)
 		}
+		// Fähigkeiten und Kontext-Fenster stehen im `llm.md` — dorthin zurück,
+		// sonst überschreibt der nächste Speichervorgang im Dokument die Eingabe.
+		if (body.capabilities !== undefined || body.contextWindow !== undefined) {
+			const doc = getInstanceDoc(ctx.db, req.params.id, "llm")
+			if (doc) {
+				saveInstanceDoc(
+					ctx.db,
+					req.params.id,
+					"llm",
+					updateLlmDoc(doc.content, {
+						capabilities: body.capabilities as Capability[] | undefined,
+						contextWindow: body.contextWindow,
+					}),
+				)
+			}
+		}
 		const instance = updateInstance(ctx.db, req.params.id, {
 			displayName: body.displayName,
 			contextWindow: body.contextWindow,
@@ -132,10 +152,11 @@ export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
 		"/api/instances/:id/docs/:kind",
 		(req, reply) => {
 			const { id, kind } = req.params
-			if (!isAgentDocKind(kind)) {
+			const allowed = docKindsFor("instance")
+			if (!isAgentDocKind(kind) || !allowed.includes(kind)) {
 				return reply
 					.code(400)
-					.send({ error: `kind muss einer von ${Object.values(AGENT_DOC_FILES).join(", ")} sein` })
+					.send({ error: `kind muss einer von ${allowed.map((k) => AGENT_DOC_FILES[k]).join(", ")} sein` })
 			}
 			const content = req.body?.content
 			if (typeof content !== "string") {
@@ -145,8 +166,13 @@ export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
 			if (!doc) {
 				return reply.code(404).send({ error: "Instance nicht gefunden" })
 			}
-			// `init.md` wirkt: die abgeleiteten Settings gleich zurückgeben.
-			return { ...doc, settings: kind === "init" ? parseInitDoc(content) : undefined }
+			// Beide wirksamen Dokumente geben zurück, was der Core daraus gelesen
+			// hat — die UI zeigt damit ohne zweite Anfrage die Wirkung an.
+			return {
+				...doc,
+				settings: kind === "init" ? parseInitDoc(content) : undefined,
+				spec: kind === "llm" ? parseLlmDoc(content) : undefined,
+			}
 		},
 	)
 

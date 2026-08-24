@@ -105,8 +105,11 @@ export function renderBlueprintPlan(bp: AgentBlueprint, isoDate: string): string
 	].join("\n")
 }
 
-/** Die drei Startdokumente eines Blueprints. */
-export function blueprintDocs(bp: AgentBlueprint, isoDate: string): Record<AgentDocKind, string> {
+/** Die drei Startdokumente eines Blueprints (ein Spezialist führt kein `llm.md`). */
+export function blueprintDocs(
+	bp: AgentBlueprint,
+	isoDate: string,
+): Record<Extract<AgentDocKind, "plan" | "changelog" | "init">, string> {
 	const day = isoDate.slice(0, 10)
 	return {
 		plan: renderBlueprintPlan(bp, isoDate),

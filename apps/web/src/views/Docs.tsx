@@ -1,7 +1,9 @@
 /**
  * Dokumente (M9): eine Ansicht für **alle** Deklarations-Dokumente des Systems
- * — `plan.md`, `changelog.md` und `init.md` je Rechner (Provider), je Modell
- * (LLM-Instanz) und je Spezialist.
+ * — je Rechner (Provider), je Modell (LLM-Instanz) und je Spezialist.
+ *
+ * Rechner und Spezialist führen einen Auftrag (`plan.md`), ein Modell ein
+ * Datenblatt (`llm.md`); dazu überall `changelog.md` und `init.md`.
  *
  * Bearbeiten, Markdown-Vorschau und Volltextsuche über den gesamten Bestand.
  * Gelesen wird gesammelt über `GET /api/docs`, geschrieben weiterhin über die
@@ -10,11 +12,13 @@
 
 import {
 	AGENT_DOC_FILES,
-	AGENT_DOC_KINDS,
+	ALL_DOC_KINDS,
 	type AgentDocKind,
 	type DocOwnerKind,
+	docKindsFor,
 	extractDirective,
 	parseInitDoc,
+	parseLlmDoc,
 	renderInitDoc,
 } from "@diriz/shared"
 import { useEffect, useMemo, useState } from "react"
@@ -58,6 +62,7 @@ const OWNER_META: Record<DocOwnerKind, { label: string; icon: typeof IconServer 
 
 const HINTS: Record<AgentDocKind, string> = {
 	plan: "Wirksam: Auftrag, Vorgehen und Leitplanken gehen als verbindliche Arbeitsanweisung in den System-Prompt. Unausgefüllte Vorlagen-Zeilen ignoriert DiriZ.",
+	llm: "Wirksam: Datenblatt des Modells. Fähigkeiten und Kontext-Fenster sind harte Routing-Gates, die Qualitätsklasse ist der Startwert der Qualitäts-Achse, „Gut für“/„Nicht geeignet für“ bewegen die Eignungs-Achse.",
 	changelog: "Änderungsprotokoll — DiriZ hängt bei jeder Bearbeitung automatisch einen Eintrag an.",
 	init: "Wirksam: Zeilen der Form „Temperature: 0.3“ setzen die Voreinstellungen des LLM-Modells.",
 }
@@ -65,7 +70,7 @@ const HINTS: Record<AgentDocKind, string> = {
 /** Reihenfolge der Deklaration: Rechner ← Modell ← Spezialist. */
 const GROUPS: { kind: DocOwnerKind; title: string; hint: string }[] = [
 	{ kind: "provider", title: "Rechner", hint: "Gilt für alle Modelle darauf" },
-	{ kind: "instance", title: "Modelle", hint: "Gilt für dieses eine LLM" },
+	{ kind: "instance", title: "Modelle", hint: "Datenblatt — Eigenschaften statt Auftrag" },
 	{ kind: "agent", title: "Spezialisten", hint: "Gilt für diesen Spezialisten" },
 ]
 
@@ -75,7 +80,7 @@ export default function Docs() {
 
 	const [owners, setOwners] = useState<DocOwner[] | null>(null)
 	const [selectedId, setSelectedId] = useState<string | null>(null)
-	const [kind, setKind] = useState<AgentDocKind>("plan")
+	const [kindChoice, setKind] = useState<AgentDocKind>("plan")
 	const [mode, setMode] = useState<ViewMode>("split")
 	const [query, setQuery] = useState("")
 	/** Entwürfe je `<ownerId>:<kind>` — ungespeicherte Änderungen bleiben beim Wechseln erhalten. */
@@ -99,6 +104,11 @@ export default function Docs() {
 	}, [setLastError])
 
 	const selected = owners?.find((o) => o.id === selectedId)
+	// Nicht jede Ebene führt jede Art: Beim Wechsel von einem Spezialisten
+	// (`plan.md`) auf ein Modell (`llm.md`) fällt die Auswahl auf die erste
+	// Art dieser Ebene zurück, statt einen leeren Tab zu zeigen.
+	const kinds = selected ? docKindsFor(selected.kind) : ALL_DOC_KINDS
+	const kind = kinds.includes(kindChoice) ? kindChoice : (kinds[0] ?? "plan")
 	const draftKey = `${selectedId}:${kind}`
 	const stored = selected?.docs[kind] ?? ""
 	const content = drafts[draftKey] ?? stored
@@ -115,7 +125,7 @@ export default function Docs() {
 		}
 		const result: { owner: DocOwner; hits: AgentDocKind[] }[] = []
 		for (const owner of owners) {
-			const hits = AGENT_DOC_KINDS.filter((k) => owner.docs[k]?.toLowerCase().includes(q))
+			const hits = docKindsFor(owner.kind).filter((k) => owner.docs[k]?.toLowerCase().includes(q))
 			const inName = owner.name.toLowerCase().includes(q) || (owner.detail ?? "").toLowerCase().includes(q)
 			if (hits.length > 0 || inName) {
 				result.push({ owner, hits })
@@ -148,8 +158,9 @@ export default function Docs() {
 				return next
 			})
 			setSavedAt(new Date().toLocaleTimeString("de-DE"))
-			// `init.md` verändert die Model-Voreinstellungen — abhängige Ansichten neu laden.
-			if (kind === "init") {
+			// `init.md` und `llm.md` verändern Model-Voreinstellungen bzw.
+			// Fähigkeiten — abhängige Ansichten neu laden.
+			if (kind === "init" || kind === "llm") {
 				const state = useStore.getState()
 				void state.refreshProviders()
 				void state.refreshAgents()
@@ -171,6 +182,7 @@ export default function Docs() {
 		})
 
 	const directive = kind === "plan" ? extractDirective(content) : undefined
+	const spec = kind === "llm" ? parseLlmDoc(content) : undefined
 	const parsedEntries =
 		kind === "init" ? Object.entries(parseInitDoc(content)).filter(([, v]) => v !== undefined) : []
 
@@ -180,8 +192,8 @@ export default function Docs() {
 				<div>
 					<h1>Dokumente</h1>
 					<p className="page-sub">
-						`plan.md`, `changelog.md` und `init.md` für jeden Rechner, jedes LLM-Modell und jeden Spezialisten
-						— die Deklaration, nach der die Modelle arbeiten.
+						Auftrag (`plan.md`) für Rechner und Spezialisten, Datenblatt (`llm.md`) für jedes Modell, dazu
+						`changelog.md` und `init.md` — die Deklaration, nach der DiriZ orchestriert.
 					</p>
 				</div>
 				<div className="page-actions">
@@ -232,7 +244,7 @@ export default function Docs() {
 									</div>
 									{items.map(({ owner, hits }) => {
 										const Icon = OWNER_META[owner.kind].icon
-										const ownerDirty = AGENT_DOC_KINDS.some(
+										const ownerDirty = docKindsFor(owner.kind).some(
 											(k) =>
 												drafts[`${owner.id}:${k}`] !== undefined &&
 												drafts[`${owner.id}:${k}`] !== owner.docs[k],
@@ -329,7 +341,7 @@ export default function Docs() {
 							</div>
 
 							<div className="tabs">
-								{AGENT_DOC_KINDS.map((k) => {
+								{kinds.map((k) => {
 									const kDirty =
 										drafts[`${selected.id}:${k}`] !== undefined &&
 										drafts[`${selected.id}:${k}`] !== selected.docs[k]
@@ -389,6 +401,20 @@ export default function Docs() {
 											</span>
 										</p>
 									)}
+								</div>
+							)}
+
+							{spec && (
+								<div className="row tight" style={{ marginTop: "var(--sp-3)" }}>
+									<span className="field-hint">Das Routing liest daraus:</span>
+									<span className={`badge ${spec.capabilities.length > 0 ? "accent" : ""}`}>
+										Fähigkeiten: {spec.capabilities.length > 0 ? spec.capabilities.join(", ") : "keine"}
+									</span>
+									<span className="badge">Kontext: {spec.contextWindow ?? "—"}</span>
+									<span className="badge">Qualität: {spec.quality ?? "mittel"}</span>
+									<span className="badge">
+										Eignung: {spec.goodFor.length} gut / {spec.notFor.length} ungeeignet
+									</span>
 								</div>
 							)}
 

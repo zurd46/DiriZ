@@ -14,10 +14,11 @@
  * - **Repository ändern**: Agentik-Modus in einem Git-Worktree des Repos.
  */
 
-import type { Repo, Task } from "@diriz/shared"
-import { useEffect, useRef, useState } from "react"
+import type { GitHubConnection, GitHubRepoSummary, Repo, Task } from "@diriz/shared"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
 	IconAgents,
+	IconAlert,
 	IconChat,
 	IconDoc,
 	IconGitBranch,
@@ -38,7 +39,7 @@ const TARGETS: { id: Target; label: string; hint: string }[] = [
 	{
 		id: "repo",
 		label: "Repository ändern",
-		hint: "Arbeitet im Git-Worktree eines verbundenen Repos — dafür muss es unter „GitHub“ angebunden sein (Token allein genügt nicht)",
+		hint: "Arbeitet im Git-Worktree eines Repos — jedes Repository des verbundenen GitHub-Kontos ist wählbar, DiriZ bindet es beim Senden an",
 	},
 ]
 
@@ -50,6 +51,14 @@ interface Turn {
 	taskId?: string
 	status: "sending" | "running" | "done" | "failed"
 	error?: string
+}
+
+/** Zusatz hinter dem Namen, solange der lokale Klon noch nicht steht. */
+function cloneNote(repo: Repo): string {
+	if (repo.localPath) {
+		return ""
+	}
+	return repo.lastError ? " (Klon fehlgeschlagen)" : " (wird geklont …)"
 }
 
 /** Titel aus der ersten Zeile — er benennt später auch den Git-Branch. */
@@ -74,28 +83,96 @@ function withHistory(prompt: string, history: { prompt: string; answer: string }
 }
 
 export default function Chat() {
+	const connected = useStore((s) => s.connected)
 	const live = useStore((s) => s.live)
 	const taskDetails = useStore((s) => s.taskDetails)
 	const agents = useStore((s) => s.agents)
 	const loadDetail = useStore((s) => s.loadTaskDetail)
 	const refreshTasks = useStore((s) => s.refreshTasks)
 	const setLastError = useStore((s) => s.setLastError)
+	const notify = useStore((s) => s.notify)
 
 	const [turns, setTurns] = useState<Turn[]>([])
 	const [input, setInput] = useState("")
 	const [target, setTarget] = useState<Target>("answer")
 	const [repos, setRepos] = useState<Repo[]>([])
-	const [repoId, setRepoId] = useState("")
+	const [available, setAvailable] = useState<GitHubRepoSummary[]>([])
+	const [ghConnected, setGhConnected] = useState<boolean | undefined>()
+	/** Gewählt wird über `owner/name` — das gibt es für angebundene wie für Konto-Repos. */
+	const [repoName, setRepoName] = useState("")
 	const [keepContext, setKeepContext] = useState(true)
 	const [busy, setBusy] = useState(false)
 	const endRef = useRef<HTMLDivElement>(null)
 
-	useEffect(() => {
-		api
-			.get<Repo[]>("/api/repos")
-			.then(setRepos)
-			.catch(() => setRepos([]))
+	const loadRepos = useCallback(async () => {
+		try {
+			setRepos(await api.get<Repo[]>("/api/repos"))
+		} catch {
+			setRepos([])
+		}
 	}, [])
+
+	useEffect(() => {
+		void loadRepos()
+	}, [loadRepos])
+
+	// Die Auswahl zeigt bewusst nicht nur bereits Angebundenes: Wer ein GitHub-Konto
+	// verbunden hat, findet hier jedes seiner Repositories — das Anbinden und Klonen
+	// erledigt DiriZ beim Senden. Erst laden, wenn das Ziel wirklich „Repository“ ist,
+	// sonst fragt jeder Chat-Aufruf ungefragt bei GitHub nach.
+	useEffect(() => {
+		if (target !== "repo" || ghConnected !== undefined) {
+			return
+		}
+		api
+			.get<GitHubConnection>("/api/github")
+			.then(async (connection) => {
+				setGhConnected(connection.connected)
+				if (connection.connected) {
+					setAvailable(await api.get<GitHubRepoSummary[]>("/api/github/repos"))
+				}
+			})
+			.catch(() => setGhConnected(false))
+	}, [target, ghConnected])
+
+	// Ein frisch angebundenes Repository wird im Hintergrund geklont — bis dahin fehlt
+	// der lokale Pfad. Solange nachfragen, sonst bleibt die Auswahl auf altem Stand.
+	useEffect(() => {
+		if (!repos.some((r) => !r.localPath && !r.lastError)) {
+			return
+		}
+		const timer = setInterval(() => void loadRepos(), 2500)
+		return () => clearInterval(timer)
+	}, [repos, loadRepos])
+
+	/**
+	 * Liefert die Repo-ID zum gewählten Namen — bindet an und klont, falls nötig.
+	 * Eine Task lässt sich nur an ein Repository pinnen, dessen Klon fertig ist.
+	 */
+	const ensureRepo = async (fullName: string): Promise<string> => {
+		let repo = repos.find((r) => r.fullName === fullName)
+		if (!repo) {
+			notify("info", `${fullName} wird angebunden …`)
+			try {
+				repo = await api.post<Repo>("/api/repos", { repo: fullName })
+			} catch (e) {
+				// Bereits verbunden (409): Dann fehlt es nur in unserer Liste.
+				const fresh = await api.get<Repo[]>("/api/repos")
+				setRepos(fresh)
+				repo = fresh.find((r) => r.fullName === fullName)
+				if (!repo) {
+					throw e
+				}
+			}
+		}
+		if (!repo.localPath) {
+			notify("info", `${fullName} wird geklont — das kann einen Moment dauern …`)
+			// `sync` hängt sich an einen bereits laufenden Klon, statt einen zweiten zu starten.
+			repo = await api.post<Repo>(`/api/repos/${repo.id}/sync`, {})
+		}
+		await loadRepos()
+		return repo.id
+	}
 
 	/** Live-Stream einer Task — die Zuordnung liefert `routing.decided`. */
 	const runOf = (taskId?: string) =>
@@ -117,20 +194,23 @@ export default function Chat() {
 		if (!text || busy) {
 			return
 		}
-		if (target === "repo" && !repoId) {
+		if (target === "repo" && !repoName) {
 			setLastError(
-				repos.length === 0
-					? "Kein Repository angebunden — unter „GitHub“ verbinden, dann erscheint es hier"
+				choices.length === 0
+					? "Kein Repository verfügbar — unter „GitHub“ ein Konto verbinden"
 					: "Bitte ein Repository wählen — oder Ziel auf „Projekt anlegen“ stellen",
 			)
 			return
 		}
 		const id = crypto.randomUUID()
-		const repoLabel = repos.find((r) => r.id === repoId)?.fullName
+		const repoLabel = target === "repo" ? repoName : undefined
 		setTurns((t) => [...t, { id, prompt: text, target, repoLabel, status: "sending" }])
 		setInput("")
 		setBusy(true)
 		try {
+			// Vor der Task: Ein noch nicht angebundenes Repository erst verbinden und klonen —
+			// sonst entstünde eine Task, die sich anschließend nicht pinnen lässt.
+			const readyRepoId = target === "repo" ? await ensureRepo(repoName) : undefined
 			const history = turns
 				.filter((t) => t.status === "done")
 				.map((t) => ({ prompt: t.prompt, answer: answerOf(t) }))
@@ -141,8 +221,8 @@ export default function Chat() {
 				metadata: { privacy: "local-only", mode: "auto", agentMode: target !== "answer" },
 				assignmentMode: "auto",
 			})
-			if (target === "repo") {
-				await api.put(`/api/tasks/${task.id}/repo`, { repoId })
+			if (readyRepoId) {
+				await api.put(`/api/tasks/${task.id}/repo`, { repoId: readyRepoId })
 			}
 			await api.post(`/api/tasks/${task.id}/start`)
 			setTurns((t) => t.map((x) => (x.id === id ? { ...x, taskId: task.id, status: "running" } : x)))
@@ -197,6 +277,14 @@ export default function Chat() {
 
 	const activeTarget = TARGETS.find((t) => t.id === target)
 
+	/** Auswahl: angebundene Repositories zuerst, danach die übrigen des GitHub-Kontos. */
+	const choices = [
+		...repos.map((r) => ({ fullName: r.fullName, note: cloneNote(r) })),
+		...available
+			.filter((r) => !repos.some((c) => c.fullName === r.fullName))
+			.map((r) => ({ fullName: r.fullName, note: " (wird beim Senden angebunden)" })),
+	]
+
 	return (
 		<div className="fade-in chat-view">
 			<div className="page-head">
@@ -208,6 +296,16 @@ export default function Chat() {
 					</p>
 				</div>
 			</div>
+
+			{!connected && (
+				<div className="banner error" role="alert">
+					<IconAlert size={17} />
+					<span className="banner-text">
+						Keine Verbindung zum DiriZ Core. Ohne ihn kann keine Aufgabe laufen — starte ihn mit{" "}
+						<code>npm run serve</code>.
+					</span>
+				</div>
+			)}
 
 			<div className="chat-log">
 				{turns.length === 0 && (
@@ -311,22 +409,24 @@ export default function Chat() {
 						</button>
 					))}
 					{target === "repo" &&
-						(repos.length > 0 ? (
-							<select value={repoId} onChange={(e) => setRepoId(e.target.value)} aria-label="Repository">
+						(choices.length > 0 ? (
+							<select value={repoName} onChange={(e) => setRepoName(e.target.value)} aria-label="Repository">
 								<option value="">Repository wählen …</option>
-								{repos.map((r) => (
-									<option key={r.id} value={r.id} disabled={!r.localPath}>
-										{r.fullName}
-										{r.localPath ? "" : " (wird geklont)"}
+								{choices.map((c) => (
+									<option key={c.fullName} value={c.fullName}>
+										{c.fullName}
+										{c.note}
 									</option>
 								))}
 							</select>
 						) : (
 							// Ohne diesen Hinweis steht hier nur eine leere Auswahl, und niemand
-							// erfährt, dass ein Repository erst angebunden werden muss.
+							// erfährt, dass zuerst ein GitHub-Konto verbunden werden muss.
 							<a className="btn" href="/github">
 								<IconGitBranch size={14} />
-								Kein Repository angebunden — jetzt verbinden
+								{ghConnected === false
+									? "Kein GitHub-Konto verbunden — jetzt verbinden"
+									: "Keine Repositories gefunden — GitHub öffnen"}
 							</a>
 						))}
 					<label className="chat-context">
@@ -358,7 +458,7 @@ export default function Chat() {
 						type="button"
 						className="btn primary"
 						onClick={() => void send()}
-						disabled={busy || input.trim().length === 0}
+						disabled={busy || !connected || input.trim().length === 0}
 					>
 						<IconPlay size={14} />
 						Senden

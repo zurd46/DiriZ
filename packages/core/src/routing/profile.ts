@@ -56,6 +56,19 @@ export function extractProfile(task: Task): TaskProfile {
 	if (TOOLS_PATTERNS.some((re) => re.test(prompt))) {
 		preferred.push("tools")
 	}
+	// Agentik-Modus: Das Modell soll Dateien lesen und schreiben. Damit ist die
+	// Aufgabe unabhängig vom Wortlaut eine Code-Aufgabe — „bau mir eine
+	// Webseite“ enthält kein einziges technisches Stichwort, verlangt aber
+	// genau dieselben Fähigkeiten. Als Wunsch, nicht als Pflicht: Sonst würde
+	// ein hartes Gate Modelle ausschliessen, die es vielleicht doch könnten.
+	if (task.metadata.agentMode === true) {
+		if (!required.includes("code")) {
+			preferred.push("code")
+		}
+		if (!preferred.includes("tools")) {
+			preferred.push("tools")
+		}
+	}
 
 	return {
 		estTokens: estimateTokens(task.prompt),

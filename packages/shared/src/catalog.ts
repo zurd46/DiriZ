@@ -482,7 +482,7 @@ export const SOFTWARE_TEAM: AgentBlueprint[] = [
 		name: "Frontend-Entwickler",
 		discipline: "Implementierung",
 		description:
-			"Frontend, React, Vue, Svelte, TypeScript, JSX, CSS, Tailwind, Komponente, State, Hook, Routing, Formular, Browser, Bundle, responsive, Oberfläche implementieren",
+			"Frontend, Webseite, Website, Homepage, Landingpage, Webauftritt, React, Vue, Svelte, TypeScript, JSX, CSS, Tailwind, Komponente, State, Hook, Routing, Formular, Browser, Bundle, responsive, Oberfläche implementieren",
 		systemPrompt: role(
 			"Du bist Frontend-Entwickler. Du baust Oberflächen als Komponenten: typsicher, zugänglich, ohne unnötigen Zustand.",
 			[

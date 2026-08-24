@@ -8,19 +8,41 @@ const BASE: string = import.meta.env.VITE_DIRIZ_API ?? ""
 export class ApiError extends Error {
 	constructor(
 		message: string,
+		/** HTTP-Status; **0** bedeutet: gar keine Antwort (Netzwerk/Server aus). */
 		readonly status: number,
+		options?: ErrorOptions,
 	) {
-		super(message)
+		super(message, options)
 		this.name = "ApiError"
+	}
+
+	/** Kein Server erreichbar — anders zu behandeln als ein 4xx/5xx. */
+	get offline(): boolean {
+		return this.status === 0
 	}
 }
 
+/** Adresse des Cores — für die Fehlermeldung, wenn er nicht antwortet. */
+const CORE_URL = BASE || window.location.origin
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
 	const hasBody = init?.body !== undefined && init.body !== null
-	const res = await fetch(`${BASE}${path}`, {
-		...init,
-		headers: { ...(hasBody ? { "content-type": "application/json" } : {}), ...(init?.headers ?? {}) },
-	})
+	let res: Response
+	try {
+		res = await fetch(`${BASE}${path}`, {
+			...init,
+			headers: { ...(hasBody ? { "content-type": "application/json" } : {}), ...(init?.headers ?? {}) },
+		})
+	} catch (e) {
+		// `fetch` wirft bei Netzwerkfehlern ein nacktes „Failed to fetch“ — das
+		// nennt weder Ursache noch Adresse. Der mit Abstand häufigste Fall ist
+		// ein nicht laufender Core, also sagen wir genau das.
+		throw new ApiError(
+			`DiriZ Core nicht erreichbar (${CORE_URL}) — läuft der Server? Start mit „npm run serve“.`,
+			0,
+			{ cause: e },
+		)
+	}
 	if (!res.ok) {
 		let message = `HTTP ${res.status}`
 		try {

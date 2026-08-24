@@ -14,6 +14,7 @@ import {
 	getExecution,
 	getInstance,
 	getProvider,
+	getRepo,
 	getSwarm,
 	getTask,
 	latestAgentSelection,
@@ -22,6 +23,7 @@ import {
 	listExecutionsByTask,
 	listFilesByTask,
 	listTasks,
+	listToolCallsByTask,
 	replayOutput,
 	updateExecution,
 } from "../db/repositories.js"
@@ -144,6 +146,11 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 				createdAt: task.createdAt,
 				agentMode: task.metadata.agentMode === true,
 				repoId: task.repoId ?? null,
+				// Welches Projekt, welcher Branch — „GitHub“ allein sagt nichts.
+				repoFullName: task.repoId ? (getRepo(ctx.db, task.repoId)?.fullName ?? null) : null,
+				workBranch: task.workBranch ?? null,
+				pushedAt: task.pushedAt ?? null,
+				prUrl: task.prUrl ?? null,
 				agentName: selection?.agentName ?? null,
 				agentReason: selection?.reason ?? null,
 				modelName: instance?.displayName ?? null,
@@ -151,6 +158,12 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 				answer: last?.output ?? "",
 				error: last?.error ?? null,
 				files: listFilesByTask(ctx.db, task.id).map((f) => ({ relPath: f.relPath, size: f.size })),
+				toolCalls: listToolCallsByTask(ctx.db, task.id).map((t) => ({
+					id: `${t.executionId}-${t.seq}`,
+					name: t.name,
+					argsSummary: t.argsSummary,
+					ok: t.ok,
+				})),
 			}
 			const entry = chats.get(chatId)
 			if (entry) {
@@ -200,6 +213,7 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 		return {
 			...task,
 			executions,
+			toolCalls: listToolCallsByTask(ctx.db, task.id),
 			files: listFilesByTask(ctx.db, task.id),
 			decisions: executions.map((e) => latestDecision(ctx.db, e.id)).filter((d) => d !== undefined),
 			agentSelection: latestAgentSelection(ctx.db, task.id),

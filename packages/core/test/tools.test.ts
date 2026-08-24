@@ -8,6 +8,9 @@ import os from "node:os"
 import path from "node:path"
 import type { ToolCallRequest } from "@diriz/shared"
 import { describe, expect, it } from "vitest"
+import { openDatabase } from "../src/db/connection.js"
+import { migrate } from "../src/db/migrate.js"
+import { appendToolCall, createTask, listToolCallsByTask } from "../src/db/repositories.js"
 import { executeTool, TOOL_SPECS } from "../src/execution/tools.js"
 
 const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-tools-"))
@@ -87,5 +90,51 @@ describe("tools: Sandbox", () => {
 		for (const op of ops) {
 			expect(op.name).toBeTruthy()
 		}
+	})
+})
+
+/**
+ * Tool-Operationen müssen ein Neuladen überleben: Der SSE-Stream erreicht nur,
+ * wer gerade zusieht. Ohne Persistenz sähe man nach einem Reload nicht mehr,
+ * was das Modell tut — und im Verlauf von gestern gar nichts mehr.
+ */
+describe("Tool-Operationen werden festgehalten", () => {
+	it("speichert sie in Reihenfolge und liefert sie zur Task", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-toolcalls-"))
+		const db = openDatabase(dir)
+		migrate(db)
+		const task = createTask(db, { prompt: "Dateien anfassen", title: "Tool-Test" })
+
+		appendToolCall(db, {
+			executionId: "e1",
+			taskId: task.id,
+			name: "list_files",
+			argsSummary: "(keine Argumente)",
+			ok: true,
+		})
+		appendToolCall(db, {
+			executionId: "e1",
+			taskId: task.id,
+			name: "read_file",
+			argsSummary: "src/app.ts",
+			ok: true,
+		})
+		appendToolCall(db, {
+			executionId: "e1",
+			taskId: task.id,
+			name: "write_file",
+			argsSummary: "src/app.ts",
+			ok: false,
+			detail: "kein Schreibrecht",
+		})
+
+		const calls = listToolCallsByTask(db, task.id)
+		expect(calls.map((c) => c.name)).toEqual(["list_files", "read_file", "write_file"])
+		expect(calls.map((c) => c.seq)).toEqual([1, 2, 3])
+		expect(calls[2].ok).toBe(false)
+		expect(calls[2].detail).toBe("kein Schreibrecht")
+
+		db.close()
+		fs.rmSync(dir, { recursive: true, force: true })
 	})
 })

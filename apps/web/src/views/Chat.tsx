@@ -15,13 +15,14 @@
  * das Modell noch geladen wird, was es gerade schreibt, welche Dateien es anfasst.
  */
 
-import type { InstanceModel, Repo, Task } from "@diriz/shared"
+import { findBlueprint, type InstanceModel, type Repo, type Task } from "@diriz/shared"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
 	IconAgents,
 	IconAlert,
 	IconChat,
 	IconDoc,
+	IconEdit,
 	IconGitBranch,
 	IconPlay,
 	IconPlus,
@@ -64,6 +65,8 @@ interface Turn {
 	answer: string
 	error: string | null
 	files: { relPath: string; size: number }[]
+	/** Dateioperationen des Modells — aus der Datenbank, überlebt das Neuladen. */
+	toolCalls: { id: string; name: string; argsSummary: string; ok: boolean }[]
 }
 
 interface ChatSummary {
@@ -112,7 +115,7 @@ function withHistory(prompt: string, history: { prompt: string; answer: string }
  * Oberflächen für dieselbe Sache würden auseinanderlaufen. Die Task wird hier
  * nachgeladen, weil der Chat-Verlauf nur die Kurzfassung kennt.
  */
-function ChatGitPanel({ taskId }: { taskId: string }) {
+function ChatGitPanel({ taskId, refreshKey }: { taskId: string; refreshKey: number }) {
 	const [task, setTask] = useState<Task | null>(null)
 
 	const load = useCallback(() => {
@@ -131,9 +134,64 @@ function ChatGitPanel({ taskId }: { taskId: string }) {
 	}
 	return (
 		<div className="chat-git">
-			<TaskGitPanel task={task} onTaskChanged={load} />
+			<TaskGitPanel task={task} onTaskChanged={load} refreshKey={refreshKey} />
 		</div>
 	)
+}
+
+/** Ein Werkzeug-Aufruf, mehrfach gleiche zusammengefasst. */
+interface ToolBadge {
+	id: string
+	name: string
+	target: string
+	ok: boolean
+	count: number
+}
+
+/**
+ * Fasst gleiche Aufrufe zusammen. Modelle lesen dieselbe Datei gern mehrfach —
+ * sechs identische Zeilen sagen nichts, was „read_file api/render.js ×6“ nicht
+ * kürzer und ehrlicher sagt.
+ */
+function toolBadges(ops: { id: string; name: string; argsSummary: string; ok: boolean }[]): ToolBadge[] {
+	const out: ToolBadge[] = []
+	for (const op of ops) {
+		const target = op.argsSummary === "(keine Argumente)" ? "" : op.argsSummary
+		const last = out.find((b) => b.name === op.name && b.target === target && b.ok === op.ok)
+		if (last) {
+			last.count++
+		} else {
+			out.push({ id: op.id, name: op.name, target, ok: op.ok, count: 1 })
+		}
+	}
+	return out
+}
+
+/** Kurzname des Werkzeugs für das Badge — „read_file“ liest sich schlecht. */
+const TOOL_LABEL: Record<string, string> = {
+	list_files: "Dateien auflisten",
+	read_file: "gelesen",
+	write_file: "geschrieben",
+}
+
+/** Statusworte, wie ein Mensch sie erwartet — nicht die Datenbankwerte. */
+const STATUS_LABEL: Record<string, string> = {
+	draft: "Entwurf",
+	routing: "wird zugeordnet",
+	queued: "wartet",
+	running: "läuft",
+	done: "fertig",
+	failed: "fehlgeschlagen",
+	cancelled: "abgebrochen",
+}
+
+const STATUS_PILL: Record<string, string> = {
+	running: "running",
+	done: "ok",
+	failed: "err",
+	cancelled: "warn",
+	queued: "queued",
+	routing: "routing",
 }
 
 const seconds = (ms: number) => `${Math.max(0, Math.round(ms / 1000))} s`
@@ -219,6 +277,17 @@ export default function Chat() {
 		return () => clearInterval(id)
 	}, [running])
 
+	// Während eines Laufs regelmässig nachladen. Der SSE-Stream versorgt nur
+	// die Sitzung, in der der Lauf gestartet wurde — wer die Seite neu lädt
+	// oder in einem zweiten Tab zusieht, bekommt sonst nichts mit.
+	useEffect(() => {
+		if (!running) {
+			return
+		}
+		const id = setInterval(() => void loadChats(), 5000)
+		return () => clearInterval(id)
+	}, [running, loadChats])
+
 	// Endet ein Lauf, holt sich die Ansicht die persistierte Antwort — genau
 	// einmal je Task. Ohne die Merkliste löste jeder Token ein Nachladen aus.
 	const reloaded = useRef(new Set<string>())
@@ -299,6 +368,7 @@ export default function Chat() {
 					answer: "",
 					error: null,
 					files: [],
+					toolCalls: [],
 				},
 			])
 			if (target === "repo") {
@@ -463,12 +533,22 @@ export default function Chat() {
 							const loading = isRunning && run !== undefined && run.firstActivityAt === undefined
 							const loadMs =
 								run?.startedAt !== undefined ? (run.firstActivityAt ?? Date.now()) - run.startedAt : undefined
-							const toolOps = run?.toolOps ?? []
+							// Live bevorzugt (sofortige Anzeige), sonst der persistierte
+							// Stand — nach einem Neuladen ist genau der alles, was es gibt.
+							const liveOps = run?.toolOps ?? []
+							const toolOps = liveOps.length >= turn.toolCalls.length ? liveOps : turn.toolCalls
 							const lastTool = toolOps.at(-1)
 							// Gesamtdauer mitlaufen lassen: Ohne sie wirkt ein Lauf, der
 							// minutenlang nur nachdenkt, wie ein hängendes Programm.
 							const elapsedMs = run?.startedAt !== undefined ? Date.now() - run.startedAt : undefined
 							const files = turn.files
+							const badges = toolBadges(toolOps)
+							// Fachbereich aus dem Katalog — er ordnet den Spezialisten ein,
+							// ohne dass man seine Beschreibung lesen muss.
+							const agentId = agents.find((a) => a.name === turn.agentName)?.id
+							const discipline = agentId
+								? findBlueprint(agentId.replace(/^agent-/, ""))?.discipline
+								: undefined
 							return (
 								<div key={turn.taskId} className="chat-turn">
 									<div className="chat-msg user">
@@ -477,20 +557,32 @@ export default function Chat() {
 									</div>
 
 									<div className="chat-msg agent">
-										<div className="chat-role">
-											<IconAgents size={14} />
-											<strong>
-												{turn.agentName ??
-													(isRunning && !run ? "Spezialist wird gewählt …" : "Freies Routing")}
-											</strong>
-											{worker.model && (
-												<span className="chat-worker">
-													<IconServer size={13} />
-													{worker.model}
-													{worker.host ? ` @ ${worker.host}` : ""}
-												</span>
-											)}
-											<span className={`pill ${turn.status}`}>{turn.status}</span>
+										<div className="chat-head">
+											<span className="chat-avatar" aria-hidden="true">
+												<IconAgents size={16} />
+											</span>
+											<div className="chat-ident">
+												<div className="chat-name">
+													{turn.agentName ??
+														(isRunning && !run ? "Spezialist wird gewählt …" : "Freies Routing")}
+													{discipline && <span className="badge soft">{discipline}</span>}
+												</div>
+												{worker.model && (
+													<div className="chat-worker">
+														<IconServer size={12} />
+														<span className="mono">{worker.model}</span>
+														{worker.host && (
+															<>
+																<span className="chat-at">auf</span>
+																<span className="mono">{worker.host}</span>
+															</>
+														)}
+													</div>
+												)}
+											</div>
+											<span className={`pill ${STATUS_PILL[turn.status] ?? "info"}`}>
+												{STATUS_LABEL[turn.status] ?? turn.status}
+											</span>
 											{isRunning && (
 												<button
 													type="button"
@@ -503,7 +595,11 @@ export default function Chat() {
 											)}
 										</div>
 
-										{turn.agentReason && <div className="chat-reason">{turn.agentReason}</div>}
+										{turn.agentReason && (
+											<div className="chat-reason" title="Warum dieser Spezialist gewählt wurde">
+												{turn.agentReason}
+											</div>
+										)}
 
 										{/* Was passiert gerade? Ohne diese Zeile sieht ein Modell,
 										    das lädt, aus wie ein Programm, das hängt. */}
@@ -542,14 +638,20 @@ export default function Chat() {
 											<div className="chat-reason">Wechsel: {run.failovers.join(" · ")}</div>
 										)}
 
-										{toolOps.length > 0 && (
-											<ul className="chat-tools">
-												{toolOps.map((op) => (
-													<li key={op.id} className={op.ok ? "ok" : "err"}>
-														<IconDoc size={12} /> {op.name} — {op.argsSummary}
-													</li>
+										{badges.length > 0 && (
+											<div className="chat-tools">
+												<span className="chat-tools-label">
+													{toolOps.length} Operation{toolOps.length === 1 ? "" : "en"}
+												</span>
+												{badges.map((b) => (
+													<span key={b.id} className={`tool-badge ${b.ok ? "" : "err"} ${b.name}`}>
+														{b.name === "write_file" ? <IconEdit size={11} /> : <IconDoc size={11} />}
+														<span className="tool-verb">{TOOL_LABEL[b.name] ?? b.name}</span>
+														{b.target && <span className="mono tool-target">{b.target}</span>}
+														{b.count > 1 && <span className="tool-count">×{b.count}</span>}
+													</span>
 												))}
-											</ul>
+											</div>
 										)}
 
 										{run?.reasoning && (
@@ -570,7 +672,7 @@ export default function Chat() {
 										{turn.error && <div className="chat-error">{turn.error}</div>}
 
 										{/* Repository-Arbeit: Diff und der Weg zu GitHub, direkt hier. */}
-										{turn.repoId && !isRunning && <ChatGitPanel taskId={turn.taskId} />}
+										{turn.repoId && <ChatGitPanel taskId={turn.taskId} refreshKey={toolOps.length} />}
 
 										{files.length > 0 && (
 											<div className="chat-files">

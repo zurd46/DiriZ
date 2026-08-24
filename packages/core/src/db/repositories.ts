@@ -1359,12 +1359,11 @@ export function appendToolCall(
 ): void {
 	const seq =
 		call.seq ??
-		((
-			db.prepare("SELECT COALESCE(MAX(seq), 0) AS s FROM tool_calls WHERE execution_id = ?").get(
-				call.executionId,
-			) as { s: number }
-		).s +
-			1)
+		(
+			db
+				.prepare("SELECT COALESCE(MAX(seq), 0) AS s FROM tool_calls WHERE execution_id = ?")
+				.get(call.executionId) as { s: number }
+		).s + 1
 	db.prepare(
 		`INSERT INTO tool_calls (execution_id, task_id, seq, name, args_summary, ok, detail, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,

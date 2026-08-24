@@ -14,7 +14,20 @@ import { useStore } from "../store.js"
 import DiffView from "./DiffView.js"
 import { IconArrowRight, IconCheckCircle, IconGitBranch, IconInfo, IconRefresh, IconUpload } from "./icons.js"
 
-export default function TaskGitPanel({ task, onTaskChanged }: { task: Task; onTaskChanged?: () => void }) {
+export default function TaskGitPanel({
+	task,
+	onTaskChanged,
+	refreshKey,
+}: {
+	task: Task
+	onTaskChanged?: () => void
+	/**
+	 * Ändert sich dieser Wert, lädt der Bereich Status und Diff neu. Der Chat
+	 * zählt damit die Dateioperationen mit — so wächst der Diff live mit,
+	 * während das Modell noch schreibt.
+	 */
+	refreshKey?: number
+}) {
 	const notify = useStore((s) => s.notify)
 	const setLastError = useStore((s) => s.setLastError)
 
@@ -64,7 +77,7 @@ export default function TaskGitPanel({ task, onTaskChanged }: { task: Task; onTa
 
 	useEffect(() => {
 		void reload()
-	}, [reload])
+	}, [reload, refreshKey])
 
 	const run = async (label: string, fn: () => Promise<void>) => {
 		setBusy(label)

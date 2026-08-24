@@ -45,6 +45,7 @@ import {
 import type { Db } from "../db/connection.js"
 import {
 	appendChunk,
+	appendToolCall,
 	createExecution,
 	getAgent,
 	getAgentDoc,
@@ -953,6 +954,11 @@ export class ExecutionEngine {
 					},
 					emitToolCall: (data) => {
 						resetChunkTimer()
+						// Dauerhaft festhalten: Der SSE-Stream erreicht nur, wer gerade
+						// zusieht. Nach einem Neuladen — oder im Verlauf von gestern —
+						// wäre sonst nicht mehr erkennbar, welche Dateien das Modell
+						// angefasst hat.
+						appendToolCall(db, { executionId: execution.id, taskId: task.id, ...data })
 						emit({ event: "tool.call", data: { executionId: execution.id, ...data } })
 					},
 					log,

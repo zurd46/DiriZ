@@ -73,7 +73,15 @@ interface CompatToolCallDelta {
 }
 
 interface CompatChunk {
-	choices?: { delta?: { content?: string; tool_calls?: CompatToolCallDelta[] } }[]
+	choices?: {
+		delta?: {
+			content?: string
+			/** Reasoning-Modelle (LM Studio, DeepSeek, Qwen-Thinking …). */
+			reasoning_content?: string
+			reasoning?: string
+			tool_calls?: CompatToolCallDelta[]
+		}
+	}[]
 	usage?: { prompt_tokens?: number; completion_tokens?: number }
 }
 
@@ -219,6 +227,13 @@ export class OpenAiCompatProvider implements LLMProvider {
 			if (delta) {
 				if (delta.content) {
 					yield { type: "delta", text: delta.content }
+				}
+				// Denk-Tokens getrennt melden: Sie zählen zur Abrechnung, gehören
+				// aber nicht in die Antwort. Ohne diesen Zweig liefert ein
+				// Reasoning-Modell tausende Tokens und eine leere Antwort.
+				const thinking = delta.reasoning_content ?? delta.reasoning
+				if (thinking) {
+					yield { type: "reasoning", text: thinking }
 				}
 				for (const tc of delta.tool_calls ?? []) {
 					const acc = pending.get(tc.index) ?? { id: `call_${tc.index}`, name: "", argsBuf: "" }

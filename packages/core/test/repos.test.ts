@@ -148,7 +148,9 @@ describe("Task an ein Repository pinnen", () => {
 		const updated = res.json() as Task
 		expect(updated.repoId).toBe(repo.id)
 		expect(updated.baseBranch).toBe("main")
-		expect(updated.workBranch).toBe("diriz/readme-ausbau")
+		// Der Branch trägt die Kurz-ID der Task — sonst kollidieren zwei Tasks
+		// mit ähnlichem Titel im selben Repository.
+		expect(updated.workBranch).toMatch(/^diriz\/readme-ausbau-[0-9a-f]{8}$/)
 
 		const dir = taskWorktreePath(workspaceDir, updated)
 		expect(fs.existsSync(path.join(dir, "README.md"))).toBe(true)
@@ -237,7 +239,7 @@ describe("Änderungen, Diff, Commit und Push", () => {
 		const res = await app.inject({ method: "POST", url: `/api/tasks/${task.id}/git/push`, payload: {} })
 		expect(res.statusCode).toBe(200)
 		const push = res.json() as { branch: string; toBase: boolean; pushedAt: string; compareUrl?: string }
-		expect(push.branch).toBe("diriz/readme-ausbau")
+		expect(push.branch).toMatch(/^diriz\/readme-ausbau-[0-9a-f]{8}$/)
 		expect(push.toBase).toBe(false)
 		expect(push.compareUrl).toContain("compare/main...diriz/readme-ausbau")
 

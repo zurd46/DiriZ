@@ -86,7 +86,7 @@ async function main(): Promise<void> {
 			log("warn", "git", `Task ${task.id}: Repository noch nicht geklont — nutze leeren Arbeitsordner`)
 			return dir
 		}
-		const branch = task.workBranch ?? workBranchName(task.title || task.id)
+		const branch = task.workBranch ?? workBranchName(task.title || task.id, task.id)
 		const baseBranch = task.baseBranch ?? repo.defaultBranch
 		try {
 			await ensureWorktree({

@@ -167,11 +167,16 @@ export function parseRepoRef(input: string): { owner: string; name: string } | u
 }
 
 /** Branch-Name aus einem Task-Slug — Git erlaubt nicht jedes Zeichen. */
-export function workBranchName(slug: string): string {
+export function workBranchName(slug: string, taskId?: string): string {
 	const clean = (slug || "task")
 		.toLowerCase()
 		.replace(/[^a-z0-9._/-]+/g, "-")
 		.replace(/^[-./]+|[-./]+$/g, "")
 		.slice(0, 60)
-	return `diriz/${clean || "task"}`
+	// Die Kurz-ID macht den Branch eindeutig. Ohne sie kollidieren zwei Tasks
+	// mit ähnlichem Titel: Der Arbeitsordner trägt die ID längst, der Branch
+	// nicht — und Git verweigert dann den zweiten Worktree mit „is already used
+	// by worktree at …“, die Task ist tot.
+	const suffix = taskId ? `-${taskId.slice(0, 8)}` : ""
+	return `diriz/${clean || "task"}${suffix}`
 }

@@ -196,7 +196,7 @@ export function registerRepos(app: FastifyInstance, ctx: AppContext): void {
 			return { ok: false, code: 409, message: "Repository ist noch nicht geklont" }
 		}
 		const baseBranch = task.baseBranch ?? repo.defaultBranch
-		const branch = task.workBranch ?? workBranchName(task.title || task.id)
+		const branch = task.workBranch ?? workBranchName(task.title || task.id, task.id)
 		const worktree = taskWorktreePath(ctx.workspaceDir, task)
 
 		if (!isWorktree(worktree)) {
@@ -236,7 +236,7 @@ export function registerRepos(app: FastifyInstance, ctx: AppContext): void {
 				return reply.code(409).send({ error: "Repository wird noch geklont — kurz warten" })
 			}
 			const baseBranch = req.body?.baseBranch?.trim() || repo.defaultBranch
-			const branch = workBranchName(task.title || task.id)
+			const branch = workBranchName(task.title || task.id, task.id)
 			try {
 				await ensureWorktree({
 					localPath: repo.localPath,

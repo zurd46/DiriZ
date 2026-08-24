@@ -124,6 +124,13 @@ export interface ChatRequest {
 /** Stream-Chunks eines Adapter-Calls. */
 export type ChatChunk =
 	| { type: "delta"; text: string }
+	/**
+	 * Gedankengang eines Reasoning-Modells (`reasoning_content`). Bewusst
+	 * getrennt vom Antworttext: Er zählt zu den Tokens, gehört aber nicht in
+	 * die Antwort. Wer ihn verwirft, sieht bei solchen Modellen gar nichts —
+	 * genau das passierte vorher (Tokens verbraucht, Antwort leer).
+	 */
+	| { type: "reasoning"; text: string }
 	| { type: "usage"; tokensIn: number; tokensOut: number }
 	| { type: "tool_call"; call: ToolCallRequest }
 	| { type: "done" }

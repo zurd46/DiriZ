@@ -49,6 +49,12 @@ export interface ExecutionDeltaEvent {
 	data: { executionId: string; delta: string; tokens: number }
 }
 
+/** Gedankengang eines Reasoning-Modells — live, aber getrennt von der Antwort. */
+export interface ExecutionReasoningEvent {
+	event: "execution.reasoning"
+	data: { executionId: string; delta: string }
+}
+
 export interface ExecutionUsageEvent {
 	event: "execution.usage"
 	data: { executionId: string; tokensIn: number; tokensOut: number; tps: number; costUsd: number }
@@ -105,6 +111,7 @@ export type CoreEvent =
 	| SwarmsChangedEvent
 	| RoutingDecidedEvent
 	| ExecutionDeltaEvent
+	| ExecutionReasoningEvent
 	| ExecutionUsageEvent
 	| ExecutionFailoverEvent
 	| ToolCallEvent
@@ -122,6 +129,7 @@ export const CORE_EVENT_NAMES = [
 	"swarms.changed",
 	"routing.decided",
 	"execution.delta",
+	"execution.reasoning",
 	"execution.usage",
 	"execution.failover",
 	"tool.call",

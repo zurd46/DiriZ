@@ -734,6 +734,8 @@ export class ExecutionEngine {
 		}
 
 		let fullText = ""
+		// Gedankengang getrennt sammeln (siehe `execution.reasoning`).
+		let reasoningText = ""
 		let seq = 0
 		let tokensIn = 0
 		let tokensOut = 0
@@ -805,6 +807,11 @@ export class ExecutionEngine {
 							data: { executionId: execution.id, delta: text, tokens: tokensOut },
 						})
 					},
+					onReasoning: (text) => {
+						resetChunkTimer()
+						reasoningText += text
+						emit({ event: "execution.reasoning", data: { executionId: execution.id, delta: text } })
+					},
 					emitToolCall: (data) => {
 						resetChunkTimer()
 						emit({ event: "tool.call", data: { executionId: execution.id, ...data } })
@@ -832,6 +839,15 @@ export class ExecutionEngine {
 							event: "execution.delta",
 							data: { executionId: execution.id, delta: chunk.text, tokens: tokensOut },
 						})
+					} else if (chunk.type === "reasoning") {
+						// Denk-Tokens halten den Stream am Leben und werden live gezeigt,
+						// landen aber nicht in der Antwort.
+						resetChunkTimer()
+						reasoningText += chunk.text
+						emit({
+							event: "execution.reasoning",
+							data: { executionId: execution.id, delta: chunk.text },
+						})
 					} else if (chunk.type === "usage") {
 						tokensIn = chunk.tokensIn
 						tokensOut = chunk.tokensOut
@@ -850,6 +866,20 @@ export class ExecutionEngine {
 		}
 
 		/* ------------------------- Finalisieren (Erfolg) ------------------------ */
+
+		// Reasoning-Modelle können den gesamten Lauf im Gedankengang verbringen
+		// und keine einzige Zeile Antwort liefern. Eine leere Antwort bei
+		// tausenden verbrauchten Tokens ist für niemanden brauchbar — dann gilt
+		// der Gedankengang als Ergebnis, ausdrücklich gekennzeichnet.
+		if (fullText.trim().length === 0 && reasoningText.trim().length > 0) {
+			fullText = `[Nur Gedankengang — das Modell hat keine eigentliche Antwort ausgegeben.]\n\n${reasoningText}`
+			appendChunk(db, execution.id, seq++, fullText)
+			log(
+				"warn",
+				"engine",
+				`Execution ${execution.id}: keine Antwort, nur Gedankengang (${reasoningText.length} Zeichen) — Modell ${choice.instance.modelId}`,
+			)
+		}
 
 		const elapsedSec = Math.max(0.001, (Date.now() - startedAt) / 1000)
 		const tps = tokensOut > 0 ? Math.round((tokensOut / elapsedSec) * 100) / 100 : 0

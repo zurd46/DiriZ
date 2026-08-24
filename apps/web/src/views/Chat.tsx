@@ -35,7 +35,11 @@ type Target = "answer" | "workspace" | "repo"
 const TARGETS: { id: Target; label: string; hint: string }[] = [
 	{ id: "answer", label: "Nur antworten", hint: "Text ohne Dateizugriff — Fragen, Konzepte, Reviews" },
 	{ id: "workspace", label: "Projekt anlegen", hint: "Darf Dateien im Workspace schreiben" },
-	{ id: "repo", label: "Repository ändern", hint: "Arbeitet im Git-Worktree eines verbundenen Repos" },
+	{
+		id: "repo",
+		label: "Repository ändern",
+		hint: "Arbeitet im Git-Worktree eines verbundenen Repos — dafür muss es unter „GitHub“ angebunden sein (Token allein genügt nicht)",
+	},
 ]
 
 interface Turn {
@@ -114,7 +118,11 @@ export default function Chat() {
 			return
 		}
 		if (target === "repo" && !repoId) {
-			setLastError("Bitte ein Repository wählen — oder Ziel auf „Projekt anlegen“ stellen")
+			setLastError(
+				repos.length === 0
+					? "Kein Repository angebunden — unter „GitHub“ verbinden, dann erscheint es hier"
+					: "Bitte ein Repository wählen — oder Ziel auf „Projekt anlegen“ stellen",
+			)
 			return
 		}
 		const id = crypto.randomUUID()
@@ -302,17 +310,25 @@ export default function Chat() {
 							{t.label}
 						</button>
 					))}
-					{target === "repo" && (
-						<select value={repoId} onChange={(e) => setRepoId(e.target.value)} aria-label="Repository">
-							<option value="">Repository wählen …</option>
-							{repos.map((r) => (
-								<option key={r.id} value={r.id} disabled={!r.localPath}>
-									{r.fullName}
-									{r.localPath ? "" : " (wird geklont)"}
-								</option>
-							))}
-						</select>
-					)}
+					{target === "repo" &&
+						(repos.length > 0 ? (
+							<select value={repoId} onChange={(e) => setRepoId(e.target.value)} aria-label="Repository">
+								<option value="">Repository wählen …</option>
+								{repos.map((r) => (
+									<option key={r.id} value={r.id} disabled={!r.localPath}>
+										{r.fullName}
+										{r.localPath ? "" : " (wird geklont)"}
+									</option>
+								))}
+							</select>
+						) : (
+							// Ohne diesen Hinweis steht hier nur eine leere Auswahl, und niemand
+							// erfährt, dass ein Repository erst angebunden werden muss.
+							<a className="btn" href="/github">
+								<IconGitBranch size={14} />
+								Kein Repository angebunden — jetzt verbinden
+							</a>
+						))}
 					<label className="chat-context">
 						<input type="checkbox" checked={keepContext} onChange={(e) => setKeepContext(e.target.checked)} />
 						Verlauf mitsenden

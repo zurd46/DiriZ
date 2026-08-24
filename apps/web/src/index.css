@@ -2461,27 +2461,32 @@ pre.code {
 	margin-top: 0;
 }
 
-.markdown h1,
+/*
+ * Vorschau-Überschriften stehen eine HTML-Stufe tiefer als im Dokument (die
+ * Seite hat ihre eigene `h1`). Die Optik richtet sich weiterhin nach der
+ * Dokumentstufe — dafür `.md-h1`/`.md-h2`.
+ */
 .markdown h2,
 .markdown h3,
-.markdown h4 {
+.markdown h4,
+.markdown h5 {
 	margin: var(--sp-5) 0 var(--sp-2);
 	color: var(--text-strong);
 	line-height: 1.35;
 }
 
-.markdown h1 {
+.markdown .md-h1 {
 	font-size: var(--fs-xl);
 	padding-bottom: var(--sp-2);
 	border-bottom: 1px solid var(--border);
 }
 
-.markdown h2 {
+.markdown .md-h2 {
 	font-size: var(--fs-lg);
 }
 
-.markdown h3,
-.markdown h4 {
+.markdown h4,
+.markdown h5 {
 	font-size: var(--fs-base);
 }
 

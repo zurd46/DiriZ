@@ -141,19 +141,27 @@ export default function Markdown({ source }: { source: string }) {
 		const heading = raw.match(/^(#{1,6})\s+(.*)$/)
 		if (heading) {
 			flushAll()
+			// Um eine Stufe tiefer als im Dokument: Die Seite hat bereits ihre
+			// eigene `h1`. Ein zweites `h1` aus einer Vorschau würde die
+			// Dokumentgliederung zerreissen — Screenreader melden dann zwei
+			// gleichrangige Seitentitel.
 			const level = heading[1]?.length ?? 1
 			const text = heading[2] ?? ""
 			const key = `h-${blocks.length}`
 			const inner = renderInline(text, key)
 			blocks.push(
 				level === 1 ? (
-					<h1 key={key}>{inner}</h1>
+					<h2 key={key} className="md-h1">
+						{inner}
+					</h2>
 				) : level === 2 ? (
-					<h2 key={key}>{inner}</h2>
+					<h3 key={key} className="md-h2">
+						{inner}
+					</h3>
 				) : level === 3 ? (
-					<h3 key={key}>{inner}</h3>
-				) : (
 					<h4 key={key}>{inner}</h4>
+				) : (
+					<h5 key={key}>{inner}</h5>
 				),
 			)
 			continue

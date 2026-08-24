@@ -146,7 +146,11 @@ test("Chat zeigt Eingabefeld, Zielwahl und Senden-Knopf", async ({ page }) => {
 	await eingabe.fill("Prüfe die Anmeldung auf SQL-Injection")
 	await expect(senden).toBeEnabled()
 
-	// „Repository ändern“ blendet die Repo-Auswahl ein.
+	// „Repository ändern“ blendet die Repo-Auswahl ein — solange keines
+	// angebunden ist, stattdessen den Weg dorthin. Eine leere Auswahl ohne
+	// Erklärung war der häufigste Stolperstein.
 	await page.getByRole("button", { name: "Repository ändern" }).click()
-	await expect(page.getByLabel("Repository")).toBeVisible()
+	const auswahl = page.getByLabel("Repository")
+	const hinweis = page.getByRole("link", { name: /Kein Repository angebunden/ })
+	await expect(auswahl.or(hinweis).first()).toBeVisible()
 })

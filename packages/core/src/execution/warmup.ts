@@ -126,9 +126,7 @@ export class WarmKeeper {
 
 		const tempo = throughputByInstance(this.deps.db)
 		return [...aktiv]
-			.sort(
-				(a, b) => (tempo.get(b.id) ?? 0) - (tempo.get(a.id) ?? 0) || b.contextWindow - a.contextWindow,
-			)
+			.sort((a, b) => (tempo.get(b.id) ?? 0) - (tempo.get(a.id) ?? 0) || b.contextWindow - a.contextWindow)
 			.slice(0, limit)
 			.map((i) => i.modelId)
 	}

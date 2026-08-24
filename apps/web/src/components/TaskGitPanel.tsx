@@ -75,6 +75,9 @@ export default function TaskGitPanel({
 		}
 	}, [pinned, taskId])
 
+	// `refreshKey` ist das Signal der Eltern-Ansicht („am Repository hat sich
+	// etwas getan"), kein Wert, den dieser Effekt liest.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: bewusstes Auslöser-Signal
 	useEffect(() => {
 		void reload()
 	}, [reload, refreshKey])

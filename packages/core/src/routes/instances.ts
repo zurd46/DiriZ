@@ -28,6 +28,7 @@ import {
 	listInstanceDocs,
 	listInstances,
 	saveInstanceDoc,
+	throughputByInstance,
 	updateInstance,
 } from "../db/repositories.js"
 
@@ -49,7 +50,14 @@ interface InstancePatchBody {
 
 export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
 	app.get<{ Querystring: { providerId?: string } }>("/api/instances", (req) => {
-		return listInstances(ctx.db, req.query.providerId)
+		// Gemessenes Tempo mitliefern: Es entscheidet im Routing mit und ist die
+		// Antwort auf „warum dauert das so lange?" — es gehört vor Augen, nicht
+		// nur in die Formel.
+		const tempo = throughputByInstance(ctx.db)
+		return listInstances(ctx.db, req.query.providerId).map((i) => ({
+			...i,
+			tokensPerSecond: tempo.get(i.id),
+		}))
 	})
 
 	app.patch<{ Params: { id: string }; Body: InstancePatchBody }>("/api/instances/:id", (req, reply) => {

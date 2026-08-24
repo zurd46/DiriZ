@@ -249,7 +249,7 @@ function explainStartupError(e: unknown): string {
 		return [
 			`Port ${config.port} ist bereits belegt — läuft DiriZ schon?`,
 			"",
-			"  Wer belegt ihn?   lsof -nP -iTCP:" + config.port + " -sTCP:LISTEN",
+			`  Wer belegt ihn?   lsof -nP -iTCP:${config.port} -sTCP:LISTEN`,
 			"  Anderer Port:     DIRIZ_PORT=8788 npm start",
 			"",
 			"Achtung: Läuft dort ein älterer Build, beantwortet er Anfragen mit veraltetem Code.",

@@ -72,10 +72,15 @@ export default function Login(props: { configured: boolean; onSignedIn: () => vo
 
 				<label className="login-field">
 					<span>Benutzername</span>
-					{/* Ein Anmeldeformular ist der einzige Inhalt der Seite — hier ist
-					    der Fokussprung erwartet und keine Falle für Screenreader. */}
+					{/* Fokus per `ref` statt `autoFocus`: Das Anmeldeformular ist der
+					    einzige Inhalt der Seite, der Sprung ist erwartet — aber er soll
+					    nur beim ersten Aufbau passieren, nicht bei jedem Rendern. */}
 					<input
-						ref={(el) => el?.focus()}
+						ref={(el) => {
+							if (el && document.activeElement !== el && el.value === "") {
+								el.focus()
+							}
+						}}
 						value={username}
 						onChange={(e) => setUsername(e.target.value)}
 						autoComplete="username"

@@ -36,6 +36,9 @@ import Markdown from "../components/Markdown.js"
 import { api } from "../lib/api.js"
 import { useStore } from "../store.js"
 
+/** Ein Modell mit gemessenem Tempo, wie `GET /api/instances` es liefert. */
+type InstanceWithSpeed = InstanceModel & { tokensPerSecond?: number }
+
 /** Ein Modell aus `GET /api/docs` — inklusive seiner Dokumente. */
 interface ModelOwner {
 	kind: string
@@ -62,7 +65,7 @@ export default function Models() {
 	const lastError = useStore((s) => s.lastError)
 
 	const [models, setModels] = useState<ModelOwner[] | null>(null)
-	const [instances, setInstances] = useState<InstanceModel[]>([])
+	const [instances, setInstances] = useState<InstanceWithSpeed[]>([])
 	const [selectedId, setSelectedId] = useState<string | null>(null)
 	const [mode, setMode] = useState<ViewMode>("split")
 	const [query, setQuery] = useState("")
@@ -75,7 +78,7 @@ export default function Models() {
 		() => async () => {
 			const [docs, list] = await Promise.all([
 				api.get<{ owners: ModelOwner[] }>("/api/docs"),
-				api.get<InstanceModel[]>("/api/instances"),
+				api.get<InstanceWithSpeed[]>("/api/instances"),
 			])
 			const onlyModels = docs.owners.filter((o) => o.kind === "instance")
 			setModels(onlyModels)
@@ -211,7 +214,13 @@ export default function Models() {
 										<IconLayers size={15} />
 										<span className="docs-item-text">
 											<span className="docs-item-name">{m.name}</span>
-											<span className="docs-item-meta">{m.detail}</span>
+											<span className="docs-item-meta">
+												{m.detail}
+												{(() => {
+													const tps = instances.find((i) => i.id === m.id)?.tokensPerSecond
+													return tps !== undefined ? ` · ${Math.round(tps)} Token/s` : ""
+												})()}
+											</span>
 										</span>
 									</button>
 								))}
@@ -282,6 +291,15 @@ export default function Models() {
 										Fähigkeiten:{" "}
 										{instance.capabilities.length > 0 ? instance.capabilities.join(", ") : "keine"}
 									</span>
+									{/* Gemessen, nicht geschätzt: die ehrlichste Zahl über ein Modell. */}
+									{instance.tokensPerSecond !== undefined && (
+										<span
+											className="badge accent"
+											title="Durchschnitt der letzten erfolgreichen Läufe — zählt im Routing als Tempo-Achse"
+										>
+											{Math.round(instance.tokensPerSecond)} Token/s gemessen
+										</span>
+									)}
 									{instance.quantization && <span className="badge">{instance.quantization}</span>}
 									<span className="badge">
 										{instance.pricePerMTok

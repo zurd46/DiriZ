@@ -155,6 +155,9 @@ function withHistory(prompt: string, history: { prompt: string; answer: string }
 function ChatDiff({ taskId, refreshKey }: { taskId: string; refreshKey: number }) {
 	const [files, setFiles] = useState<FileDiff[] | null>(null)
 
+	// `refreshKey` ist das Signal, nicht der Wert: Die Eltern-Ansicht erhöht ihn,
+	// wenn der Lauf Dateien geschrieben hat — sonst bliebe der Diff alt.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: bewusstes Auslöser-Signal
 	useEffect(() => {
 		let alive = true
 		api
@@ -201,6 +204,8 @@ function ChatGitHub({ taskId, refreshKey }: { taskId: string; refreshKey: number
 			.catch(() => setStatus(null))
 	}, [taskId])
 
+	// `refreshKey` löst das Neuladen aus (Commit, Push, neuer Lauf).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: bewusstes Auslöser-Signal
 	useEffect(() => {
 		load()
 	}, [load, refreshKey])
@@ -572,6 +577,7 @@ export default function Chat() {
 	}, [])
 
 	// Chatwechsel: neuer Verlauf, neue Ausgangslage — immer ganz unten anfangen.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: Chatwechsel als Auslöser
 	useEffect(() => {
 		stickToBottom.current = true
 		scrollToEnd(true)
@@ -589,6 +595,9 @@ export default function Chat() {
 	 * selbst gescrollt hat. Wer nach oben geht, um die Antwort noch einmal zu
 	 * lesen, darf nicht wieder nach unten gerissen werden.
 	 */
+	// `tick` ist der Herzschlag des Live-Streams: Er taktet das Nachziehen,
+	// ohne selbst gelesen zu werden.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: Taktgeber als Auslöser
 	useEffect(() => {
 		if (!running) {
 			return

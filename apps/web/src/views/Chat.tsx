@@ -292,6 +292,16 @@ function toolBadges(ops: { id: string; name: string; argsSummary: string; ok: bo
 	return out
 }
 
+/**
+ * Lange Pfade kürzen: `src/composables/useSeo.js` bleibt, aber
+ * `a/b/c/d/e/useSeo.js` wird zu `…/e/useSeo.js`. Vorn steht selten die
+ * Information, hinten immer.
+ */
+function shortPath(value: string): string {
+	const parts = value.split("/")
+	return parts.length <= 2 ? value : `…/${parts.slice(-2).join("/")}`
+}
+
 /** Kurzname des Werkzeugs für das Badge — „read_file“ liest sich schlecht. */
 const TOOL_LABEL: Record<string, string> = {
 	list_files: "Dateien auflisten",
@@ -317,6 +327,43 @@ const STATUS_PILL: Record<string, string> = {
 	cancelled: "warn",
 	queued: "queued",
 	routing: "routing",
+}
+
+/**
+ * Werkzeug-Leiste einer Antwort. Ab neun Einträgen bleibt sie eingeklappt —
+ * zwanzig Badges sagen nichts, was „20 Operationen“ plus die letzten acht
+ * nicht kürzer sagen.
+ */
+function ToolStrip({ badges, total }: { badges: ToolBadge[]; total: number }) {
+	const [alle, setAlle] = useState(false)
+	const sichtbar = alle ? badges : badges.slice(0, 8)
+	const rest = badges.length - sichtbar.length
+
+	return (
+		<div className="chat-tools">
+			<span className="chat-tools-label">
+				{total} Operation{total === 1 ? "" : "en"}
+			</span>
+			{sichtbar.map((b) => (
+				<span key={b.id} className={`tool-badge ${b.ok ? "" : "err"} ${b.name}`} title={b.target || b.name}>
+					{b.name === "write_file" ? <IconEdit size={11} /> : <IconDoc size={11} />}
+					<span className="tool-verb">{TOOL_LABEL[b.name] ?? b.name}</span>
+					{b.target && <span className="tool-target">{shortPath(b.target)}</span>}
+					{b.count > 1 && <span className="tool-count">×{b.count}</span>}
+				</span>
+			))}
+			{rest > 0 && (
+				<button type="button" className="tool-more" onClick={() => setAlle(true)}>
+					+{rest} weitere
+				</button>
+			)}
+			{alle && badges.length > 8 && (
+				<button type="button" className="tool-more" onClick={() => setAlle(false)}>
+					weniger
+				</button>
+			)}
+		</div>
+	)
 }
 
 const seconds = (ms: number) => `${Math.max(0, Math.round(ms / 1000))} s`
@@ -772,21 +819,7 @@ export default function Chat() {
 											<div className="chat-reason">Wechsel: {run.failovers.join(" · ")}</div>
 										)}
 
-										{badges.length > 0 && (
-											<div className="chat-tools">
-												<span className="chat-tools-label">
-													{toolOps.length} Operation{toolOps.length === 1 ? "" : "en"}
-												</span>
-												{badges.map((b) => (
-													<span key={b.id} className={`tool-badge ${b.ok ? "" : "err"} ${b.name}`}>
-														{b.name === "write_file" ? <IconEdit size={11} /> : <IconDoc size={11} />}
-														<span className="tool-verb">{TOOL_LABEL[b.name] ?? b.name}</span>
-														{b.target && <span className="mono tool-target">{b.target}</span>}
-														{b.count > 1 && <span className="tool-count">×{b.count}</span>}
-													</span>
-												))}
-											</div>
-										)}
+										{badges.length > 0 && <ToolStrip badges={badges} total={toolOps.length} />}
 
 										{run?.reasoning && (
 											<details className="chat-thoughts">

@@ -3019,9 +3019,13 @@ pre.code {
 	flex-wrap: wrap;
 	align-items: center;
 	gap: var(--sp-2);
+	padding: 3px var(--sp-2);
+	border-radius: 6px;
+	background: var(--bg-soft);
+	border: 1px solid var(--border-soft);
 	font-size: var(--fs-sm);
 	color: var(--muted);
-	margin-bottom: var(--sp-2);
+	margin-bottom: var(--sp-3);
 }
 
 .chat-phase .field-hint {
@@ -3129,7 +3133,7 @@ pre.code {
 .chat-msg {
 	border: 1px solid var(--border);
 	border-radius: var(--r-md);
-	padding: var(--sp-3) var(--sp-4);
+	padding: var(--sp-3);
 	background: var(--surface);
 }
 
@@ -3166,8 +3170,8 @@ pre.code {
 
 .chat-reason,
 .chat-waiting {
-	font-size: var(--fs-sm);
-	color: var(--muted);
+	font-size: var(--fs-xs);
+	color: var(--faint);
 	margin-bottom: var(--sp-2);
 }
 
@@ -3299,17 +3303,17 @@ pre.code {
 
 .chat-head {
 	display: flex;
-	align-items: flex-start;
+	align-items: center;
 	gap: var(--sp-2);
-	margin-bottom: var(--sp-3);
+	margin-bottom: var(--sp-2);
 }
 
 .chat-avatar {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 28px;
-	height: 28px;
+	width: 24px;
+	height: 24px;
 	flex: none;
 	border-radius: 8px;
 	background: var(--accent-soft);
@@ -3328,9 +3332,9 @@ pre.code {
 .chat-name {
 	display: flex;
 	flex-wrap: wrap;
-	align-items: center;
+	align-items: baseline;
 	gap: var(--sp-2);
-	font-size: var(--fs-base);
+	font-size: var(--fs-md);
 	font-weight: 600;
 	color: var(--text-strong);
 }
@@ -3430,13 +3434,10 @@ pre.code {
 	flex: none;
 }
 
-/* Lange Pfade von **links** kürzen — der Dateiname trägt die Information. */
 .tool-target {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	direction: rtl;
-	text-align: left;
 	color: var(--text);
 	font-family: var(--mono);
 }
@@ -3476,4 +3477,20 @@ pre.code {
 	display: flex;
 	flex-wrap: wrap;
 	gap: var(--sp-2);
+}
+
+.tool-more {
+	padding: 1px 7px;
+	border-radius: 5px;
+	border: 1px dashed var(--border-strong);
+	background: none;
+	color: var(--muted);
+	font: inherit;
+	font-size: var(--fs-xs);
+	cursor: pointer;
+}
+
+.tool-more:hover {
+	color: var(--text);
+	border-color: var(--accent-line);
 }

@@ -6,12 +6,19 @@
  * Fastify starten (127.0.0.1:8787). SIGINT/SIGTERM → sauber beenden.
  */
 
-import { type CoreEvent, workBranchName } from "@diriz/shared"
+import { AGENT_TOOL_HINTS, type CoreEvent, workBranchName } from "@diriz/shared"
 import { buildApp } from "./app.js"
 import { loadConfig } from "./config.js"
 import { openDatabase } from "./db/connection.js"
 import { migrate } from "./db/migrate.js"
-import { getRepo, getSetting, persistLog, providerApiKeyEnc, setTaskRepo } from "./db/repositories.js"
+import {
+	backfillToolInDocs,
+	getRepo,
+	getSetting,
+	persistLog,
+	providerApiKeyEnc,
+	setTaskRepo,
+} from "./db/repositories.js"
 import { DEFAULT_RETENTION, failOrphanedRuns, purgeOldData, type RetentionSettings } from "./db/retention.js"
 import {
 	refreshCatalogAgents,
@@ -135,6 +142,18 @@ async function main(): Promise<void> {
 	}
 
 	await registry.bootstrap()
+
+	// Neues Werkzeug in bestehende Datenblätter nachtragen: Was dort nicht
+	// steht, darf das Modell nicht — ein neues Werkzeug wäre sonst still
+	// gesperrt, obwohl niemand es abgewählt hat.
+	const nachgetragen = backfillToolInDocs(db, "run_command", AGENT_TOOL_HINTS.run_command, [
+		"list_files",
+		"read_file",
+		"write_file",
+	])
+	if (nachgetragen > 0) {
+		log("info", "core", `Werkzeug „run_command" in ${nachgetragen} Datenblatt/Datenblätter nachgetragen`)
+	}
 
 	// Läufe, die ein früherer Prozess hielt, sind mit ihm gestorben — sie als
 	// „läuft" stehen zu lassen, wäre eine Lüge im Dashboard.

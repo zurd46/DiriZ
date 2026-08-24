@@ -38,6 +38,7 @@ import {
 	updateTemplate,
 } from "../db/repositories.js"
 import { DEFAULT_RETENTION, type RetentionSettings } from "../db/retention.js"
+import type { CommandPolicy } from "../execution/tools.js"
 import { DEFAULT_WARMUP, type WarmupSettings } from "../execution/warmup.js"
 
 const WEIGHT_KEYS: (keyof ScoringWeights)[] = [
@@ -177,6 +178,7 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 		agent: ctx.engine.agentSettings(),
 		warmup: { ...DEFAULT_WARMUP, ...getSetting<Partial<WarmupSettings>>(ctx.db, "warmup") },
 		retention: { ...DEFAULT_RETENTION, ...getSetting<Partial<RetentionSettings>>(ctx.db, "retention") },
+		commands: ctx.engine.commandPolicy(),
 	})
 
 	app.get("/api/settings", () => currentSettings())
@@ -191,6 +193,7 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			agent?: Partial<AgentSettings>
 			warmup?: Partial<WarmupSettings>
 			retention?: Partial<RetentionSettings>
+			commands?: Partial<CommandPolicy>
 		}
 	}>("/api/settings", (req, reply) => {
 		const body = req.body ?? {}
@@ -202,11 +205,34 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			body.git === undefined &&
 			body.agent === undefined &&
 			body.warmup === undefined &&
-			body.retention === undefined
+			body.retention === undefined &&
+			body.commands === undefined
 		) {
 			return reply.code(400).send({
 				error: "routingWeights, docTemplates, concurrency, timeouts, git, agent oder warmup erforderlich",
 			})
+		}
+		if (body.commands !== undefined) {
+			const current = ctx.engine.commandPolicy()
+			const next: CommandPolicy = {
+				enabled: body.commands.enabled ?? current.enabled,
+				allowed: body.commands.allowed ?? current.allowed,
+				timeoutMs: body.commands.timeoutMs ?? current.timeoutMs,
+			}
+			// Ein Programmname ist ein Name, kein Pfad und kein Befehl: Sonst
+			// liesse sich die Erlaubnisliste über `sh -c` selbst aushebeln.
+			const sauber =
+				Array.isArray(next.allowed) &&
+				next.allowed.every((c) => typeof c === "string" && /^[a-zA-Z0-9._-]{1,40}$/.test(c))
+			if (typeof next.enabled !== "boolean" || !sauber) {
+				return reply.code(400).send({
+					error: "commands braucht enabled (bool) und allowed als Liste einfacher Programmnamen",
+				})
+			}
+			if (!Number.isInteger(next.timeoutMs) || next.timeoutMs < 1000 || next.timeoutMs > 3_600_000) {
+				return reply.code(400).send({ error: "commands.timeoutMs muss zwischen 1000 und 3600000 liegen" })
+			}
+			setSetting(ctx.db, "commands", next)
 		}
 		if (body.retention !== undefined) {
 			const current = { ...DEFAULT_RETENTION, ...getSetting<Partial<RetentionSettings>>(ctx.db, "retention") }

@@ -71,6 +71,13 @@ interface UserRow {
 	lastLoginAt?: string
 }
 
+/** Was das Modell im Agentik-Modus starten darf. */
+interface CommandView {
+	enabled: boolean
+	allowed: string[]
+	timeoutMs: number
+}
+
 /** Aufbewahrungsfristen in Tagen. */
 interface RetentionView {
 	logDays: number
@@ -122,6 +129,11 @@ export default function Settings() {
 	const [userBusy, setUserBusy] = useState(false)
 	const [userMsg, setUserMsg] = useState<string | undefined>()
 
+	// Befehle ausführen: das schärfste Werkzeug — und deshalb hier einstellbar.
+	const [cmd, setCmd] = useState<CommandView | null>(null)
+	const [cmdBusy, setCmdBusy] = useState(false)
+	const [cmdSaved, setCmdSaved] = useState(false)
+
 	// Aufbewahrung: Ohne Frist wächst die Datenbank unbegrenzt.
 	const [keep, setKeep] = useState<RetentionView | null>(null)
 	const [keepBusy, setKeepBusy] = useState(false)
@@ -167,6 +179,12 @@ export default function Settings() {
 			setTimes(settings.timeouts)
 		}
 	}, [settings, times])
+
+	useEffect(() => {
+		if (settings?.commands && cmd === null) {
+			setCmd(settings.commands)
+		}
+	}, [settings, cmd])
 
 	useEffect(() => {
 		if (settings?.retention && keep === null) {
@@ -220,6 +238,23 @@ export default function Settings() {
 			setImportMsg(e instanceof Error ? e.message : String(e))
 		} finally {
 			setLimitsBusy(false)
+		}
+	}
+
+	const cmdDirty = cmd !== null && JSON.stringify(cmd) !== JSON.stringify(settings?.commands ?? null)
+
+	const saveCmd = async () => {
+		if (!cmd) return
+		setCmdBusy(true)
+		try {
+			await api.put("/api/settings", { commands: cmd })
+			await useStore.getState().refreshSettings()
+			setCmdSaved(true)
+			setTimeout(() => setCmdSaved(false), 2500)
+		} catch (e) {
+			setImportMsg(e instanceof Error ? e.message : String(e))
+		} finally {
+			setCmdBusy(false)
 		}
 	}
 
@@ -699,6 +734,84 @@ export default function Settings() {
 						disabled={!warmDirty || warmBusy}
 					>
 						Warmhalten speichern
+					</button>
+				</div>
+			</div>
+
+			<div className="card">
+				<div className="card-head">
+					<div>
+						<div className="card-title">
+							<IconServer size={16} />
+							Befehle ausführen
+						</div>
+						<div className="card-sub">
+							Im Agentik-Modus darf das Modell Programme starten — damit es seine Arbeit <em>prüfen</em> kann,
+							statt Prüfskripte zu schreiben, die niemand ausführt. Es gibt keine Shell (Sonderzeichen wie |
+							oder &amp;&amp; bleiben Zeichen), gearbeitet wird nur im Task-Ordner, `git` nur lesend. Was hier
+							nicht steht, startet nicht.
+						</div>
+					</div>
+					{cmdDirty && <span className="pill warn">ungespeichert</span>}
+				</div>
+
+				{cmd && (
+					<div className="limits">
+						<label className="limit-row">
+							<span className="limit-label">Befehle erlauben</span>
+							<input
+								type="checkbox"
+								checked={cmd.enabled}
+								onChange={(e) => setCmd({ ...cmd, enabled: e.target.checked })}
+							/>
+							<span className="field-hint">
+								Aus = das Modell kann nichts starten und wird darauf hingewiesen.
+							</span>
+						</label>
+						<label className="limit-row">
+							<span className="limit-label">Erlaubte Programme</span>
+							<input
+								value={cmd.allowed.join(", ")}
+								onChange={(e) =>
+									setCmd({
+										...cmd,
+										allowed: e.target.value
+											.split(",")
+											.map((x) => x.trim())
+											.filter((x) => x.length > 0),
+									})
+								}
+							/>
+							<span className="field-hint">
+								Nur Namen, keine Pfade. Shells (`sh`, `bash`) und alles, was ausserhalb des Ordners wirkt
+								(`rm`, `curl`, `sudo`), gehören hier nicht hinein — sie würden die übrigen Grenzen aushebeln.
+							</span>
+						</label>
+						<label className="limit-row">
+							<span className="limit-label">Frist je Befehl (Sekunden)</span>
+							<input
+								type="number"
+								min={1}
+								step={1}
+								value={Math.round(cmd.timeoutMs / 1000)}
+								onChange={(e) =>
+									setCmd({ ...cmd, timeoutMs: Math.max(1, Number(e.target.value) || 1) * 1000 })
+								}
+							/>
+							<span className="field-hint">Danach wird das Programm hart beendet.</span>
+						</label>
+					</div>
+				)}
+
+				<div className="card-actions">
+					{cmdSaved && <span className="pill ok">gespeichert</span>}
+					<button
+						type="button"
+						className="btn primary"
+						onClick={() => void saveCmd()}
+						disabled={!cmdDirty || cmdBusy}
+					>
+						Regeln speichern
 					</button>
 				</div>
 			</div>

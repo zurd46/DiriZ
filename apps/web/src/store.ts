@@ -118,6 +118,8 @@ interface State {
 		warmup?: { enabled: boolean; intervalMinutes: number; perProvider: number }
 		/** Aufbewahrungsfristen in Tagen (`settings.retention`). */
 		retention?: { logDays: number; chunkDays: number; metricsDays: number }
+		/** Was `run_command` starten darf (`settings.commands`). */
+		commands?: { enabled: boolean; allowed: string[]; timeoutMs: number }
 	} | null
 	live: Record<string, LiveRun>
 	taskDetails: Record<string, TaskDetail>

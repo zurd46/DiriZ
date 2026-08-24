@@ -16,7 +16,7 @@
  */
 
 import type { ChatMessage, LLMProvider, ModelSettings, ToolCallRequest } from "@diriz/shared"
-import { executeTool, TOOL_SPECS, type ToolOpResult } from "./tools.js"
+import { type CommandPolicy, executeTool, TOOL_SPECS, type ToolOpResult } from "./tools.js"
 
 /**
  * Schutz vor Endlosschleifen: max. Modell-Schritte **mit Tools** pro Execution.
@@ -144,6 +144,8 @@ export interface AgentLoopOptions {
 	log: LogFn
 	/** Kontextfenster des Modells — Grundlage fürs Eindampfen alter Ergebnisse. */
 	contextWindow?: number
+	/** Was `run_command` darf (Erlaubnisliste, Frist) — aus den Einstellungen. */
+	commandPolicy?: CommandPolicy
 	/**
 	 * Freigegebene Werkzeuge laut `llm.md` des Modells. Leer/undefiniert = alle.
 	 * Wer im Datenblatt `write_file` streicht, nimmt dem Modell das Schreiben —
@@ -179,11 +181,20 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 	const maxSteps = requested > 0 ? requested : Number.POSITIVE_INFINITY
 	const unlimited = !Number.isFinite(maxSteps)
 	// Kurze Tool-Anleitung — lokale Modelle brauchen den Hinweis explizit.
+	const darfAusführen = toolNames.includes("run_command")
 	const toolHint =
 		`Du kannst im Workspace die Tools ${toolNames.join(", ")} nutzen. ` +
-		"Mehr gibt es nicht: Du kannst **keinen Code ausführen**, keine Tests laufen lassen, keine Befehle " +
-		"absetzen und keine Ausgabe eines Programms sehen. Ein Prüfskript zu schreiben und auf sein Ergebnis " +
-		"zu warten führt zu nichts — beschreibe stattdessen, was zu prüfen ist. " +
+		(darfAusführen
+			? // Mit Ausführung: Sagen, wie sie zu nutzen ist — und wo sie endet.
+				"Mit `run_command` prüfst du deine Arbeit wirklich, statt sie zu vermuten: Schreib das Skript, " +
+				"führ es aus, lies die Ausgabe. Es gibt **keine Shell** — `command` ist das Programm, `args` " +
+				"seine Argumente; |, &&, ; und $() sind gewöhnliche Zeichen. Erlaubt sind Entwicklungswerkzeuge; " +
+				"was nicht erlaubt ist, sagt dir die Fehlermeldung. Wiederhole einen Aufruf nicht, der schon " +
+				"gescheitert ist. "
+			: // Ohne Ausführung: Klar sagen, dass Warten auf ein Ergebnis nichts bringt.
+				"Mehr gibt es nicht: Du kannst **keinen Code ausführen**, keine Tests laufen lassen und keine " +
+				"Programmausgabe sehen. Ein Prüfskript zu schreiben und auf sein Ergebnis zu warten führt zu " +
+				"nichts — beschreibe stattdessen, was zu prüfen ist. ") +
 		"Nutze die Tools, um die Aufgabe zu erledigen; gib am Ende eine vollständige Textantwort. " +
 		(unlimited
 			? "Du hast kein Schritt-Limit — arbeite so gründlich, wie die Aufgabe es verlangt, " +
@@ -308,7 +319,14 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 								`Bereits in einem früheren Schritt gelesen — Inhalt steht oben im Verlauf. ` +
 								`Lies nicht erneut, sondern arbeite damit weiter. (${wiederholung.detail.slice(0, 120)})`,
 						}
-					: executeTool(opts.baseDir, call, opts.emitToolCall, opts.log)
+					: await executeTool(
+							opts.baseDir,
+							call,
+							opts.emitToolCall,
+							opts.log,
+							opts.commandPolicy,
+							opts.signal,
+						)
 			if (nochmalGeschrieben || wiederholung) {
 				ohneFortschritt++
 			}

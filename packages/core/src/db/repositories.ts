@@ -2061,6 +2061,48 @@ export function listTasksByChain(db: Db, chainId: string): Task[] {
 }
 
 /**
+ * Trägt ein neu hinzugekommenes Werkzeug in bestehende Datenblätter nach.
+ *
+ * Die Werkzeug-Liste im `llm.md` ist eine Freigabe: Was nicht daraufsteht, darf
+ * das Modell nicht. Ein neues Werkzeug wäre damit für jeden Bestand still
+ * gesperrt — obwohl niemand es je abgewählt hat.
+ *
+ * Nachgetragen wird deshalb **nur**, wo die Liste unverändert die bekannten
+ * alten Werkzeuge enthält. Wer selbst etwas gestrichen hat, behält seine
+ * Entscheidung.
+ */
+export function backfillToolInDocs(db: Db, tool: string, hint: string, previous: string[]): number {
+	let ergänzt = 0
+	for (const row of db.prepare("SELECT instance_id, content FROM instance_docs WHERE kind = 'llm'").all() as {
+		instance_id: string
+		content: string
+	}[]) {
+		const vorhanden = parseLlmDoc(row.content).tools
+		const unverändert =
+			vorhanden.length === previous.length && previous.every((t) => vorhanden.includes(t as never))
+		if (!unverändert || vorhanden.includes(tool as never)) {
+			continue
+		}
+		// Direkt hinter die letzte Werkzeug-Zeile.
+		const zeilen = row.content.split("\n")
+		const letzte = zeilen
+			.map((l, i) => ({ l, i }))
+			.filter(({ l }) => previous.some((t) => l.startsWith(`- ${t}`)))
+		const pos = letzte.at(-1)?.i
+		if (pos === undefined) {
+			continue
+		}
+		zeilen.splice(pos + 1, 0, `- ${tool} — ${hint}`)
+		const neu = zeilen.join("\n")
+		db.prepare(
+			"UPDATE instance_docs SET content = ?, updated_at = ? WHERE instance_id = ? AND kind = 'llm'",
+		).run(neu, new Date().toISOString(), row.instance_id)
+		ergänzt++
+	}
+	return ergänzt
+}
+
+/**
  * Zuletzt tatsächlich benutzte Modelle eines Rechners — jüngste zuerst.
  *
  * Grundlage fürs Warmhalten: Ein Modell im Speicher zu halten, das niemand

@@ -1,10 +1,31 @@
 /**
- * Datei-Tools für den Agent-Loop (M8, `01-plan.md` §v1.5):
- * `list_files`, `read_file`, `write_file` — strikt in der Task-Sandbox.
+ * Werkzeuge für den Agent-Loop: `list_files`, `read_file`, `write_file` und
+ * `run_command` — strikt in der Task-Sandbox.
  *
  * Jede Operation wird per `tool.call`-Event + Log emittiert (volle
  * Transparenz). Pfad-Sicherheit: Relativ-Pfad-Validierung + Prefix-Check
  * nach dem Join (doppelte Absicherung, wie bei den File-Blöcken in §9).
+ *
+ * ## Warum es `run_command` gibt — und warum es eng geführt ist
+ *
+ * Ohne Ausführung schreibt ein Modell Prüfskripte und wartet auf ein Ergebnis,
+ * das nie kommt. Beobachtet: zehn Varianten von `verify_final.mjs`, dieselbe
+ * Datei 51-mal geschrieben, 23 Minuten ohne Fortschritt. Ein Werkzeug, das
+ * Code ausführt, ist die ehrliche Antwort darauf.
+ *
+ * Es ist aber auch das gefährlichste Werkzeug im Haus — es läuft im
+ * Arbeitsverzeichnis eines echten Repositories, neben `.env`-Dateien und einem
+ * Git-Remote. Deshalb vier Grenzen, die zusammen wirken:
+ *
+ * 1. **Keine Shell.** Gestartet wird mit Argument-Liste (`shell: false`) —
+ *    `;`, `&&`, `|`, `$(…)` und `>` sind damit gewöhnliche Zeichen, keine
+ *    Befehle. Die gesamte Klasse der Shell-Injektion fällt weg.
+ * 2. **Erlaubnisliste.** Nur bekannte Programme (`node`, `npm`, `python3`, …),
+ *    einstellbar. Kein Pfad im Programmnamen — `./mein-skript` geht nicht.
+ * 3. **Sandbox.** Arbeitsverzeichnis ist der Task-Ordner; Argumente, die wie
+ *    Pfade aussehen, müssen darin bleiben.
+ * 4. **Frist und Deckel.** Zeitlimit je Aufruf, Ausgabe gekappt, Abbruch über
+ *    dasselbe Signal wie der Rest des Laufs.
  */
 
 import fs from "node:fs"
@@ -14,6 +35,47 @@ import { isSafeRelPath } from "./files.js"
 
 /** Max. Größe eines `read_file`-Ergebnisses (100 kB) — schützt den Kontext. */
 const MAX_READ_BYTES = 100 * 1024
+
+/** Max. Ausgabe eines Befehls (32 kB) — ein `npm install` flutet sonst den Kontext. */
+const MAX_OUTPUT_BYTES = 32 * 1024
+
+/** Frist je Befehl. Länger als ein Testlauf, kürzer als eine Kaffeepause. */
+export const DEFAULT_COMMAND_TIMEOUT_MS = 120_000
+
+/**
+ * Programme, die ein Modell starten darf.
+ *
+ * Bewusst kurz und auf Entwicklungswerkzeuge beschränkt. Was hier fehlt, kann
+ * in den Einstellungen ergänzt werden — nicht vom Modell.
+ *
+ * Nicht enthalten und mit Absicht: alles, was ausserhalb des Arbeitsordners
+ * wirkt (`rm`, `mv`, `sudo`, `ssh`, `curl`, `docker`) und jede Shell
+ * (`sh`, `bash`, `zsh`) — die würde alle übrigen Grenzen aushebeln.
+ */
+export const DEFAULT_ALLOWED_COMMANDS = [
+	"node",
+	"npm",
+	"npx",
+	"pnpm",
+	"yarn",
+	"python3",
+	"pytest",
+	"tsc",
+	"vitest",
+	"jest",
+	"eslint",
+	"biome",
+	"go",
+	"cargo",
+	"git",
+]
+
+/**
+ * Git-Unterbefehle, die nur lesen. Alles andere (`push`, `remote`, `config`,
+ * `clean`, `reset`) bleibt dem Menschen vorbehalten: Was im Repository landet
+ * und was hinausgeht, entscheidet nicht das Modell.
+ */
+const GIT_READONLY = new Set(["status", "diff", "log", "show", "branch", "ls-files", "blame", "rev-parse"])
 
 export const TOOL_SPECS: ToolSpec[] = [
 	{
@@ -42,6 +104,27 @@ export const TOOL_SPECS: ToolSpec[] = [
 			required: ["path", "content"],
 		},
 	},
+	{
+		name: "run_command",
+		description:
+			"Führt ein Programm im Workspace aus und liefert dessen Ausgabe (stdout/stderr, gekappt). " +
+			"Keine Shell: `command` ist das Programm, `args` sind seine Argumente — Zeichen wie |, &&, ; " +
+			"oder $() haben keine Sonderbedeutung. Erlaubt sind Entwicklungswerkzeuge (node, npm, python3, " +
+			"pytest, git status/diff/log …). Damit prüfst du deine Arbeit, statt Prüfskripte zu schreiben, " +
+			"die niemand ausführt.",
+		parameters: {
+			type: "object",
+			properties: {
+				command: { type: "string", description: "Programm, z. B. `node` oder `npm` — ohne Pfad" },
+				args: {
+					type: "array",
+					items: { type: "string" },
+					description: 'Argumente, z. B. ["test"] oder ["pruefe.mjs"]',
+				},
+			},
+			required: ["command"],
+		},
+	},
 ]
 
 export interface ToolOpResult {
@@ -52,13 +135,28 @@ export interface ToolOpResult {
 type EmitToolCall = (data: { name: string; argsSummary: string; ok: boolean; detail?: string }) => void
 type LogFn = (level: "info" | "warn" | "error", scope: string, msg: string) => void
 
+/** Was `run_command` darf — aus den Einstellungen, sonst die Vorgabe. */
+export interface CommandPolicy {
+	enabled: boolean
+	allowed: string[]
+	timeoutMs: number
+}
+
+export const DEFAULT_COMMAND_POLICY: CommandPolicy = {
+	enabled: true,
+	allowed: DEFAULT_ALLOWED_COMMANDS,
+	timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
+}
+
 /** Führt einen Tool-Call in der Sandbox aus — nie werfend (Fehler werden gemeldet). */
-export function executeTool(
+export async function executeTool(
 	baseDir: string,
 	call: ToolCallRequest,
 	emitOp: EmitToolCall,
 	log: LogFn,
-): ToolOpResult {
+	policy: CommandPolicy = DEFAULT_COMMAND_POLICY,
+	signal?: AbortSignal,
+): Promise<ToolOpResult> {
 	const args = call.arguments ?? {}
 	let result: ToolOpResult
 
@@ -98,6 +196,10 @@ export function executeTool(
 				result = { ok: true, detail: `Geschrieben: ${p} (${Buffer.byteLength(content)} Bytes)` }
 				break
 			}
+			case "run_command": {
+				result = await runCommand(baseDir, args, policy, signal)
+				break
+			}
 			default:
 				throw new Error(`Unbekanntes Tool: ${call.name}`)
 		}
@@ -113,6 +215,121 @@ export function executeTool(
 		`${call.name} ${argsSummary} → ${result.ok ? "ok" : result.detail}`,
 	)
 	return result
+}
+
+/**
+ * Führt ein Programm im Arbeitsverzeichnis aus.
+ *
+ * Alle Grenzen an einer Stelle, damit keine davon versehentlich verlorengeht:
+ * Erlaubnisliste, kein Pfad im Programmnamen, keine Shell, Sandbox als
+ * Arbeitsverzeichnis, Argumente ohne Ausbruch, magere Umgebung, Frist,
+ * gekappte Ausgabe. Fällt eine weg, sind die übrigen wertlos.
+ */
+async function runCommand(
+	baseDir: string,
+	args: Record<string, unknown>,
+	policy: CommandPolicy,
+	signal?: AbortSignal,
+): Promise<ToolOpResult> {
+	if (!policy.enabled) {
+		return {
+			ok: false,
+			detail:
+				"Befehle ausführen ist abgeschaltet (Einstellungen → Befehle ausführen). " +
+				"Beschreibe stattdessen, was zu prüfen wäre.",
+		}
+	}
+
+	const command = String(args.command ?? "").trim()
+	// Der Programmname darf kein Pfad sein: `./skript` oder `/bin/sh` würden
+	// die Erlaubnisliste umgehen.
+	if (!command || command.includes("/") || command.includes("\\")) {
+		return { ok: false, detail: `Ungültiges Programm: „${command}“ — nur Name, kein Pfad` }
+	}
+	if (!policy.allowed.includes(command)) {
+		return {
+			ok: false,
+			detail:
+				`„${command}“ steht nicht auf der Erlaubnisliste. Erlaubt: ${policy.allowed.join(", ")}. ` +
+				"Die Liste steht in den Einstellungen — sie ändert der Mensch, nicht das Modell.",
+		}
+	}
+
+	// Argumente: Liste bevorzugt. Ein einzelner String wird an Leerzeichen
+	// getrennt — ohne Shell, also ohne Anführungszeichen-Magie.
+	const list = Array.isArray(args.args)
+		? args.args.map((a) => String(a))
+		: String(args.args ?? "")
+				.split(/\s+/)
+				.filter((a) => a.length > 0)
+
+	if (command === "git" && !GIT_READONLY.has(list[0] ?? "")) {
+		return {
+			ok: false,
+			detail:
+				`git ${list[0] ?? ""} ist nicht erlaubt — nur lesende Unterbefehle (${[...GIT_READONLY].join(", ")}). ` +
+				"Was committet und gepusht wird, entscheidet der Mensch.",
+		}
+	}
+
+	// Argumente, die wie ein Pfad aussehen, müssen im Arbeitsordner bleiben.
+	for (const a of list) {
+		if (a.startsWith("/") || a.startsWith("~") || a.split("/").includes("..")) {
+			return { ok: false, detail: `Argument zeigt aus dem Workspace heraus: ${a}` }
+		}
+	}
+
+	const { spawn } = await import("node:child_process")
+	return await new Promise<ToolOpResult>((resolve) => {
+		const child = spawn(command, list, {
+			cwd: baseDir,
+			// Keine Shell: Sonderzeichen bleiben Zeichen.
+			shell: false,
+			// Magere Umgebung: Was das Programm zum Laufen braucht, mehr nicht.
+			env: {
+				PATH: process.env.PATH ?? "",
+				HOME: process.env.HOME ?? "",
+				LANG: process.env.LANG ?? "C.UTF-8",
+				TMPDIR: process.env.TMPDIR ?? "/tmp",
+			},
+		})
+
+		let out = ""
+		let gekappt = false
+		const sammle = (chunk: Buffer) => {
+			if (out.length >= MAX_OUTPUT_BYTES) {
+				gekappt = true
+				return
+			}
+			out += chunk.toString("utf8")
+		}
+		child.stdout?.on("data", sammle)
+		child.stderr?.on("data", sammle)
+
+		const frist = setTimeout(() => child.kill("SIGKILL"), policy.timeoutMs)
+		const abbruch = () => child.kill("SIGKILL")
+		signal?.addEventListener("abort", abbruch, { once: true })
+
+		const fertig = (detail: string, ok: boolean) => {
+			clearTimeout(frist)
+			signal?.removeEventListener("abort", abbruch)
+			resolve({ ok, detail })
+		}
+
+		child.on("error", (e) => fertig(`Start fehlgeschlagen: ${e.message}`, false))
+		child.on("close", (code, sig) => {
+			const text = out.slice(0, MAX_OUTPUT_BYTES).trimEnd()
+			const rest = gekappt || out.length > MAX_OUTPUT_BYTES ? "\n[… Ausgabe gekappt]" : ""
+			if (sig === "SIGKILL") {
+				fertig(`Abgebrochen nach ${Math.round(policy.timeoutMs / 1000)} s.\n${text}${rest}`.trim(), false)
+				return
+			}
+			const kopf = `${command} ${list.join(" ")} → Exit-Code ${code}`
+			// Ein Exit-Code ≠ 0 ist **kein** Werkzeug-Fehler: Ein fehlgeschlagener
+			// Test ist genau die Auskunft, die das Modell braucht.
+			fertig(`${kopf}\n${text || "(keine Ausgabe)"}${rest}`, true)
+		})
+	})
 }
 
 /** Absoluter Pfad mit Prefix-Check — bleibt garantiert in der Sandbox. */

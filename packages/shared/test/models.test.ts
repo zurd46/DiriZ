@@ -139,7 +139,7 @@ describe("llm.md", () => {
 		const spec = parseLlmDoc(next)
 		expect(spec.settings).toEqual({ temperature: 0.42 })
 		expect(spec.goodFor.length).toBeGreaterThan(0)
-		expect(spec.tools.length).toBe(3)
+		expect(spec.tools.length).toBe(AGENT_TOOLS.length)
 	})
 })
 
@@ -178,6 +178,6 @@ describe("Werkzeuge im Datenblatt", () => {
 			.split("\n")
 			.filter((l) => !l.startsWith("- write_file"))
 			.join("\n")
-		expect(parseLlmDoc(ohneSchreiben).tools).toEqual(["list_files", "read_file"])
+		expect(parseLlmDoc(ohneSchreiben).tools).toEqual(["list_files", "read_file", "run_command"])
 	})
 })

@@ -133,7 +133,7 @@ const SETTING_LABELS: { key: keyof ModelSettings; label: string }[] = [
  * anfassen darf: Ein Modell, das Werkzeugaufrufe nicht sauber beherrscht,
  * schreibt sonst Dateien mit halb geratenen Pfaden.
  */
-export const AGENT_TOOLS = ["list_files", "read_file", "write_file"] as const
+export const AGENT_TOOLS = ["list_files", "read_file", "write_file", "run_command"] as const
 
 export type AgentTool = (typeof AGENT_TOOLS)[number]
 
@@ -142,6 +142,7 @@ export const AGENT_TOOL_HINTS: Record<AgentTool, string> = {
 	list_files: "listet die Dateien im Workspace der Task",
 	read_file: "liest eine Datei aus dem Workspace (max. 100 kB)",
 	write_file: "schreibt oder überschreibt eine Datei im Workspace",
+	run_command: "führt ein erlaubtes Programm aus und liefert dessen Ausgabe (keine Shell)",
 }
 
 /* ------------------------------- Der Katalog --------------------------------- */

@@ -89,6 +89,7 @@ import type { CandidateInfo } from "../routing/scorer.js"
 import { scoreCandidate } from "../routing/scorer.js"
 import { MAX_AGENT_STEPS, runAgentLoop } from "./agent.js"
 import { parseFileBlocks, writeWorkspaceFilesAt } from "./files.js"
+import { type CommandPolicy, DEFAULT_COMMAND_POLICY } from "./tools.js"
 import { taskWorktreePath } from "./worktree.js"
 
 type EmitFn = (event: CoreEvent) => void
@@ -260,6 +261,28 @@ export class ExecutionEngine {
 
 	get concurrencyLimit(): number {
 		return this.limits().global
+	}
+
+	/**
+	 * Regelwerk fürs Ausführen von Befehlen (`settings.commands`).
+	 *
+	 * Absichtlich hier und nicht im Werkzeug selbst: Was ein Modell starten
+	 * darf, ist eine Betriebsentscheidung — sie gehört in die Einstellungen,
+	 * nicht in den Code.
+	 */
+	commandPolicy(): CommandPolicy {
+		const stored = getSetting<Partial<CommandPolicy>>(this.deps.db, "commands")
+		return {
+			enabled: stored?.enabled !== false,
+			allowed:
+				Array.isArray(stored?.allowed) && stored.allowed.length > 0
+					? stored.allowed
+					: DEFAULT_COMMAND_POLICY.allowed,
+			timeoutMs:
+				typeof stored?.timeoutMs === "number" && stored.timeoutMs > 0
+					? stored.timeoutMs
+					: DEFAULT_COMMAND_POLICY.timeoutMs,
+		}
 	}
 
 	/** Agentik-Einstellungen (Tool-Budget; 0 = unbegrenzt). */
@@ -1283,6 +1306,8 @@ export class ExecutionEngine {
 					onStepStart: relaxForNextStep,
 					// Damit der Loop weiss, wann der Verlauf zu gross wird.
 					contextWindow: choice.instance.contextWindow,
+					// Was `run_command` starten darf — eine Entscheidung des Menschen.
+					commandPolicy: this.commandPolicy(),
 					adapter,
 					model: choice.instance.modelId,
 					settings: effective,

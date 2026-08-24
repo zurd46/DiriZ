@@ -68,6 +68,11 @@ Schema    ██████████████████████  Mi
 - **Robustheit im Agentik-Modus**: Zeitüberwachung beginnt mit jedem Schritt neu (jeder Schritt schickt den ganzen
   Verlauf erneut zur Verarbeitung), Abbruch nach drei erfolglosen Schritten, Kontext-Budget dampft alte
   Tool-Ergebnisse ein, dieselbe Datei wird nie zweimal gelesen.
+- **`run_command`** (`execution/tools.ts`): Das Modell kann Programme starten und ihre Ausgabe lesen — der
+  Anlass war ein Lauf, der 23 Minuten lang zehn Varianten von `verify_final.mjs` schrieb, weil er sie
+  ausführen wollte. Vier Grenzen wirken zusammen: keine Shell (Argument-Liste, `shell: false`),
+  Erlaubnisliste ohne Pfade, Sandbox als Arbeitsverzeichnis samt Argument-Prüfung, Frist + gekappte Ausgabe
+  + magere Umgebung. `git` nur lesend. Einstellbar unter „Befehle ausführen"; je Modell abwählbar im `llm.md`.
 - **Dauerhaftes Feedback** (Migration 0016): Erfolge, Fehlschläge und geglättete Bewertung überleben den Neustart.
 - **Schnellmodus** im Chat (ein Spezialist, Tempo dreifach gewichtet) und **Fortsetzen** abgebrochener Läufe
   (`POST /api/tasks/:id/resume`, neue Task im selben Arbeitsverzeichnis mit dem bisherigen Stand als Vorarbeit).

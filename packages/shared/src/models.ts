@@ -7,11 +7,14 @@
  *
  * | Zeile im `llm.md`      | Wirkung im System                                   |
  * |------------------------|-----------------------------------------------------|
- * | `Fähigkeiten`          | hartes Gate + Capability-Achse (30 % des Scores)     |
- * | `Kontext-Fenster`      | hartes Gate + Context-Fit-Achse (30 %)               |
- * | `Qualitätsklasse`      | Startwert der Qualitäts-Achse (20 %), bis Feedback   |
+ * | `Fähigkeiten`          | hartes Gate + Capability-Achse (25 % des Scores)     |
+ * | `Werkzeuge`            | welche Datei-Werkzeuge das Modell im Agentik-Modus   |
+ * |                        | aufrufen darf                                       |
+ * | `Kontext-Fenster`      | hartes Gate + Context-Fit-Achse (25 %)               |
+ * | `Qualitätsklasse`      | Startwert der Qualitäts-Achse (18 %), bis Feedback   |
  * |                        | aus echten Ausführungen ihn ablöst                   |
- * | `Gut für` / `Nicht …`  | Begründung für Menschen; kein automatischer Effekt   |
+ * | `Gut für` / `Nicht …`  | Eignungs-Achse (12 %): Stärken heben, Schwächen      |
+ * |                        | senken den Wert für genau diesen Prompt              |
  *
  * Woher der Inhalt kommt: Ein Provider meldet bei der Discovery nur einen
  * Modellnamen. Dieses Modul erkennt daran die Familie (lokal wie Cloud) und
@@ -94,9 +97,28 @@ export interface ModelSpec {
 	speed?: ModelSpeed
 	goodFor: string[]
 	notFor: string[]
+	/** Freigegebene Werkzeuge des Agentik-Modus. */
+	tools: AgentTool[]
 }
 
 const CAPABILITY_VALUES: Capability[] = ["code", "reasoning", "longform", "vision", "tools", "json"]
+
+/**
+ * Die Werkzeuge, die DiriZ im Agentik-Modus anbietet (`core/execution/tools.ts`).
+ * Sie stehen im Datenblatt, damit pro Modell entschieden werden kann, was es
+ * anfassen darf: Ein Modell, das Werkzeugaufrufe nicht sauber beherrscht,
+ * schreibt sonst Dateien mit halb geratenen Pfaden.
+ */
+export const AGENT_TOOLS = ["list_files", "read_file", "write_file"] as const
+
+export type AgentTool = (typeof AGENT_TOOLS)[number]
+
+/** Was jedes Werkzeug tut — die Kurzfassung fürs Datenblatt. */
+export const AGENT_TOOL_HINTS: Record<AgentTool, string> = {
+	list_files: "listet die Dateien im Workspace der Task",
+	read_file: "liest eine Datei aus dem Workspace (max. 100 kB)",
+	write_file: "schreibt oder überschreibt eine Datei im Workspace",
+}
 
 /* ------------------------------- Der Katalog --------------------------------- */
 
@@ -744,7 +766,9 @@ export function renderLlmDoc(identity: ModelIdentity, isoDate: string): string {
 		"",
 		"Technisches Datenblatt dieses Modells. DiriZ liest es aus und rechnet es in die",
 		"Orchestrierung ein: **Fähigkeiten** und **Kontext-Fenster** sind harte Gates,",
-		"die **Qualitätsklasse** ist der Startwert der Qualitäts-Achse. Die Angaben unten",
+		"**Gut für**/**Nicht geeignet für** bewegen die Eignungs-Achse, **Werkzeuge**",
+		"regeln den Agentik-Modus, die **Qualitätsklasse** ist der Startwert der",
+		"Qualitäts-Achse. Die Angaben unten",
 		"stammen aus dem Modell-Katalog und sind eine Vermutung anhand des Modellnamens —",
 		"korrigiere sie hier, sobald du das Modell im Einsatz gesehen hast.",
 		"",
@@ -781,6 +805,15 @@ export function renderLlmDoc(identity: ModelIdentity, isoDate: string): string {
 		...(profile.capabilities.length > 0
 			? profile.capabilities.map((c) => `- ${c}`)
 			: ["- keine (dieses Modell beantwortet keine Aufträge)"]),
+	)
+	// Werkzeuge: nur, wenn das Modell Werkzeugaufrufe überhaupt beherrscht —
+	// sonst steht dort eine Freigabe, die niemand einlösen kann.
+	const toolsAllowed = profile.capabilities.includes("tools")
+	lines.push("", "## Werkzeuge", "")
+	lines.push(
+		...(toolsAllowed
+			? AGENT_TOOLS.map((t) => `- ${t} — ${AGENT_TOOL_HINTS[t]}`)
+			: ["- keine (dieses Modell ruft im Agentik-Modus keine Werkzeuge auf)"]),
 	)
 	lines.push(
 		"",
@@ -834,7 +867,9 @@ function parseNumber(raw: string): number | undefined {
 	return Number.isFinite(value) ? value : undefined
 }
 
-const SECTION_KEYS: Record<string, "capabilities" | "goodFor" | "notFor"> = {
+const SECTION_KEYS: Record<string, "capabilities" | "goodFor" | "notFor" | "tools"> = {
+	werkzeuge: "tools",
+	tools: "tools",
 	fähigkeiten: "capabilities",
 	fahigkeiten: "capabilities",
 	capabilities: "capabilities",
@@ -862,8 +897,8 @@ const SECTION_KEYS: Record<string, "capabilities" | "goodFor" | "notFor"> = {
  * das Dokument bleibt für Menschen frei beschreibbar.
  */
 export function parseLlmDoc(markdown: string): ModelSpec {
-	const spec: ModelSpec = { languages: [], capabilities: [], goodFor: [], notFor: [] }
-	let section: "capabilities" | "goodFor" | "notFor" | undefined
+	const spec: ModelSpec = { languages: [], capabilities: [], goodFor: [], notFor: [], tools: [] }
+	let section: "capabilities" | "goodFor" | "notFor" | "tools" | undefined
 
 	for (const rawLine of (markdown ?? "").split(/\r?\n/)) {
 		const heading = rawLine.match(/^\s*#{1,6}\s+(.*)$/)
@@ -897,6 +932,13 @@ export function parseLlmDoc(markdown: string): ModelSpec {
 			} else if (key === "tempo" || key === "speed") {
 				const s = value.toLowerCase()
 				spec.speed = s.startsWith("schnell") ? "schnell" : s.startsWith("langsam") ? "langsam" : "mittel"
+			} else if (key === "werkzeuge" || key === "tools") {
+				for (const part of value.split(",")) {
+					const tool = part.trim().toLowerCase() as AgentTool
+					if (AGENT_TOOLS.includes(tool) && !spec.tools.includes(tool)) {
+						spec.tools.push(tool)
+					}
+				}
 			} else if (key === "fähigkeiten" || key === "fahigkeiten" || key === "capabilities") {
 				// Auch die Einzeiler-Schreibweise „Fähigkeiten: code, json".
 				for (const part of value.split(",")) {
@@ -918,6 +960,14 @@ export function parseLlmDoc(markdown: string): ModelSpec {
 			const cap = line.toLowerCase().split(/[\s,(]/)[0] as Capability
 			if (CAPABILITY_VALUES.includes(cap) && !spec.capabilities.includes(cap)) {
 				spec.capabilities.push(cap)
+			}
+			continue
+		}
+		if (section === "tools") {
+			// „- read_file — liest …" → `read_file`.
+			const tool = line.toLowerCase().split(/[\s,—:(]/)[0] as AgentTool
+			if (AGENT_TOOLS.includes(tool) && !spec.tools.includes(tool)) {
+				spec.tools.push(tool)
 			}
 			continue
 		}
@@ -972,9 +1022,16 @@ export interface SpecFit {
 /** Neutralwert, wenn das Datenblatt zum Prompt nichts sagt. */
 const SPEC_FIT_NEUTRAL = 0.6
 
-/** Nur tragende Wörter — kurze Allerweltswörter erzeugen sonst Zufallstreffer. */
+/**
+ * Tragende Wörter, auf ihren Wortstamm gekürzt.
+ *
+ * Nur lange Wörter zählen — kurze Allerweltswörter erzeugen Zufallstreffer.
+ * Die Kürzung auf fünf Zeichen ist die einfachste Form von Stemming und im
+ * Deutschen nötig: „Funktion" und „Funktionen", „schreibt" und „schreiben"
+ * sind dasselbe Wort, und ein exakter Vergleich fände keines davon.
+ */
 function specTerms(text: string): string[] {
-	return [...new Set(tokenize(text).filter((t) => t.length >= 4))]
+	return [...new Set(tokenize(text).filter((t) => t.length >= 4).map((t) => t.slice(0, 5)))]
 }
 
 /**
@@ -986,8 +1043,8 @@ function specTerms(text: string): string[] {
  * ungeeignetes Modell echte Arbeit vernichtet, während ein bloss nicht
  * besonders geeignetes sie nur langsamer erledigt.
  *
- * „Berührt" heisst: mindestens zwei tragende Wörter der Zeile stehen im Prompt
- * (bei einwortigen Zeilen genügt eines). Ohne Datenblatt bleibt es neutral —
+ * „Berührt" heisst: mindestens zwei tragende Wörter der Zeile stehen (im
+ * Wortstamm) im Prompt; bei einwortigen Zeilen genügt eines. Ohne Datenblatt bleibt es neutral —
  * ein ungepflegtes Modell wird nicht bestraft, aber auch nicht bevorzugt.
  */
 export function specFitScore(spec: ModelSpec | undefined, prompt: string): SpecFit {

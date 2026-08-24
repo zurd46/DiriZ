@@ -22,6 +22,7 @@ import type {
 	ProviderDoc,
 	ProviderType,
 } from "@diriz/shared"
+import { parseLlmDoc } from "@diriz/shared"
 import type { FastifyInstance } from "fastify"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { AppContext } from "../src/app.js"
@@ -36,6 +37,7 @@ import {
 	getProvider,
 	listAgentDocs,
 	listInstanceDocs,
+	getProviderDoc,
 	listProviderDocs,
 	saveAgentDoc,
 	saveInstanceDoc,
@@ -149,12 +151,53 @@ async function runAndCaptureSystemPrompt(agentId?: string): Promise<string | und
 }
 
 describe("Dokumente je LLM-Instanz", () => {
-	it("legt plan/changelog/init beim Entdecken eines Modells an", async () => {
-		expect(listInstanceDocs(db, instance.id).map((d) => d.kind)).toEqual(["plan", "changelog", "init"])
+	it("legt llm/changelog/init beim Entdecken eines Modells an — mit ausgefülltem Datenblatt", async () => {
+		// Ein Modell bekommt keinen Auftrag (`plan.md`), sondern ein Datenblatt.
+		expect(listInstanceDocs(db, instance.id).map((d) => d.kind)).toEqual(["llm", "changelog", "init"])
 		const res = await app.inject({ method: "GET", url: `/api/instances/${instance.id}/docs` })
 		expect(res.statusCode).toBe(200)
 		const docs = (res.json() as { docs: InstanceDoc[] }).docs
-		expect(docs.find((d) => d.kind === "plan")?.content).toContain("Qwen3 8B")
+		const llm = docs.find((d) => d.kind === "llm")?.content ?? ""
+		expect(llm).toContain("Qwen3 8B")
+		expect(llm).toContain("## Fähigkeiten")
+		expect(llm).toContain("## Gut für")
+		expect(llm).toContain("## Nicht geeignet für")
+		// Keine leere Vorlage: Der Katalog hat das Modell erkannt.
+		expect(llm).toContain("Familie: Qwen")
+		expect(parseLlmDoc(llm).quality).toBeDefined()
+	})
+
+	it("überträgt die Fähigkeiten aus dem Datenblatt in die Instanz (Routing-Gate)", async () => {
+		// Der Provider meldet keine Fähigkeiten — ohne Datenblatt wäre das Modell
+		// im Routing fähigkeitslos und fiele durch jedes Pflicht-Gate.
+		expect(getInstance(db, instance.id)?.capabilities.length).toBeGreaterThan(0)
+
+		const res = await app.inject({
+			method: "PUT",
+			url: `/api/instances/${instance.id}/docs/llm`,
+			payload: {
+				content: "# llm.md\n\n## Steckbrief\n\n- Kontext-Fenster: 16384\n- Qualitätsklasse: hoch\n\n## Fähigkeiten\n\n- vision\n- json\n",
+			},
+		})
+		expect(res.statusCode).toBe(200)
+		expect((res.json() as { spec: { capabilities: string[] } }).spec.capabilities).toEqual(["vision", "json"])
+		const updated = getInstance(db, instance.id)
+		expect(updated?.capabilities).toEqual(["vision", "json"])
+		expect(updated?.contextWindow).toBe(16384)
+	})
+
+	it("PATCH auf Fähigkeiten schreibt ins Datenblatt zurück", async () => {
+		const res = await app.inject({
+			method: "PATCH",
+			url: `/api/instances/${instance.id}`,
+			payload: { capabilities: ["code", "reasoning"], contextWindow: 32768 },
+		})
+		expect(res.statusCode).toBe(200)
+		const llm = listInstanceDocs(db, instance.id).find((d) => d.kind === "llm")?.content ?? ""
+		const spec = parseLlmDoc(llm)
+		expect(spec.capabilities).toEqual(["code", "reasoning"])
+		expect(spec.contextWindow).toBe(32768)
+		expect(getInstance(db, instance.id)?.capabilities).toEqual(["code", "reasoning"])
 	})
 
 	it("`init.md` setzt die Model-Voreinstellungen der Instanz", async () => {
@@ -217,9 +260,16 @@ describe("Dokumente je LLM-Instanz", () => {
 			payload: { content: "x" },
 		})
 		expect(badKind.statusCode).toBe(400)
+		// `plan.md` gibt es auf dieser Ebene nicht — ein Modell hat keinen Auftrag.
+		const wrongKind = await app.inject({
+			method: "PUT",
+			url: `/api/instances/${instance.id}/docs/plan`,
+			payload: { content: "x" },
+		})
+		expect(wrongKind.statusCode).toBe(400)
 		const missing = await app.inject({
 			method: "PUT",
-			url: "/api/instances/gibt-es-nicht/docs/plan",
+			url: "/api/instances/gibt-es-nicht/docs/llm",
 			payload: { content: "x" },
 		})
 		expect(missing.statusCode).toBe(404)
@@ -233,9 +283,10 @@ describe("plan.md wirkt im System-Prompt", () => {
 		expect(prompt).toBeUndefined()
 	})
 
-	it("übernimmt plan.md von Instanz und Spezialist — allgemein vor spezifisch", async () => {
+	it("übernimmt plan.md von Rechner und Spezialist — allgemein vor spezifisch", async () => {
 		const agent = await createAgentViaApi("Plan-Agent", { systemPrompt: "Du bist Code-Reviewer." })
-		saveInstanceDoc(db, instance.id, "plan", "## Leitplanken\n\n- Antworte immer auf Deutsch.\n")
+		const providerPlan = getProviderDoc(db, providerId, "plan")?.content ?? ""
+		saveProviderDoc(db, providerId, "plan", "## Leitplanken\n\n- Antworte immer auf Deutsch.\n")
 		saveAgentDoc(db, agent.id, "plan", "## Auftrag\n\nDu prüfst Diffs auf Fehler.\n")
 
 		const prompt = await runAndCaptureSystemPrompt(agent.id)
@@ -245,15 +296,17 @@ describe("plan.md wirkt im System-Prompt", () => {
 		expect(text).toContain("Verbindliche Arbeitsanweisung")
 		expect(text).toContain("Antworte immer auf Deutsch.")
 		expect(text).toContain("Du prüfst Diffs auf Fehler.")
-		expect(text.indexOf("Qwen3 8B")).toBeLessThan(text.indexOf("Plan-Agent"))
+		expect(text.indexOf("Rechner Lokal")).toBeLessThan(text.indexOf("Plan-Agent"))
+		// Das Datenblatt des Modells wirkt im Routing, nicht im Prompt.
+		expect(text).not.toContain("Datenblatt")
+		expect(text).not.toContain("Gut für")
 		// Vorlagen-Reste dürfen nie beim Modell landen.
 		expect(text).not.toContain("Schritt 1")
 		expect(text).not.toContain("Erstellt am")
+		saveProviderDoc(db, providerId, "plan", providerPlan)
 	})
 
 	it("Agenten-Feld schlägt init.md, Task-Override schlägt beide", async () => {
-		// Instanz-Deklaration aus dem vorigen Test zurücksetzen — hier zählt nur die Rolle.
-		saveInstanceDoc(db, instance.id, "plan", "# plan.md\n")
 		const agent = await createAgentViaApi("Rollen-Agent")
 		saveAgentDoc(db, agent.id, "init", "## System-Prompt\n\nRolle aus init.md\n")
 		expect(await runAndCaptureSystemPrompt(agent.id)).toBe("Rolle aus init.md")
@@ -299,7 +352,7 @@ describe("Dokument-Vorlagen (systemweit)", () => {
 			payload: {
 				docTemplates: {
 					agent: { plan: "# plan.md — {{name}}\n\nStand {{datum}}: immer Tests schreiben.\n" },
-					instance: { plan: "# {{datei}} für {{name}}\n\nNur Deutsch.\n" },
+					instance: { llm: "# {{datei}} für {{name}}\n\nNur Deutsch.\n" },
 				},
 			},
 		})
@@ -319,9 +372,10 @@ describe("Dokument-Vorlagen (systemweit)", () => {
 			{ modelId: "llama3:70b", displayName: "Llama3 70B", contextWindow: 8192 },
 			"manual",
 		)
-		const instPlan = listInstanceDocs(db, fresh.id).find((d) => d.kind === "plan")?.content ?? ""
-		expect(instPlan).toContain("# plan.md für Llama3 70B")
-		expect(instPlan).toContain("Nur Deutsch.")
+		// Eine selbst gesetzte Vorlage gewinnt gegen das Datenblatt aus dem Katalog.
+		const instLlm = listInstanceDocs(db, fresh.id).find((d) => d.kind === "llm")?.content ?? ""
+		expect(instLlm).toContain("# llm.md für Llama3 70B")
+		expect(instLlm).toContain("Nur Deutsch.")
 	})
 
 	it("weist ungültige Vorlagen ab und lässt Gewichte unangetastet", async () => {
@@ -357,14 +411,13 @@ describe("Dokumente je Rechner (Provider)", () => {
 		expect(getProvider(db, providerId)?.modelSettings).toBeNull()
 	})
 
-	it("`plan.md` des Rechners steht als erste Deklaration im Prompt", async () => {
+	it("`plan.md` des Rechners steht als Deklaration im Prompt", async () => {
+		const before = getProviderDoc(db, providerId, "plan")?.content ?? ""
 		saveProviderDoc(db, providerId, "plan", "## Leitplanken\n\n- Keine Cloud-Aufrufe.\n")
-		saveInstanceDoc(db, instance.id, "plan", "## Auftrag\n\nKurze Antworten.\n")
 		const text = (await runAndCaptureSystemPrompt()) ?? ""
 		expect(text).toContain("Keine Cloud-Aufrufe.")
-		expect(text.indexOf("Rechner Lokal")).toBeLessThan(text.indexOf("Modell Qwen3 8B"))
-		saveProviderDoc(db, providerId, "plan", "# plan.md\n")
-		saveInstanceDoc(db, instance.id, "plan", "# plan.md\n")
+		expect(text).toContain("Rechner Lokal")
+		saveProviderDoc(db, providerId, "plan", before)
 	})
 
 	it("PATCH schreibt init.md und einen Changelog-Eintrag", async () => {
@@ -409,9 +462,15 @@ describe("Sammel-Endpunkt /api/docs", () => {
 		const entry = owners.find((o) => o.id === agent.id)
 		expect(entry?.basePath).toBe(`/api/agents/${agent.id}`)
 		expect(entry?.docs.plan).toContain("Zwiebelfisch")
-		// Jeder Besitzer bringt alle drei Dokumente mit.
+		// Jeder Besitzer bringt genau die Dokumente seiner Ebene mit.
 		for (const owner of owners) {
-			expect(Object.keys(owner.docs).sort()).toEqual(["changelog", "init", "plan"])
+			const kinds = Object.entries(owner.docs)
+				.filter(([, content]) => content.length > 0)
+				.map(([kind]) => kind)
+				.sort()
+			expect(kinds, owner.name).toEqual(
+				owner.kind === "instance" ? ["changelog", "init", "llm"] : ["changelog", "init", "plan"],
+			)
 		}
 	})
 })

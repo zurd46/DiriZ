@@ -6,7 +6,7 @@
  */
 
 import {
-	AGENT_DOC_KINDS,
+	docKindsFor,
 	type AgentDocKind,
 	type AgentSettings,
 	type ConcurrencySettings,
@@ -119,7 +119,9 @@ function parseDocTemplates(body: unknown): DocTemplateSettings | undefined {
 			return undefined
 		}
 		const entries: Record<string, string> = {}
-		for (const kind of AGENT_DOC_KINDS) {
+		// Je Ebene nur ihre eigenen Arten — eine Vorlage für ein `plan.md` am
+		// Modell hätte nichts, worauf sie wirken könnte.
+		for (const kind of docKindsFor(owner)) {
 			const value = (group as Record<string, unknown>)[kind]
 			if (value === undefined || value === null) {
 				continue

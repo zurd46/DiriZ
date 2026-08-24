@@ -145,6 +145,11 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 				status: task.status,
 				createdAt: task.createdAt,
 				agentMode: task.metadata.agentMode === true,
+				// Kettenschritt: Die Oberfläche zeigt eine Übergabe anders an als
+				// eine getippte Nachricht — sie stammt vom vorigen Spezialisten.
+				chain: task.metadata.chain
+					? { step: task.metadata.chain.index + 1, total: task.metadata.chain.agentIds.length }
+					: null,
 				repoId: task.repoId ?? null,
 				// Welches Projekt, welcher Branch — „GitHub“ allein sagt nichts.
 				repoFullName: task.repoId ? (getRepo(ctx.db, task.repoId)?.fullName ?? null) : null,

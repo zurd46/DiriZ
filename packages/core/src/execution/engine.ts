@@ -147,6 +147,34 @@ const AGENT_TOTAL_FACTOR = 3
 /** Konservative Basis-Qualität ohne Feedback-Historie. */
 const BASIS_PRIOR = 0.6
 
+/** So viel Vorarbeit reicht ein Kettenschritt weiter (Zeichen). */
+const HANDOFF_MAX_CHARS = 6000
+
+/**
+ * Kürzt Markdown, ohne es kaputt zu machen.
+ *
+ * Ein blosses `slice()` schneidet mitten in eine Zeile oder — schlimmer —
+ * mitten in einen Code-Block. Die offene ```-Zaunzeile verschluckt dann alles
+ * Folgende, und die Übergabe erscheint als eine einzige unformatierte Wand.
+ * Deshalb: an einer Zeilengrenze abschneiden, offene Zäune schliessen und die
+ * Kürzung sichtbar machen.
+ */
+export function trimMarkdown(markdown: string, maxChars: number): string {
+	const text = markdown ?? ""
+	if (text.length <= maxChars) {
+		return text
+	}
+	const cut = text.slice(0, maxChars)
+	const lines = cut.slice(0, cut.lastIndexOf("\n") + 1 || cut.length).split(/\r?\n/)
+	// Zaunzeilen zählen: ungerade Anzahl heisst, ein Block steht noch offen.
+	const fences = lines.filter((l) => /^\s*(```|~~~)/.test(l)).length
+	if (fences % 2 === 1) {
+		lines.push("```")
+	}
+	lines.push("", "_[… gekürzt — die vollständige Antwort steht beim vorigen Schritt.]_")
+	return lines.join("\n")
+}
+
 /**
  * Teilergebnis eines gescheiterten Laufs — Text, sonst der Gedankengang.
  *
@@ -251,15 +279,25 @@ export class ExecutionEngine {
 			return
 		}
 		const ziel = chain.goal ?? task.prompt
-		const vorarbeit = ergebnis.trim().slice(0, 6000)
+		const vorher = getAgent(this.deps.db, chain.agentIds[chain.index] ?? "")?.name
+		const vorarbeit = trimMarkdown(ergebnis.trim(), HANDOFF_MAX_CHARS)
 		const folge = createTask(this.deps.db, {
 			title: task.title,
+			// Sauberes Markdown: Die Übergabe landet im Chat vor Augen und im
+			// Prompt vor dem Modell. Überschriften statt „Label:"-Zeilen halten
+			// beides lesbar — und die Vorarbeit ist selbst schon Markdown.
 			prompt: [
-				`Ursprünglicher Auftrag:\n${ziel}`,
+				"## Ursprünglicher Auftrag",
 				"",
-				`Vorarbeit aus Schritt ${chain.index + 1}:\n${vorarbeit || "(keine Textantwort)"}`,
+				ziel.trim(),
 				"",
-				"Deine Aufgabe: Bau darauf auf und erledige den Teil, für den du zuständig bist. " +
+				`## Vorarbeit aus Schritt ${chain.index + 1}${vorher ? ` — ${vorher}` : ""}`,
+				"",
+				vorarbeit || "_(keine Textantwort)_",
+				"",
+				"## Deine Aufgabe",
+				"",
+				"Bau darauf auf und erledige den Teil, für den du zuständig bist. " +
 					"Wiederhole die Vorarbeit nicht, sondern ergänze oder korrigiere sie.",
 			].join("\n"),
 			metadata: {

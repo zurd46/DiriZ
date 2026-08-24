@@ -65,6 +65,8 @@ interface Turn {
 	status: string
 	createdAt: string
 	agentMode: boolean
+	/** Gesetzt, wenn diese Nachricht die Übergabe eines Kettenschritts ist. */
+	chain: { step: number; total: number } | null
 	/** Gepinntes Repository — dann gibt es Diff, Commit und Push direkt hier. */
 	repoId: string | null
 	agentName: string | null
@@ -93,6 +95,34 @@ interface ChatSummary {
  */
 const NEEDS_FILES =
 	/\b(im|ins|am|das|dem|unser[nm]?|meine[nmr]?)\s+(projekt|repo|repository|code|codebase|quellcode)\b|\b(datei|dateien|quelltext|implementier|umsetzen|einbauen|beheb|fixe?n?)\b/i
+
+/**
+ * Zerlegt die Übergabe eines Kettenschritts in ihre drei Abschnitte.
+ *
+ * Der Core baut sie als Markdown mit festen Überschriften (`## Ursprünglicher
+ * Auftrag`, `## Vorarbeit aus Schritt N`, `## Deine Aufgabe`). Hier wird sie
+ * wieder auseinandergenommen, damit die Vorarbeit — oft tausende Zeichen des
+ * vorigen Spezialisten — zugeklappt werden kann, statt den Verlauf zu fluten.
+ *
+ * `null`, wenn das Format nicht passt: Dann wird die Nachricht ganz normal
+ * gerendert, statt sie zu verstümmeln.
+ */
+function splitHandoff(
+	prompt: string,
+): { goal: string; prior: string; priorTitle: string; task: string } | null {
+	const m = prompt.match(
+		/^##\s*Ursprünglicher Auftrag\s*\n([\s\S]*?)\n##\s*(Vorarbeit[^\n]*)\n([\s\S]*?)\n##\s*Deine Aufgabe\s*\n([\s\S]*)$/,
+	)
+	if (!m) {
+		return null
+	}
+	return {
+		goal: (m[1] ?? "").trim(),
+		priorTitle: (m[2] ?? "").trim(),
+		prior: (m[3] ?? "").trim(),
+		task: (m[4] ?? "").trim(),
+	}
+}
 
 /** Titel aus der ersten Zeile — er benennt später auch den Git-Branch. */
 function titleFrom(prompt: string): string {
@@ -644,6 +674,9 @@ export default function Chat() {
 					status: "running",
 					createdAt: new Date().toISOString(),
 					agentMode: target !== "answer",
+					// Was hier entsteht, ist immer eine getippte Nachricht — eine
+					// Übergabe legt der Core an, nicht die Oberfläche.
+					chain: null,
 					repoId: target === "repo" ? repoId : null,
 					agentName: null,
 					agentReason: null,
@@ -831,11 +864,46 @@ export default function Chat() {
 							const discipline = agentId
 								? findBlueprint(agentId.replace(/^agent-/, ""))?.discipline
 								: undefined
+							// Eine Übergabe ist keine getippte Nachricht: Sie kommt vom
+							// vorigen Spezialisten und wird als Markdown gezeigt.
+							// Schritt 1 ist die getippte Nachricht selbst — erst ab Schritt 2
+							// übergibt ein Spezialist an den nächsten.
+							const isHandoff = (turn.chain?.step ?? 1) > 1
+							const handoff = isHandoff ? splitHandoff(turn.prompt) : null
 							return (
 								<div key={turn.taskId} className="chat-turn">
-									<div className="chat-msg user">
-										<div className="chat-role">Du</div>
-										<div className="chat-body">{turn.prompt}</div>
+									<div className={`chat-msg user ${handoff ? "handoff" : ""}`}>
+										<div className="chat-role">
+											{isHandoff && turn.chain
+												? `Übergabe · Schritt ${turn.chain.step} von ${turn.chain.total}`
+												: "Du"}
+										</div>
+										{handoff ? (
+											<div className="chat-body md">
+												<div className="handoff-part">
+													<div className="handoff-label">Ursprünglicher Auftrag</div>
+													<Markdown source={handoff.goal} />
+												</div>
+												<details className="accordion handoff-prior">
+													<summary>
+														<IconChevronRight size={13} className="accordion-arrow" />
+														<span>{handoff.priorTitle}</span>
+														<span className="faint">
+															{handoff.prior.length.toLocaleString("de-CH")} Zeichen
+														</span>
+													</summary>
+													<div className="handoff-prior-body">
+														<Markdown source={handoff.prior} />
+													</div>
+												</details>
+												<div className="handoff-part">
+													<div className="handoff-label">Deine Aufgabe</div>
+													<Markdown source={handoff.task} />
+												</div>
+											</div>
+										) : (
+											<div className="chat-body">{turn.prompt}</div>
+										)}
 									</div>
 
 									<div className="chat-msg agent">

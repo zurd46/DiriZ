@@ -3226,6 +3226,51 @@ pre.code {
 	max-width: 78%;
 }
 
+/* ── Übergabe zwischen zwei Kettenschritten ──────────────────────────────────
+   Sie sieht aus wie eine Nachricht, ist aber keine: Der vorige Spezialist
+   reicht sein Ergebnis weiter. Deshalb breiter (es ist Markdown, kein Satz),
+   ruhiger eingefärbt als eine eigene Nachricht — und die Vorarbeit steckt in
+   einem Akkordeon, sonst füllt sie den halben Verlauf. */
+
+.chat-msg.user.handoff {
+	max-width: 92%;
+	background: var(--bg-soft);
+	border-color: var(--border);
+}
+
+.handoff-part + .handoff-part,
+.handoff-prior + .handoff-part {
+	margin-top: var(--sp-4);
+}
+
+.handoff-prior {
+	margin-top: var(--sp-3);
+}
+
+.handoff-label {
+	font-size: var(--fs-xs);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--muted);
+	margin-bottom: var(--sp-2);
+}
+
+.handoff-prior > summary > .faint {
+	margin-left: auto;
+}
+
+.handoff-prior-body {
+	max-height: 420px;
+	overflow-y: auto;
+	padding: var(--sp-3) var(--sp-4);
+}
+
+/* Markdown im Nachrichtenkörper: keine `pre-wrap`-Umbrüche, die Blöcke
+   bringen ihre eigenen Abstände mit. */
+.chat-body.md {
+	white-space: normal;
+}
+
 .chat-role {
 	display: flex;
 	align-items: center;

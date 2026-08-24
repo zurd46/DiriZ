@@ -40,7 +40,7 @@ import {
 	upsertInstance,
 } from "../src/db/repositories.js"
 import { EventBus } from "../src/execution/bus.js"
-import { ExecutionEngine } from "../src/execution/engine.js"
+import { ExecutionEngine, trimMarkdown } from "../src/execution/engine.js"
 import { ProviderRegistry } from "../src/providers/registry.js"
 import { Feedback } from "../src/routing/feedback.js"
 
@@ -355,6 +355,11 @@ describe("engine: Spezialisten-Kette", () => {
 		expect(folge?.prompt).toContain("Ursprungsauftrag der Kette")
 		expect(folge?.prompt).toContain("Vorarbeit aus Schritt 1")
 		expect(folge?.metadata.chain?.agentIds).toEqual([erster.id, zweiter.id])
+		// Sauberes Markdown mit festen Überschriften: Die Oberfläche zerlegt die
+		// Übergabe daran, und das Modell liest sie als gegliederten Auftrag.
+		expect(folge?.prompt).toMatch(/^## Ursprünglicher Auftrag$/m)
+		expect(folge?.prompt).toMatch(/^## Vorarbeit aus Schritt 1 — Ketten-Erster$/m)
+		expect(folge?.prompt).toMatch(/^## Deine Aufgabe$/m)
 	})
 
 	it("endet nach dem letzten Schritt", async () => {
@@ -412,5 +417,33 @@ describe("engine: Swarm als Arbeitsablauf", () => {
 		const task = createTask(db, { prompt: "helikopter", assignmentMode: "swarm", swarmId: swarm.id })
 		await engine.runTask(task)
 		expect(latestAgentSelection(db, task.id)?.agentName).toBe("Gruppe B")
+	})
+})
+
+/**
+ * Kürzen darf das Markdown nicht zerstören. Ein `slice()` mitten in einen
+ * Code-Block liess dessen Zaun offen — im Chat verschluckte er alles Folgende,
+ * und die Übergabe erschien als eine einzige unformatierte Wand.
+ */
+describe("trimMarkdown", () => {
+	it("lässt kurzen Text unangetastet", () => {
+		expect(trimMarkdown("# Titel\n\nKurz.", 6000)).toBe("# Titel\n\nKurz.")
+	})
+
+	it("schneidet an der Zeilengrenze und markiert die Kürzung", () => {
+		const text = ["Zeile eins", "Zeile zwei", "Zeile drei"].join("\n")
+		const out = trimMarkdown(text, 15)
+		expect(out).toContain("Zeile eins")
+		expect(out).not.toContain("Zeile drei")
+		expect(out).toContain("gekürzt")
+		// Keine halbe Zeile.
+		expect(out.split("\n").some((l) => l === "Zeile zw")).toBe(false)
+	})
+
+	it("schliesst einen offenen Code-Block", () => {
+		const text = ["Text davor", "```ts", "const a = 1", "const b = 2", "```", "Danach"].join("\n")
+		const out = trimMarkdown(text, 30)
+		const fences = out.split("\n").filter((l) => l.startsWith("```")).length
+		expect(fences % 2).toBe(0)
 	})
 })

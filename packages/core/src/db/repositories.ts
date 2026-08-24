@@ -865,6 +865,18 @@ export function createTask(db: Db, input: TaskInput): Task {
 }
 
 /** Engine schreibt die finale Agenten-Zuordnung zurück (auto-Modus). */
+/** Verankert die Spezialisten-Kette einer Task in ihren Metadaten. */
+export function setTaskChain(db: Db, id: string, chain: TaskMetadata["chain"]): void {
+	const row = db.prepare("SELECT metadata_json FROM tasks WHERE id = ?").get(id) as
+		| { metadata_json: string }
+		| undefined
+	if (!row) {
+		return
+	}
+	const metadata = { ...(JSON.parse(row.metadata_json) as TaskMetadata), chain }
+	db.prepare("UPDATE tasks SET metadata_json = ? WHERE id = ?").run(JSON.stringify(metadata), id)
+}
+
 export function setTaskAgentSelection(db: Db, id: string, agentId: string | null): void {
 	db.prepare("UPDATE tasks SET agent_id = ? WHERE id = ?").run(agentId, id)
 }
@@ -1566,6 +1578,7 @@ interface SwarmRow {
 	name: string
 	description: string
 	agent_ids: string
+	ordered: number
 	enabled: number
 	created_at: string
 	updated_at: string
@@ -1577,6 +1590,7 @@ function mapSwarm(row: SwarmRow): Swarm {
 		name: row.name,
 		description: row.description,
 		agentIds: JSON.parse(row.agent_ids) as string[],
+		ordered: row.ordered === 1,
 		enabled: row.enabled === 1,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
@@ -1589,6 +1603,8 @@ export interface SwarmInput {
 	name: string
 	description?: string
 	agentIds?: string[]
+	/** `true` = Arbeitsablauf mit fester Reihenfolge. */
+	ordered?: boolean
 	enabled?: boolean
 }
 
@@ -1596,12 +1612,13 @@ export function createSwarm(db: Db, input: SwarmInput): Swarm {
 	const id = input.id ?? randomUUID()
 	const now = new Date().toISOString()
 	db.prepare(
-		"INSERT INTO swarms (id, name, description, agent_ids, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO swarms (id, name, description, agent_ids, ordered, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 	).run(
 		id,
 		input.name.trim(),
 		input.description ?? "",
 		JSON.stringify(input.agentIds ?? []),
+		input.ordered ? 1 : 0,
 		input.enabled === false ? 0 : 1,
 		now,
 		now,
@@ -1629,6 +1646,7 @@ export interface SwarmPatch {
 	name?: string
 	description?: string
 	agentIds?: string[]
+	ordered?: boolean
 	enabled?: boolean
 }
 
@@ -1638,11 +1656,12 @@ export function updateSwarm(db: Db, id: string, patch: SwarmPatch): Swarm | unde
 		return undefined
 	}
 	db.prepare(
-		"UPDATE swarms SET name = ?, description = ?, agent_ids = ?, enabled = ?, updated_at = ? WHERE id = ?",
+		"UPDATE swarms SET name = ?, description = ?, agent_ids = ?, ordered = ?, enabled = ?, updated_at = ? WHERE id = ?",
 	).run(
 		patch.name?.trim() || row.name,
 		patch.description ?? row.description,
 		JSON.stringify(patch.agentIds ?? JSON.parse(row.agent_ids)),
+		patch.ordered === undefined ? row.ordered : patch.ordered ? 1 : 0,
 		patch.enabled === undefined ? row.enabled : patch.enabled ? 1 : 0,
 		new Date().toISOString(),
 		id,

@@ -16,6 +16,7 @@ import {
 	refreshCatalogAgents,
 	refreshCatalogSwarms,
 	retireCatalogAgents,
+	retireCatalogSwarms,
 	seedTeamCatalog,
 } from "./db/seed.js"
 import { EventBus } from "./execution/bus.js"
@@ -37,6 +38,7 @@ async function main(): Promise<void> {
 	refreshCatalogSwarms(db)
 	const refreshedAgents = refreshCatalogAgents(db)
 	const retiredAgents = retireCatalogAgents(db)
+	const retiredSwarms = retireCatalogSwarms(db)
 	const secret = loadOrCreateSecret(config.dataDir)
 
 	const bus = new EventBus()
@@ -164,6 +166,9 @@ async function main(): Promise<void> {
 		"core",
 		`DiriZ Core läuft auf http://${config.host}:${config.port} (Schema v${schemaVersion}, Data: ${config.dataDir})`,
 	)
+	if (retiredSwarms.length > 0) {
+		log("info", "core", `Team-Katalog: ${retiredSwarms.length} veraltete(r) Swarm(s) entfernt`)
+	}
 	if (retiredAgents.length > 0) {
 		log(
 			"info",

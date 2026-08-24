@@ -42,12 +42,22 @@ export interface Agent {
 	updatedAt: string
 }
 
-/** Ein Swarm = Gruppe von Agenten; pro Prompt wird der beste ausgewählt. */
+/**
+ * Ein Swarm bündelt Spezialisten. Zwei Betriebsarten:
+ *
+ * - **Gruppe** (`ordered: false`): Pro Prompt wird das bestbewertete Mitglied
+ *   gewählt — gut, wenn mehrere Rollen infrage kommen, aber nur eine arbeiten soll.
+ * - **Arbeitsablauf** (`ordered: true`): Alle Mitglieder arbeiten **nacheinander**
+ *   in der festgelegten Reihenfolge, jeder auf der Vorarbeit des vorigen. Das
+ *   bildet ab, wie Software tatsächlich entsteht: klären, entwerfen, bauen, prüfen.
+ */
 export interface Swarm {
 	id: string
 	name: string
 	description: string
 	agentIds: string[]
+	/** `true` = feste Reihenfolge, alle Mitglieder nacheinander. */
+	ordered: boolean
 	enabled: boolean
 	createdAt: string
 	updatedAt: string

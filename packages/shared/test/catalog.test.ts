@@ -89,17 +89,19 @@ describe("TEAM_SWARMS", () => {
 		}
 	})
 
-	it("führt jeden Spezialisten in genau einem Fachbereichs-Swarm", () => {
-		const fachbereiche = TEAM_SWARMS.filter((sw) => sw.slug !== "software-team")
-		const counts = new Map<string, number>()
-		for (const sw of fachbereiche) {
-			for (const slug of sw.agentSlugs) {
-				counts.set(slug, (counts.get(slug) ?? 0) + 1)
-			}
+	it("beschreibt Arbeitsabläufe mit fester Reihenfolge", () => {
+		const ablaeufe = TEAM_SWARMS.filter((sw) => sw.ordered)
+		expect(ablaeufe.length).toBeGreaterThan(0)
+		for (const sw of ablaeufe) {
+			// Ein Ablauf mit einem Mitglied ist kein Ablauf.
+			expect(sw.agentSlugs.length, sw.slug).toBeGreaterThanOrEqual(2)
+			// Und niemand kommt zweimal vor — das wäre eine Schleife.
+			expect(new Set(sw.agentSlugs).size, sw.slug).toBe(sw.agentSlugs.length)
 		}
-		for (const bp of SOFTWARE_TEAM) {
-			expect(counts.get(bp.slug), bp.slug).toBe(1)
-		}
+	})
+
+	it("hält die Auswahl klein — zu viele Swarms sind keine Hilfe", () => {
+		expect(TEAM_SWARMS.length).toBeLessThanOrEqual(6)
 	})
 
 	it("enthält im Gesamt-Swarm das ganze Team", () => {

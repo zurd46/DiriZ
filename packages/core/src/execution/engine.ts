@@ -64,6 +64,7 @@ import {
 	saveDecision,
 	saveFile,
 	setTaskAgentSelection,
+	setTaskChain,
 	setTaskRepo,
 	setTaskStatus,
 	updateExecution,
@@ -132,6 +133,11 @@ interface AgentSelection {
 	reason: string
 	/** false = ungültige Konfiguration → `runTask` schlägt die Task fehl. */
 	ok: boolean
+	/**
+	 * Arbeitsablauf: alle Spezialisten in ihrer Reihenfolge. Gesetzt bei einem
+	 * geordneten Swarm — die Task wird damit zum ersten Schritt einer Kette.
+	 */
+	chain?: string[]
 }
 
 /** Agentik-Läufe dürfen dreimal so lange dauern wie eine einzelne Antwort. */
@@ -528,6 +534,23 @@ export class ExecutionEngine {
 			if (members.length === 0) {
 				return { candidates: [], reason: `Swarm „${swarm.name}“ enthält keine aktiven Agenten`, ok: false }
 			}
+			// Arbeitsablauf: Alle Mitglieder nacheinander, in ihrer Reihenfolge.
+			// Die Kette selbst legt `runTask` an, sobald der erste Schritt steht.
+			if (swarm.ordered && members.length > 1) {
+				const ordered = swarm.agentIds
+					.map((id) => members.find((m) => m.id === id))
+					.filter((m): m is Agent => m !== undefined)
+				const erster = ordered[0]
+				if (erster) {
+					return {
+						agent: erster,
+						candidates: scoreAgents(task.prompt, agentProfile, ordered.map(toAgentCandidate)),
+						reason: `Arbeitsablauf „${swarm.name}": Schritt 1 von ${ordered.length}`,
+						ok: true,
+						chain: ordered.map((a) => a.id),
+					}
+				}
+			}
 			const candidates = scoreAgents(task.prompt, agentProfile, members.map(toAgentCandidate))
 			const agent = members.find((a) => a.id === candidates[0]?.agentId)
 			return {
@@ -581,6 +604,13 @@ export class ExecutionEngine {
 			createdAt: new Date().toISOString(),
 		})
 		setTaskAgentSelection(db, task.id, sel.agent?.id ?? null)
+		// Arbeitsablauf: Die Kette in den Metadaten verankern, damit der Core
+		// nach diesem Schritt selbst weitermacht. Nur beim ersten Schritt —
+		// Folge-Tasks bringen ihre Kette bereits mit.
+		if (sel.chain && sel.chain.length > 1 && !task.metadata.chain) {
+			setTaskChain(db, task.id, { agentIds: sel.chain, index: 0, goal: task.prompt })
+			task.metadata = { ...task.metadata, chain: { agentIds: sel.chain, index: 0, goal: task.prompt } }
+		}
 		emit({
 			event: "task.agent_selected",
 			data: {

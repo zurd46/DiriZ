@@ -371,3 +371,46 @@ describe("engine: Spezialisten-Kette", () => {
 		expect(listTasks(db).length).toBe(vorher + 1)
 	})
 })
+
+/**
+ * Ein geordneter Swarm ist ein Arbeitsablauf: Alle Mitglieder arbeiten
+ * nacheinander in **ihrer** Reihenfolge — nicht der beste allein.
+ */
+describe("engine: Swarm als Arbeitsablauf", () => {
+	it("startet mit dem ersten Mitglied und verankert die Kette", async () => {
+		const eins = createAgent(db, { name: "Ablauf Eins", systemPrompt: "1" })
+		const zwei = createAgent(db, { name: "Ablauf Zwei", systemPrompt: "2" })
+		const drei = createAgent(db, { name: "Ablauf Drei", systemPrompt: "3" })
+		// Absicht: Das **letzte** Mitglied passt am besten zum Prompt — trotzdem
+		// muss der Ablauf vorn beginnen.
+		updateAgent(db, drei.id, { description: "raketen raketen raketen" })
+		const swarm = createSwarm(db, {
+			name: "Dreischritt",
+			agentIds: [eins.id, zwei.id, drei.id],
+			ordered: true,
+		})
+
+		const task = createTask(db, {
+			prompt: "raketen bauen",
+			assignmentMode: "swarm",
+			swarmId: swarm.id,
+		})
+		await engine.runTask(task)
+
+		const sel = latestAgentSelection(db, task.id)
+		expect(sel?.agentName).toBe("Ablauf Eins")
+		expect(sel?.reason).toContain("Arbeitsablauf")
+		// Die Kette steht in den Metadaten und der zweite Schritt läuft bereits.
+		expect(getTask(db, task.id)?.metadata.chain?.agentIds).toEqual([eins.id, zwei.id, drei.id])
+		expect(listTasks(db).some((t) => t.agentId === zwei.id && t.metadata.chain?.index === 1)).toBe(true)
+	})
+
+	it("wählt bei einem ungeordneten Swarm weiterhin den besten", async () => {
+		const a = createAgent(db, { name: "Gruppe A", description: "unwichtig", systemPrompt: "A" })
+		const b = createAgent(db, { name: "Gruppe B", description: "helikopter", systemPrompt: "B" })
+		const swarm = createSwarm(db, { name: "Gruppe", agentIds: [a.id, b.id] })
+		const task = createTask(db, { prompt: "helikopter", assignmentMode: "swarm", swarmId: swarm.id })
+		await engine.runTask(task)
+		expect(latestAgentSelection(db, task.id)?.agentName).toBe("Gruppe B")
+	})
+})

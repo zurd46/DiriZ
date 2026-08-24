@@ -121,9 +121,9 @@ describe("seedTeamCatalog", () => {
 		expect(getAgent(db2, own.id)?.description).toBe("Mein eigener")
 		expect(getAgent(db2, blueprintAgentId("code-reviewer"))).toBeUndefined()
 		expect(listAgents(db2).filter((a) => a.name === "Code-Reviewer")).toHaveLength(1)
-		// Der Qualitäts-Swarm entsteht trotzdem — nur ohne das fehlende Mitglied.
-		const swarm = getSwarm(db2, blueprintSwarmId("qualitaet"))
-		expect(swarm?.agentIds).not.toContain(blueprintAgentId("code-reviewer"))
+		// Der Arbeitsablauf entsteht trotzdem — nur ohne das fehlende Mitglied.
+		const swarm = getSwarm(db2, blueprintSwarmId("fehler-beheben"))
+		expect(swarm?.agentIds ?? []).not.toContain(blueprintAgentId("code-reviewer"))
 
 		db2.close()
 		fs.rmSync(fresh, { recursive: true, force: true })
@@ -136,12 +136,12 @@ describe("seedTeamCatalog", () => {
 		seedTeamCatalog(db3)
 
 		// Zustand simulieren: Mitglied fehlt im Swarm, Agent existiert aber.
-		const swarmId = blueprintSwarmId("qualitaet")
+		const swarmId = blueprintSwarmId("fehler-beheben")
 		const memberId = blueprintAgentId("test-engineer")
 		const rest = (getSwarm(db3, swarmId)?.agentIds ?? []).filter((x) => x !== memberId)
 		db3.prepare("UPDATE swarms SET agent_ids = ? WHERE id = ?").run(JSON.stringify(rest), swarmId)
 
-		expect(refreshCatalogSwarms(db3)).toContain("qualitaet")
+		expect(refreshCatalogSwarms(db3)).toContain("fehler-beheben")
 		expect(getSwarm(db3, swarmId)?.agentIds).toContain(memberId)
 
 		db3.close()

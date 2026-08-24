@@ -1,13 +1,18 @@
 /**
- * Deklarations-Dokumente (`plan.md`, `changelog.md`, `init.md`).
+ * Deklarations-Dokumente (`plan.md`, `llm.md`, `changelog.md`, `init.md`).
  *
- * Jeder Spezialist **und** jede LLM-Instanz (Modell auf einem Rechner) führt
- * drei Markdown-Dokumente mit sich. Alle drei sind **wirksam** — das System
- * deklariert darin, wie das Modell zu arbeiten hat:
+ * Jeder Rechner, jedes Modell und jeder Spezialist führt drei Markdown-
+ * Dokumente mit sich. Alle drei sind **wirksam** — sie sind keine Notizen,
+ * sondern die Deklaration, nach der das System arbeitet:
  *
- * - `plan.md`      — Auftrag, Vorgehen, Leitplanken. Wird als **verbindliche
- *   Arbeitsanweisung** in den System-Prompt übernommen (siehe
- *   `composeSystemPrompt`); Vorlagen-Platzhalter werden dabei entfernt.
+ * - `plan.md`      — **nur Rechner und Spezialist**: Auftrag, Vorgehen,
+ *   Leitplanken. Wird als **verbindliche Arbeitsanweisung** in den
+ *   System-Prompt übernommen (siehe `composeSystemPrompt`);
+ *   Vorlagen-Platzhalter werden dabei entfernt.
+ * - `llm.md`       — **nur Modelle**: das technische Datenblatt (Fähigkeiten,
+ *   Kontext-Fenster, Qualitätsklasse, Eignung). Ein Modell bekommt keinen
+ *   Auftrag — es hat Eigenschaften; die Orchestrierung rechnet sie ein
+ *   (siehe `models.ts`, `parseLlmDoc`).
  * - `init.md`      — setzt die Voreinstellungen des LLM-Modells (Temperatur,
  *   Max-Tokens, System-Prompt, …).
  * - `changelog.md` — Änderungsprotokoll; der Core hängt Einträge automatisch an.
@@ -21,8 +26,8 @@
 
 import type { ModelSettings } from "./types.js"
 
-/** Die drei Dokumente pro Spezialist bzw. LLM-Instanz. */
-export type AgentDocKind = "plan" | "changelog" | "init"
+/** Alle Dokumentarten. Welche davon ein Besitzer führt, sagt `DOC_KINDS`. */
+export type AgentDocKind = "plan" | "changelog" | "init" | "llm"
 
 /** Alias — die Dokumente hängen nicht nur an Agenten. */
 export type DocKind = AgentDocKind
@@ -33,11 +38,35 @@ export type DocKind = AgentDocKind
  */
 export type DocOwnerKind = "provider" | "instance" | "agent"
 
-export const AGENT_DOC_KINDS: AgentDocKind[] = ["plan", "changelog", "init"]
+/**
+ * Wer führt welche Dokumente?
+ *
+ * Ein Spezialist bekommt einen **Auftrag** (`plan.md`), ein Modell hat
+ * **Eigenschaften** (`llm.md`) — beides zu vermischen war der Fehler: „Wofür
+ * wird dieses Modell eingesetzt? / Schritt 1 / Schritt 2" ist die Sprache
+ * eines Auftrags und an einem Modell schlicht sinnlos.
+ */
+export const DOC_KINDS: Record<DocOwnerKind, AgentDocKind[]> = {
+	provider: ["plan", "changelog", "init"],
+	instance: ["llm", "changelog", "init"],
+	agent: ["plan", "changelog", "init"],
+}
+
+/** Alle Arten, die es gibt — für Validierung und Migration. */
+export const ALL_DOC_KINDS: AgentDocKind[] = ["plan", "llm", "changelog", "init"]
+
+/** Die Dokumente eines Spezialisten (Rückwärtskompatibilität). */
+export const AGENT_DOC_KINDS: AgentDocKind[] = DOC_KINDS.agent
+
+/** Welche Dokumente dieser Besitzer führt. */
+export function docKindsFor(owner: DocOwnerKind): AgentDocKind[] {
+	return DOC_KINDS[owner]
+}
 
 /** Dateiname pro Dokumenttyp — so heißen die Dokumente auch in der UI. */
 export const AGENT_DOC_FILES: Record<AgentDocKind, string> = {
 	plan: "plan.md",
+	llm: "llm.md",
 	changelog: "changelog.md",
 	init: "init.md",
 }
@@ -66,7 +95,7 @@ export interface ProviderDoc {
 }
 
 export function isAgentDocKind(value: unknown): value is AgentDocKind {
-	return typeof value === "string" && (AGENT_DOC_KINDS as string[]).includes(value)
+	return typeof value === "string" && (ALL_DOC_KINDS as string[]).includes(value)
 }
 
 /* --------------------------------- init.md ---------------------------------- */
@@ -516,6 +545,27 @@ export function defaultDoc(
 			"## 3. Leitplanken",
 			"",
 			`- ${OWNER_LIMITS[owner]}`,
+			"",
+		].join("\n")
+	}
+	if (kind === "llm") {
+		// Nur ein Notnagel: Das ausgefüllte Datenblatt kommt aus dem
+		// Modell-Katalog (`renderLlmDoc`), sobald die Discovery das Modell sieht.
+		return [
+			`# llm.md — ${name}`,
+			"",
+			`**Erstellt am:** ${day}`,
+			"",
+			"Technisches Datenblatt dieses Modells.",
+			"",
+			"## Steckbrief",
+			"",
+			"- Kontext-Fenster: —",
+			"- Qualitätsklasse: mittel",
+			"",
+			"## Fähigkeiten",
+			"",
+			"- —",
 			"",
 		].join("\n")
 	}

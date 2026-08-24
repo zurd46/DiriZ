@@ -60,6 +60,11 @@ export interface SwarmBlueprint {
 	description: string
 	/** Mitglieder über ihren `slug` — beim Seeden zu IDs aufgelöst. */
 	agentSlugs: string[]
+	/**
+	 * `true` = **Arbeitsablauf**: Die Mitglieder arbeiten in genau dieser
+	 * Reihenfolge nacheinander. `false` = Gruppe, aus der einer gewählt wird.
+	 */
+	ordered?: boolean
 }
 
 /** Agent-ID eines Blueprints — deterministisch, damit Seeding idempotent ist. */
@@ -593,33 +598,30 @@ export const SOFTWARE_TEAM: AgentBlueprint[] = [
  */
 export const TEAM_SWARMS: SwarmBlueprint[] = [
 	{
-		slug: "produkt-architektur",
-		name: "Produkt & Architektur",
-		description: "Anforderungen klären, System schneiden, Schnittstellen und Datenmodell entwerfen",
-		agentSlugs: ["requirements-analyst", "software-architekt", "api-designer", "datenbank-architekt"],
+		slug: "feature-bauen",
+		name: "Feature bauen",
+		description: "Entwurf, Umsetzung im Backend und Frontend, abschliessendes Review",
+		ordered: true,
+		agentSlugs: ["software-architekt", "backend-entwickler", "frontend-entwickler", "code-reviewer"],
 	},
 	{
-		slug: "implementierung",
-		name: "Implementierung",
-		description: "Frontend, Backend und Auslieferung",
-		agentSlugs: ["frontend-entwickler", "backend-entwickler", "devops-engineer"],
+		slug: "fehler-beheben",
+		name: "Fehler beheben",
+		description: "Ursache finden, mit einem Test festnageln, Korrektur prüfen",
+		ordered: true,
+		agentSlugs: ["debugging-spezialist", "test-engineer", "code-reviewer"],
 	},
 	{
-		slug: "qualitaet",
-		name: "Qualität",
-		description: "Review, Tests, Fehlersuche, Aufräumen, Sicherheit",
-		agentSlugs: [
-			"code-reviewer",
-			"test-engineer",
-			"debugging-spezialist",
-			"refactoring-spezialist",
-			"security-engineer",
-		],
+		slug: "sicherheit-pruefen",
+		name: "Sicherheit prüfen",
+		description: "Schwachstellen finden, härten, mit einem Test absichern",
+		ordered: true,
+		agentSlugs: ["security-engineer", "backend-entwickler", "test-engineer"],
 	},
 	{
 		slug: "software-team",
-		name: "Software-Team (komplett)",
-		description: "Das gesamte Kernteam — von der Anforderung über Architektur und Umsetzung bis Qualität",
+		name: "Software-Team (alle)",
+		description: "Das gesamte Kernteam als Auswahl — DiriZ nimmt den passendsten Spezialisten",
 		agentSlugs: [],
 	},
 ]

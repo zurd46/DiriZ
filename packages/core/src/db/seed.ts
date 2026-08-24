@@ -29,6 +29,7 @@ import {
 	createAgent,
 	createSwarm,
 	deleteAgent,
+	deleteSwarm,
 	getAgent,
 	getSetting,
 	getSwarm,
@@ -72,6 +73,29 @@ function seedAgent(db: Db, bp: AgentBlueprint, now: string): void {
 		enabled: true,
 		docs: blueprintDocs(bp, now),
 	})
+}
+
+/**
+ * Entfernt Katalog-Swarms, die es im Katalog nicht mehr gibt — sowie leere.
+ *
+ * Ein Swarm ohne Mitglieder ist kein Angebot, sondern eine Sackgasse: Wählt man
+ * ihn, meldet die Engine „enthält keine aktiven Agenten". Selbst gebaute Swarms
+ * bleiben unberührt.
+ */
+export function retireCatalogSwarms(db: Db): string[] {
+	const gueltig = new Set(TEAM_SWARMS.map((sw) => blueprintSwarmId(sw.slug)))
+	const entfernt: string[] = []
+	for (const swarm of listSwarms(db)) {
+		if (!swarm.id.startsWith("swarm-")) {
+			continue
+		}
+		if (gueltig.has(swarm.id) && swarm.agentIds.length > 0) {
+			continue
+		}
+		deleteSwarm(db, swarm.id)
+		entfernt.push(swarm.name)
+	}
+	return entfernt
 }
 
 /**
@@ -192,6 +216,7 @@ export function seedTeamCatalog(db: Db): SeedResult {
 			name: sw.name,
 			description: sw.description,
 			agentIds: memberIds,
+			ordered: sw.ordered === true,
 			enabled: true,
 		})
 		seededSwarms.add(sw.slug)
@@ -204,6 +229,8 @@ export function seedTeamCatalog(db: Db): SeedResult {
 
 /** Mitglieder eines Swarms — nur Spezialisten, die es wirklich gibt. */
 function memberIdsOf(db: Db, sw: SwarmBlueprint): string[] {
+	// Reihenfolge der Slugs bleibt erhalten — bei einem Arbeitsablauf **ist**
+	// sie die Aussage.
 	return sw.agentSlugs.map(blueprintAgentId).filter((id) => getAgent(db, id) !== undefined)
 }
 

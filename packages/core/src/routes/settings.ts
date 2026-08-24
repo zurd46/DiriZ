@@ -37,6 +37,7 @@ import {
 	updateSwarm,
 	updateTemplate,
 } from "../db/repositories.js"
+import { DEFAULT_RETENTION, type RetentionSettings } from "../db/retention.js"
 import { DEFAULT_WARMUP, type WarmupSettings } from "../execution/warmup.js"
 
 const WEIGHT_KEYS: (keyof ScoringWeights)[] = [
@@ -175,6 +176,7 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 		git: ctx.engine.gitSettings(),
 		agent: ctx.engine.agentSettings(),
 		warmup: { ...DEFAULT_WARMUP, ...getSetting<Partial<WarmupSettings>>(ctx.db, "warmup") },
+		retention: { ...DEFAULT_RETENTION, ...getSetting<Partial<RetentionSettings>>(ctx.db, "retention") },
 	})
 
 	app.get("/api/settings", () => currentSettings())
@@ -188,6 +190,7 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			git?: Partial<GitSettings>
 			agent?: Partial<AgentSettings>
 			warmup?: Partial<WarmupSettings>
+			retention?: Partial<RetentionSettings>
 		}
 	}>("/api/settings", (req, reply) => {
 		const body = req.body ?? {}
@@ -198,11 +201,27 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			body.timeouts === undefined &&
 			body.git === undefined &&
 			body.agent === undefined &&
-			body.warmup === undefined
+			body.warmup === undefined &&
+			body.retention === undefined
 		) {
 			return reply.code(400).send({
 				error: "routingWeights, docTemplates, concurrency, timeouts, git, agent oder warmup erforderlich",
 			})
+		}
+		if (body.retention !== undefined) {
+			const current = { ...DEFAULT_RETENTION, ...getSetting<Partial<RetentionSettings>>(ctx.db, "retention") }
+			const next: RetentionSettings = {
+				logDays: body.retention.logDays ?? current.logDays,
+				chunkDays: body.retention.chunkDays ?? current.chunkDays,
+				metricsDays: body.retention.metricsDays ?? current.metricsDays,
+			}
+			// Mindestens ein Tag: Eine 0 hiesse „sofort löschen" und nähme der
+			// Fehlersuche die Grundlage, noch während der Fehler passiert.
+			const gültig = (n: number) => Number.isInteger(n) && n >= 1 && n <= 3650
+			if (!gültig(next.logDays) || !gültig(next.chunkDays) || !gültig(next.metricsDays)) {
+				return reply.code(400).send({ error: "retention braucht ganze Tage zwischen 1 und 3650" })
+			}
+			setSetting(ctx.db, "retention", next)
 		}
 		if (body.warmup !== undefined) {
 			const current = { ...DEFAULT_WARMUP, ...getSetting<Partial<WarmupSettings>>(ctx.db, "warmup") }

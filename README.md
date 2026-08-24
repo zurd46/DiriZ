@@ -82,10 +82,15 @@ npm run dev       # Core :8787 (tsx watch) + Vite :5173 (HMR) → http://localho
 | `DIRIZ_CHUNK_MS` | `180000` | Frist zwischen zwei Token. Im Agentik-Modus beginnt sie mit jedem Schritt neu: Jeder Schritt schickt den ganzen Verlauf erneut zur Verarbeitung |
 | `DIRIZ_TOTAL_MS` | `900000` | Gesamtdauer einer Ausführung (im Agentik-Modus verdreifacht) |
 
-**Desktop-App (optional, M8):**
+**Desktop-App (optional):**
 ```bash
-npm run desktop  # Tauri-Fenster um die Web-UI (Dev: Vite; Prod: npm run build vorher)
+npm run serve    # Core starten — das Fenster zeigt auf ihn
+npm run desktop  # Tauri-Fenster um dieselbe Oberfläche
 ```
+Das Fenster lädt `http://127.0.0.1:8787`, nicht ein eigenes Bundle: Nur so gilt
+die Anmeldung (das Sitzungs-Cookie gehört der Herkunft des Cores), und es gibt
+nur **eine** Oberfläche statt einer zweiten, die still veraltet. Details in
+[`apps/desktop/README.md`](apps/desktop/README.md).
 
 ## 📁 Projektstruktur
 

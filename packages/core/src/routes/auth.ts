@@ -74,15 +74,18 @@ function lockedFor(username: string): number {
 	return Math.ceil((entry.until - Date.now()) / 1000)
 }
 
-function noteFailure(username: string): void {
+/** Zählt einen Fehlversuch und meldet, ob damit die Sperre greift. */
+function noteFailure(username: string): boolean {
 	const key = username.toLowerCase()
 	const entry = attempts.get(key) ?? { count: 0, until: 0 }
 	entry.count += 1
-	if (entry.count >= MAX_ATTEMPTS) {
+	const gesperrt = entry.count >= MAX_ATTEMPTS
+	if (gesperrt) {
 		entry.until = Date.now() + LOCK_MS
 		entry.count = 0
 	}
 	attempts.set(key, entry)
+	return gesperrt
 }
 
 function noteSuccess(username: string): void {
@@ -196,7 +199,13 @@ export function registerAuth(app: FastifyInstance, ctx: AppContext): void {
 		// Eine einzige Fehlermeldung für „kein solcher Benutzer" und „falsches
 		// Passwort" — alles andere verrät, welche Namen existieren.
 		if (!found || !verifyPassword(password, found.passwordHash)) {
-			noteFailure(username)
+			// Der Versuch, der die Sperre auslöst, sagt das auch — sonst käme
+			// erst beim nächsten Mal eine Erklärung.
+			if (noteFailure(username)) {
+				return reply
+					.code(429)
+					.send({ error: `Zu viele Fehlversuche — bitte ${Math.ceil(LOCK_MS / 1000)} Sekunden warten` })
+			}
 			return reply.code(401).send({ error: "Benutzername oder Passwort falsch" })
 		}
 		noteSuccess(username)

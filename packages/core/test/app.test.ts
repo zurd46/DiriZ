@@ -486,6 +486,32 @@ describe("api: Abgebrochenen Lauf fortsetzen", () => {
 	})
 })
 
+describe("api: Aufbewahrung & Warmhalten", () => {
+	it("liefert Vorgaben und nimmt neue Fristen an", async () => {
+		const vorher = await app.inject({ method: "GET", url: "/api/settings" })
+		expect(vorher.json().retention).toEqual({ logDays: 14, chunkDays: 30, metricsDays: 180 })
+		expect(vorher.json().warmup).toEqual({ enabled: true, intervalMinutes: 4, perProvider: 1 })
+
+		const put = await app.inject({
+			method: "PUT",
+			url: "/api/settings",
+			payload: { retention: { logDays: 7 } },
+		})
+		expect(put.statusCode).toBe(200)
+		// Nur das gesetzte Feld ändert sich, die übrigen bleiben.
+		expect(put.json().retention).toEqual({ logDays: 7, chunkDays: 30, metricsDays: 180 })
+	})
+
+	it("weist unsinnige Fristen ab, statt sie stillschweigend zu übernehmen", async () => {
+		const res = await app.inject({
+			method: "PUT",
+			url: "/api/settings",
+			payload: { retention: { logDays: 0 } },
+		})
+		expect(res.statusCode).toBe(400)
+	})
+})
+
 describe("api: SSE-Stream", () => {
 	it("liefert Events über den echten HTTP-Stream", async () => {
 		await app.listen({ port: 0, host: "127.0.0.1" })

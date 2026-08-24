@@ -15,7 +15,8 @@
         "height": 800,
         "minWidth": 940,
         "minHeight": 600,
-        "center": true
+        "center": true,
+        "url": "http://127.0.0.1:8787"
       }
     ],
     "security": {

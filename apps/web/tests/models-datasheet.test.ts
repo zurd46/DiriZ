@@ -9,6 +9,11 @@
 
 import { expect, test } from "@playwright/test"
 
+/** Die Einführung erscheint beim ersten Start und fängt sonst jeden Klick ab. */
+test.beforeEach(async ({ page }) => {
+	await page.addInitScript(() => window.localStorage.setItem("diriz_onboarded", "1"))
+})
+
 test("LLM-Modelle ist über das Menü erreichbar und erklärt sich selbst", async ({ page }) => {
 	await page.goto("/dashboard")
 	await page.getByRole("button", { name: "LLM-Modelle" }).click()

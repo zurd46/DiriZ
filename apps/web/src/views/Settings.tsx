@@ -71,6 +71,13 @@ interface UserRow {
 	lastLoginAt?: string
 }
 
+/** Aufbewahrungsfristen in Tagen. */
+interface RetentionView {
+	logDays: number
+	chunkDays: number
+	metricsDays: number
+}
+
 /** Warmhalte-Einstellungen, wie die Oberfläche sie bearbeitet. */
 interface WarmupView {
 	enabled: boolean
@@ -115,6 +122,11 @@ export default function Settings() {
 	const [userBusy, setUserBusy] = useState(false)
 	const [userMsg, setUserMsg] = useState<string | undefined>()
 
+	// Aufbewahrung: Ohne Frist wächst die Datenbank unbegrenzt.
+	const [keep, setKeep] = useState<RetentionView | null>(null)
+	const [keepBusy, setKeepBusy] = useState(false)
+	const [keepSaved, setKeepSaved] = useState(false)
+
 	// Warmhalten: hält geladene Modelle im Speicher, damit der erste Aufruf
 	// nicht Minuten kostet.
 	const [warm, setWarm] = useState<WarmupView | null>(null)
@@ -155,6 +167,12 @@ export default function Settings() {
 			setTimes(settings.timeouts)
 		}
 	}, [settings, times])
+
+	useEffect(() => {
+		if (settings?.retention && keep === null) {
+			setKeep(settings.retention)
+		}
+	}, [settings, keep])
 
 	useEffect(() => {
 		if (settings?.warmup && warm === null) {
@@ -202,6 +220,23 @@ export default function Settings() {
 			setImportMsg(e instanceof Error ? e.message : String(e))
 		} finally {
 			setLimitsBusy(false)
+		}
+	}
+
+	const keepDirty = keep !== null && JSON.stringify(keep) !== JSON.stringify(settings?.retention ?? null)
+
+	const saveKeep = async () => {
+		if (!keep) return
+		setKeepBusy(true)
+		try {
+			await api.put("/api/settings", { retention: keep })
+			await useStore.getState().refreshSettings()
+			setKeepSaved(true)
+			setTimeout(() => setKeepSaved(false), 2500)
+		} catch (e) {
+			setImportMsg(e instanceof Error ? e.message : String(e))
+		} finally {
+			setKeepBusy(false)
 		}
 	}
 
@@ -664,6 +699,65 @@ export default function Settings() {
 						disabled={!warmDirty || warmBusy}
 					>
 						Warmhalten speichern
+					</button>
+				</div>
+			</div>
+
+			<div className="card">
+				<div className="card-head">
+					<div>
+						<div className="card-title">
+							<IconServer size={16} />
+							Aufbewahrung
+						</div>
+						<div className="card-sub">
+							Wie lange Logzeilen, Antwort-Schnipsel und Kennzahlen bleiben. Ohne Frist wächst die Datenbank
+							unbegrenzt und wird mit jeder Woche träger. Tasks, Ausführungen, Dokumente und Bewertungen
+							bleiben immer — das ist die Geschichte des Systems.
+						</div>
+					</div>
+					{keepDirty && <span className="pill warn">ungespeichert</span>}
+				</div>
+
+				{keep && (
+					<div className="limits">
+						{[
+							{ key: "logDays" as const, label: "Logzeilen (Tage)", hint: "Die kurzlebigste Datenart." },
+							{
+								key: "chunkDays" as const,
+								label: "Antwort-Schnipsel (Tage)",
+								hint: "Der Live-Verlauf. Die vollständige Antwort bleibt in jedem Fall erhalten.",
+							},
+							{
+								key: "metricsDays" as const,
+								label: "Kennzahlen (Tage)",
+								hint: "Stündliche Werte für die Dashboard-Charts.",
+							},
+						].map((row) => (
+							<label key={row.key} className="limit-row">
+								<span className="limit-label">{row.label}</span>
+								<input
+									type="number"
+									min={1}
+									step={1}
+									value={keep[row.key]}
+									onChange={(e) => setKeep({ ...keep, [row.key]: Math.max(1, Number(e.target.value) || 1) })}
+								/>
+								<span className="field-hint">{row.hint}</span>
+							</label>
+						))}
+					</div>
+				)}
+
+				<div className="card-actions">
+					{keepSaved && <span className="pill ok">gespeichert</span>}
+					<button
+						type="button"
+						className="btn primary"
+						onClick={() => void saveKeep()}
+						disabled={!keepDirty || keepBusy}
+					>
+						Fristen speichern
 					</button>
 				</div>
 			</div>

@@ -193,6 +193,41 @@ describe("Anmeldung", () => {
 	})
 })
 
+describe("Bremse gegen Rateversuche", () => {
+	it("sperrt einen Namen nach mehreren Fehlversuchen und lässt ihn danach wieder", async () => {
+		const versuch = () =>
+			app.inject({
+				method: "POST",
+				url: "/api/auth/login",
+				payload: { username: "bremse-test", password: "immer-falsch" },
+			})
+		// Der Name existiert nicht — die Bremse zählt trotzdem, sonst liesse
+		// sich über nicht existierende Namen beliebig probieren.
+		await app.inject({
+			method: "POST",
+			url: "/api/users",
+			headers: { cookie },
+			payload: { username: "bremse-test", password: "langgenug123" },
+		})
+
+		let letzte = await versuch()
+		for (let i = 0; i < 4; i++) {
+			letzte = await versuch()
+		}
+		expect(letzte.statusCode).toBe(429)
+		expect(letzte.json().error).toContain("Fehlversuche")
+
+		// Auch das **richtige** Passwort prallt während der Sperre ab — sonst
+		// wäre die Bremse wirkungslos.
+		const richtig = await app.inject({
+			method: "POST",
+			url: "/api/auth/login",
+			payload: { username: "bremse-test", password: "langgenug123" },
+		})
+		expect(richtig.statusCode).toBe(429)
+	})
+})
+
 describe("Benutzerverwaltung", () => {
 	beforeAll(async () => {
 		const login = await app.inject({

@@ -116,6 +116,8 @@ interface State {
 		agent?: AgentSettings
 		/** Warmhalten geladener Modelle (`settings.warmup`). */
 		warmup?: { enabled: boolean; intervalMinutes: number; perProvider: number }
+		/** Aufbewahrungsfristen in Tagen (`settings.retention`). */
+		retention?: { logDays: number; chunkDays: number; metricsDays: number }
 	} | null
 	live: Record<string, LiveRun>
 	taskDetails: Record<string, TaskDetail>

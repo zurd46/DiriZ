@@ -12,6 +12,11 @@
 import { expect, test } from "@playwright/test"
 import { AUTH_FILE } from "./global-setup.js"
 
+/** Die Einführung erscheint beim ersten Start und fängt sonst jeden Klick ab. */
+test.beforeEach(async ({ page }) => {
+	await page.addInitScript(() => window.localStorage.setItem("diriz_onboarded", "1"))
+})
+
 /** Zugangsdaten des Testbenutzers aus `global-setup.ts`. */
 const USER = { username: "e2e-tester", password: "e2e-passwort-123" }
 

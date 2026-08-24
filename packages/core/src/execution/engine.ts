@@ -1122,6 +1122,19 @@ export class ExecutionEngine {
 			clearTimeout(chunkTimer)
 			chunkTimer = setTimeout(() => controller.abort(chunkTimeoutError()), chunkDeadline())
 		}
+		/**
+		 * Ein neuer Agentik-Schritt ist ein **neuer** Aufruf: Das Modell bekommt
+		 * den gesamten bisherigen Verlauf plus die gelesenen Dateien noch einmal
+		 * und muss ihn erst durchrechnen. Bei 30 000 Token dauert allein das
+		 * Minuten — die strenge Chunk-Frist (Standard 60 s) schlug dabei zu und
+		 * verwarf eine halbe Stunde Arbeit. Deshalb gilt ab hier wieder die
+		 * grosszügige Erst-Token-Frist, bis wirklich etwas ankommt.
+		 */
+		const relaxForNextStep = () => {
+			firstChunkSeen = false
+			clearTimeout(chunkTimer)
+			chunkTimer = setTimeout(() => controller.abort(chunkTimeoutError()), chunkDeadline())
+		}
 
 		let fullText = ""
 		let seq = 0
@@ -1181,6 +1194,8 @@ export class ExecutionEngine {
 					maxSteps: this.agentSettings().maxSteps,
 					// Werkzeug-Freigabe des Modells (`llm.md` → `## Werkzeuge`).
 					allowedTools: getInstanceSpec(db, choice.instance.id)?.tools,
+					// Jeder Schritt beginnt mit einer neuen Prompt-Verarbeitung.
+					onStepStart: relaxForNextStep,
 					adapter,
 					model: choice.instance.modelId,
 					settings: effective,

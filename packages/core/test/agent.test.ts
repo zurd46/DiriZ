@@ -19,7 +19,7 @@ import type {
 import { describe, expect, it } from "vitest"
 import { runAgentLoop } from "../src/execution/agent.js"
 
-type Behavior = "write-then-done" | "loop" | "stumm" | "kaputt"
+type Behavior = "write-then-done" | "loop" | "stumm" | "kaputt" | "doppelt"
 
 class ToolFakeAdapter implements LLMProvider {
 	readonly label = "ToolFake"
@@ -47,6 +47,16 @@ class ToolFakeAdapter implements LLMProvider {
 				yield { type: "delta", text: "Abschluss: Ich habe out/hello.txt geschrieben." }
 			}
 			yield { type: "usage", tokensIn: 4, tokensOut: 2 }
+			yield { type: "done" }
+			return
+		}
+		if (this.behavior === "doppelt") {
+			// Ruft immer wieder exakt denselben Lese-Aufruf auf.
+			yield {
+				type: "tool_call",
+				call: { id: `c${this.requests.length}`, name: "read_file", arguments: { path: "a.txt" } },
+			}
+			yield { type: "usage", tokensIn: 2, tokensOut: 1 }
 			yield { type: "done" }
 			return
 		}
@@ -138,6 +148,56 @@ describe("agent: Tool-Loop", () => {
 
 		// Tool-Specs wurden mitgeschickt.
 		expect(adapter.requests[0].tools?.map((t) => t.name)).toContain("write_file")
+	})
+
+	it("meldet jeden Schritt an, damit die Zeitüberwachung neu ansetzt", async () => {
+		// Jeder Schritt schickt den ganzen Verlauf erneut; dessen Verarbeitung
+		// dauert bei grossem Kontext Minuten. Ohne dieses Signal schlug die
+		// strenge Chunk-Frist zu und verwarf die gesamte Arbeit.
+		const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-agent-steps-"))
+		const adapter = new ToolFakeAdapter("fake", "ollama", "write-then-done")
+		let starts = 0
+
+		const result = await runAgentLoop({
+			adapter,
+			model: "m1",
+			userPrompt: "Schreib eine Datei",
+			baseDir,
+			executionId: "e-steps",
+			onDelta: () => {},
+			onStepStart: () => {
+				starts++
+			},
+			emitToolCall: () => {},
+			log: () => {},
+		})
+
+		expect(starts).toBe(result.steps)
+	})
+
+	it("liest dieselbe Datei nicht zweimal, sondern verweist auf den Verlauf", async () => {
+		// Jede Wiederholung schöbe den vollen Dateiinhalt erneut in den Kontext
+		// — und macht jeden weiteren Schritt langsamer.
+		const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-agent-dedup-"))
+		fs.writeFileSync(path.join(baseDir, "a.txt"), "Inhalt")
+		const adapter = new ToolFakeAdapter("fake", "ollama", "doppelt")
+		const ops: { name: string; ok: boolean }[] = []
+
+		await runAgentLoop({
+			maxSteps: 3,
+			adapter,
+			model: "m1",
+			userPrompt: "Lies zweimal",
+			baseDir,
+			executionId: "e-dedup",
+			onDelta: () => {},
+			emitToolCall: (d) => ops.push({ name: d.name, ok: d.ok }),
+			log: () => {},
+		})
+
+		// Der zweite Aufruf wird beantwortet, aber nicht mehr ausgeführt:
+		// Deshalb meldet nur der erste eine echte Tool-Operation.
+		expect(ops.filter((o) => o.name === "read_file")).toHaveLength(1)
 	})
 
 	it("bricht ab, wenn mehrere Schritte in Folge nur fehlschlagen (kein Einfrieren)", async () => {

@@ -32,8 +32,15 @@ export const DEFAULT_TIMEOUTS = {
 	 * Überschreibbar per `DIRIZ_FIRST_CHUNK_MS`.
 	 */
 	firstChunkMs: Number(process.env.DIRIZ_FIRST_CHUNK_MS ?? 300_000),
-	/** Danach: kein weiterer Chunk in 60 s → Stream-Fehler → Failover. */
-	chunkMs: Number(process.env.DIRIZ_CHUNK_MS ?? 60_000),
+	/**
+	 * Danach: kein weiterer Chunk in dieser Frist → Stream-Fehler → Failover.
+	 *
+	 * 60 s waren zu knapp: Ein lokales 27-B-Modell denkt bei grossem Kontext
+	 * auch mitten in der Antwort länger nach, ohne ein Zeichen zu senden — und
+	 * eine halbe Stunde Arbeit war verloren, weil die Frist zuschlug.
+	 * Überschreibbar per `DIRIZ_CHUNK_MS`.
+	 */
+	chunkMs: Number(process.env.DIRIZ_CHUNK_MS ?? 180_000),
 	/** Gesamtdauer-Timeout (Default 15 min). */
 	totalMs: Number(process.env.DIRIZ_TOTAL_MS ?? 15 * 60_000),
 } as const

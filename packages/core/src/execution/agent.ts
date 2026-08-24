@@ -16,7 +16,7 @@
  */
 
 import type { ChatMessage, LLMProvider, ModelSettings, ToolCallRequest } from "@diriz/shared"
-import { executeTool, TOOL_SPECS } from "./tools.js"
+import { executeTool, TOOL_SPECS, type ToolOpResult } from "./tools.js"
 
 /**
  * Schutz vor Endlosschleifen: max. Modell-Schritte **mit Tools** pro Execution.
@@ -62,6 +62,13 @@ export interface AgentLoopOptions {
 	onDelta: (text: string) => void
 	/** Gedankengang eines Reasoning-Modells (`execution.reasoning`). */
 	onReasoning?: (text: string) => void
+	/**
+	 * Wird vor jedem Modellaufruf gerufen — auch vor dem Abschluss-Schritt.
+	 * Der Aufrufer kann damit seine Zeitüberwachung zurücksetzen: Jeder Schritt
+	 * schickt den gesamten bisherigen Verlauf erneut, und dessen Verarbeitung
+	 * dauert bei grossem Kontext Minuten, in denen nichts zurückkommt.
+	 */
+	onStepStart?: () => void
 	/** Tool-Operation melden (Event `tool.call`). */
 	emitToolCall: (data: { name: string; argsSummary: string; ok: boolean; detail?: string }) => void
 	log: LogFn
@@ -132,6 +139,16 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 	 * etwas entsteht.
 	 */
 	let failedStreak = 0
+	/**
+	 * Ergebnisse bereits ausgeführter Lese-Aufrufe.
+	 *
+	 * Modelle lesen dieselbe Datei gern mehrfach — jedes Mal wandert ihr voller
+	 * Inhalt erneut in den Kontext, jeder weitere Schritt wird dadurch langsamer,
+	 * und irgendwann besteht der halbe Kontext aus Wiederholungen. Ein kurzer
+	 * Hinweis statt des zweiten Abzugs hält den Kontext klein und den Lauf
+	 * schnell. Schreibende Aufrufe sind ausgenommen — sie müssen immer laufen.
+	 */
+	const gelesen = new Map<string, ToolOpResult>()
 
 	for (let step = 1; step <= maxSteps; step++) {
 		steps = step
@@ -139,6 +156,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 			throw new Error("Abgebrochen")
 		}
 
+		opts.onStepStart?.()
 		const stream = opts.adapter.chat({
 			messages,
 			model: opts.model,
@@ -175,7 +193,19 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 		messages.push({ role: "assistant", content: stepText, toolCalls: calls })
 		let failedInStep = 0
 		for (const call of calls) {
-			const result = executeTool(opts.baseDir, call, opts.emitToolCall, opts.log)
+			const key = `${call.name}:${JSON.stringify(call.arguments ?? {})}`
+			const wiederholung = call.name !== "write_file" ? gelesen.get(key) : undefined
+			const result = wiederholung
+				? {
+						ok: true,
+						detail:
+							`Bereits in einem früheren Schritt gelesen — Inhalt steht oben im Verlauf. ` +
+							`Lies nicht erneut, sondern arbeite damit weiter. (${wiederholung.detail.slice(0, 120)})`,
+					}
+				: executeTool(opts.baseDir, call, opts.emitToolCall, opts.log)
+			if (!wiederholung && result.ok && call.name !== "write_file") {
+				gelesen.set(key, result)
+			}
 			toolOps++
 			if (!result.ok) {
 				failedInStep++
@@ -292,6 +322,7 @@ async function requestFinalAnswer(
 		}
 		let answer = ""
 		try {
+			opts.onStepStart?.()
 			const stream = opts.adapter.chat({
 				messages,
 				model: opts.model,
@@ -331,8 +362,11 @@ async function requestFinalAnswer(
 
 /** Letzte Rettung: Arbeitsstand aus dem Tool-Protokoll, statt einer leeren Antwort. */
 function composeFallback(toolTrail: string[], maxSteps: number, error?: string): string {
+	// „Infinity Tool-Schritte" ist keine Auskunft, sondern ein durchgereichter
+	// Rechenwert — hier steht, was gemeint ist.
+	const budget = Number.isFinite(maxSteps) ? `${maxSteps} Tool-Schritten` : "unbegrenzt vielen Tool-Schritten"
 	const lines = [
-		`\n\n[Agentik: Das Modell hat nach ${maxSteps} Tool-Schritten keine Abschlussantwort geliefert${
+		`\n\n[Agentik: Das Modell hat nach ${budget} keine Abschlussantwort geliefert${
 			error ? ` (${error})` : ""
 		}. Arbeitsstand:]`,
 	]

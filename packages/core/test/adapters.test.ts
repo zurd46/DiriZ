@@ -11,7 +11,7 @@ import { createProvider } from "../src/providers/factory.js"
 import { summarizeBody } from "../src/providers/http.js"
 import { LmStudioProvider } from "../src/providers/lmstudio.js"
 import { OllamaProvider } from "../src/providers/ollama.js"
-import { OpenAiCompatProvider } from "../src/providers/openai-compat.js"
+import { OpenAiCompatProvider, readContextWindow } from "../src/providers/openai-compat.js"
 
 let lastAuth: string | undefined
 let server: http.Server
@@ -41,6 +41,29 @@ beforeAll(async () => {
 			res.write(`${JSON.stringify({ message: { content: "Hel" } })}\n`)
 			res.write(`${JSON.stringify({ message: { content: "lo!" } })}\n`)
 			res.end(`${JSON.stringify({ done: true, prompt_eval_count: 3, eval_count: 7 })}\n`)
+			return
+		}
+		// Native LM-Studio-API: nur sie kennt Kontextgröße und Quantisierung.
+		if (req.method === "GET" && url === "/api/v0/models") {
+			lastAuth = req.headers.authorization as string | undefined
+			res.writeHead(200, { "content-type": "application/json" })
+			res.end(
+				JSON.stringify({
+					data: [
+						{
+							id: "qwen3-coder-30b",
+							type: "llm",
+							arch: "qwen3",
+							quantization: "Q4_K_M",
+							state: "loaded",
+							max_context_length: 262_144,
+							loaded_context_length: 32_768,
+						},
+						{ id: "vision-modell", type: "vlm", arch: "gemma3", max_context_length: 131_072 },
+						{ id: "nomic-embed-text", type: "embeddings", max_context_length: 2048 },
+					],
+				}),
+			)
 			return
 		}
 		if (req.method === "GET" && url === "/v1/models") {
@@ -146,8 +169,14 @@ describe("adapter: Ollama", () => {
 describe("adapter: OpenAI-kompatibel (LM Studio)", () => {
 	const makeProvider = () => new LmStudioProvider("lmstudio-test", `${baseUrl}/v1`)
 
-	it("liest Modell-Metadaten inkl. Pricing", async () => {
-		const provider = makeProvider()
+	it("liest Modell-Metadaten inkl. Pricing (kompatibler Endpunkt)", async () => {
+		// Ein reiner OpenAI-kompatibler Server ohne LM-Studios native API.
+		const provider = new OpenAiCompatProvider({
+			id: "compat-test",
+			type: "openai-compat",
+			label: "Compat",
+			baseUrl: `${baseUrl}/v1`,
+		})
 		const models = await provider.listModels()
 		expect(models[0]?.modelId).toBe("gpt-x")
 		expect(models[0]?.contextWindow).toBe(128_000)
@@ -177,13 +206,15 @@ describe("adapter: OpenAI-kompatibel (LM Studio)", () => {
 	it("ergänzt fehlenden /v1-Pfad automatisch (LM-Studio-Konvention)", async () => {
 		const provider = new LmStudioProvider("lmstudio-nov1", baseUrl) // bewusst ohne /v1
 		const models = await provider.listModels()
-		expect(models[0]?.modelId).toBe("gpt-x")
+		// Der Fake-Server bedient `/api/v0/models`; ohne korrekten Pfad käme nichts.
+		expect(models.length).toBeGreaterThan(0)
+		expect(models.some((m) => m.modelId === "qwen3-coder-30b")).toBe(true)
 	})
 
 	it("lässt vorhandene Versions-Pfade (/api/v1) unverändert", async () => {
 		const provider = new LmStudioProvider("lmstudio-apiv1", `${baseUrl}/api/v1`)
 		const models = await provider.listModels()
-		expect(models[0]?.modelId).toBe("gpt-x")
+		expect(models.length).toBeGreaterThan(0)
 	})
 
 	it("meldet 200 + Fehler-JSON als Fehler statt „online, aber 0 Modelle“", async () => {
@@ -239,5 +270,48 @@ describe("Fehlertexte lesbar halten", () => {
 
 	it("liefert für leere Antworten nichts", () => {
 		expect(summarizeBody("   ")).toBe("")
+	})
+})
+
+describe("LM Studio: Discovery über die native API", () => {
+	it("übernimmt die echte Kontextgröße statt des Fallbacks", async () => {
+		const p = new LmStudioProvider("lms", baseUrl)
+		const models = await p.listModels()
+		const coder = models.find((m) => m.modelId === "qwen3-coder-30b")
+		// 262144 statt der 8192, die ohne diese Abfrage in der DB landeten.
+		expect(coder?.contextWindow).toBe(262_144)
+		expect(coder?.quantization).toBe("Q4_K_M")
+		expect(coder?.capabilities).toContain("code")
+	})
+
+	it("erkennt Vision-Modelle und lässt Embedding-Modelle weg", async () => {
+		const models = await new LmStudioProvider("lms", baseUrl).listModels()
+		expect(models.find((m) => m.modelId === "vision-modell")?.capabilities).toContain("vision")
+		// Embedding-Modelle können nicht chatten — sie gehören nicht ins Routing.
+		expect(models.some((m) => m.modelId === "nomic-embed-text")).toBe(false)
+	})
+
+	it("fällt auf /v1/models zurück, wenn die native API fehlt", async () => {
+		// Ein Server ohne `/api/v0` (ältere LM-Studio-Version).
+		const p = new OpenAiCompatProvider({
+			id: "alt",
+			type: "lmstudio",
+			label: "Alt",
+			baseUrl: `${baseUrl}/v1`,
+		})
+		const models = await p.listModels()
+		expect(models[0]?.contextWindow).toBe(128_000)
+	})
+})
+
+describe("Kontextgröße aus unterschiedlichen Feldnamen", () => {
+	it("kennt die Schreibweisen der gängigen Server", () => {
+		expect(readContextWindow({ id: "a", context_length: 128_000 })).toBe(128_000)
+		expect(readContextWindow({ id: "b", max_context_length: 262_144 })).toBe(262_144)
+		expect(readContextWindow({ id: "c", max_model_len: 32_768 })).toBe(32_768)
+		expect(readContextWindow({ id: "d", n_ctx: 8192 })).toBe(8192)
+		// Nichts Brauchbares → der Aufrufer nimmt seinen Fallback.
+		expect(readContextWindow({ id: "e" })).toBeUndefined()
+		expect(readContextWindow({ id: "f", context_length: 0 })).toBeUndefined()
 	})
 })

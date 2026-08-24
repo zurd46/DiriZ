@@ -15,6 +15,7 @@ import type {
 	LLMProvider,
 	ProviderType,
 } from "@diriz/shared"
+import { DEFAULT_TIMEOUTS } from "@diriz/shared"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { Db } from "../src/db/connection.js"
 import { openDatabase } from "../src/db/connection.js"
@@ -335,5 +336,17 @@ describe("engine: Agentik-Modus (M8)", () => {
 
 		// Finale Antwort im Replay sichtbar.
 		expect(replayOutput(db, result.id)).toContain("Fertig!")
+	})
+})
+
+describe("Timeouts: erster Token vs. laufender Stream", () => {
+	it("gibt dem ersten Token deutlich mehr Zeit als den folgenden", () => {
+		// Bis zum ersten Token lädt der Server womöglich erst das Modell und
+		// verarbeitet den ganzen Prompt — das dauert bei großen Modellen Minuten.
+		// Ein Stream, der mittendrin verstummt, ist dagegen schnell ein Fehler.
+		expect(DEFAULT_TIMEOUTS.firstChunkMs).toBeGreaterThan(DEFAULT_TIMEOUTS.chunkMs)
+		expect(DEFAULT_TIMEOUTS.firstChunkMs).toBeGreaterThanOrEqual(120_000)
+		// Und beides muss innerhalb der Gesamtdauer liegen.
+		expect(DEFAULT_TIMEOUTS.totalMs).toBeGreaterThan(DEFAULT_TIMEOUTS.firstChunkMs)
 	})
 })

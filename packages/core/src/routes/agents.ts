@@ -9,11 +9,13 @@ import {
 	type AgentDocKind,
 	type AgentPrivacy,
 	appendChangelogEntry,
+	blueprintAgentId,
 	type Capability,
 	isAgentDocKind,
 	type ModelSettings,
 	parseInitDoc,
 	renderInitDoc,
+	SOFTWARE_TEAM,
 } from "@diriz/shared"
 import type { FastifyInstance } from "fastify"
 import type { AppContext } from "../app.js"
@@ -31,6 +33,7 @@ import {
 	updateAgent,
 	updateSwarm,
 } from "../db/repositories.js"
+import { refreshCatalogSwarms, seedTeamCatalog } from "../db/seed.js"
 
 const CAPABILITIES: Capability[] = ["code", "reasoning", "longform", "vision", "tools", "json"]
 const PRIVACIES: AgentPrivacy[] = ["any", "local-only", "allow-cloud"]
@@ -119,6 +122,39 @@ export function registerAgents(app: FastifyInstance, ctx: AppContext): void {
 		})
 		ctx.bus.emit({ event: "agents.changed", data: { agentId: agent.id } })
 		return reply.code(201).send(agent)
+	})
+
+	/* ------------------------------ Team-Katalog ------------------------------ */
+
+	/**
+	 * Das eingebaute Software-Team: welcher Spezialist ist installiert, welcher
+	 * fehlt. Gelöschte Katalog-Einträge kommen nicht von selbst zurück — über
+	 * diese Route holt man sie bewusst zurück.
+	 */
+	app.get("/api/agents/catalog", () => {
+		const installed = new Set(listAgents(ctx.db).map((a) => a.id))
+		return {
+			agents: SOFTWARE_TEAM.map((bp) => ({
+				slug: bp.slug,
+				name: bp.name,
+				discipline: bp.discipline,
+				description: bp.description,
+				requiredCapabilities: bp.requiredCapabilities,
+				preferredCapabilities: bp.preferredCapabilities,
+				privacy: bp.privacy,
+				installed: installed.has(blueprintAgentId(bp.slug)),
+			})),
+		}
+	})
+
+	/** Fehlende Katalog-Spezialisten und -Swarms anlegen (ohne Neustart). */
+	app.post("/api/agents/catalog", (_req, reply) => {
+		const seeded = seedTeamCatalog(ctx.db)
+		const refreshed = refreshCatalogSwarms(ctx.db)
+		if (seeded.agents.length > 0 || seeded.swarms.length > 0 || refreshed.length > 0) {
+			ctx.bus.emit({ event: "agents.changed", data: {} })
+		}
+		return reply.code(201).send({ ...seeded, refreshedSwarms: refreshed })
 	})
 
 	app.get<{ Params: { id: string } }>("/api/agents/:id", (req, reply) => {

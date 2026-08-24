@@ -26,11 +26,43 @@ export interface OpenAiCompatOptions {
 	extraHeaders?: Record<string, string>
 }
 
+/**
+ * Ein Modell, wie ein OpenAI-kompatibler Server es meldet.
+ *
+ * Die Kontextgröße heißt je nach Server anders — OpenRouter nennt sie
+ * `context_length`, LM Studio `max_context_length`, vLLM `max_model_len`,
+ * llama.cpp `n_ctx`. Wird keines der Felder gefunden, greift der Fallback
+ * beim Anlegen der Instanz; deshalb standen zuvor überall 8192.
+ */
 interface CompatModel {
 	id: string
 	name?: string
 	context_length?: number
+	max_context_length?: number
+	loaded_context_length?: number
+	max_model_len?: number
+	context_window?: number
+	n_ctx?: number
+	quantization?: string
 	pricing?: { prompt?: string; completion?: string }
+}
+
+/** Erste plausible Kontextangabe aus den bekannten Feldnamen. */
+export function readContextWindow(m: CompatModel): number | undefined {
+	const candidates = [
+		m.context_length,
+		m.max_context_length,
+		m.max_model_len,
+		m.context_window,
+		m.n_ctx,
+		m.loaded_context_length,
+	]
+	for (const value of candidates) {
+		if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+			return value
+		}
+	}
+	return undefined
 }
 
 /** `delta.tool_calls`-Fragment eines Streaming-Chunks (OpenAI-Format). */
@@ -120,7 +152,8 @@ export class OpenAiCompatProvider implements LLMProvider {
 		return arr.map((m) => ({
 			modelId: m.id,
 			displayName: m.name ?? m.id,
-			contextWindow: m.context_length,
+			contextWindow: readContextWindow(m),
+			quantization: m.quantization,
 			pricePerMTok: m.pricing
 				? { in: Number(m.pricing.prompt) * 1_000_000, out: Number(m.pricing.completion) * 1_000_000 }
 				: undefined,

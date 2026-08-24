@@ -109,6 +109,27 @@ export default function Agents() {
 		setDraft(EMPTY_DRAFT)
 	}
 
+	/**
+	 * Holt fehlende Spezialisten aus dem eingebauten Team-Katalog nach. Legt nie
+	 * etwas doppelt an — wer einen Katalog-Spezialisten gelöscht hat, bekommt
+	 * ihn hier bewusst zurück.
+	 */
+	const installCatalog = async () => {
+		setBusy(true)
+		try {
+			const res = (await api.post("/api/agents/catalog", {})) as { agents: string[]; swarms: string[] }
+			await refreshAgents()
+			await refreshSwarms()
+			if (res.agents.length === 0 && res.swarms.length === 0) {
+				setLastError("Team-Katalog: alle Spezialisten sind bereits vorhanden")
+			}
+		} catch (e) {
+			setLastError(e instanceof Error ? e.message : String(e))
+		} finally {
+			setBusy(false)
+		}
+	}
+
 	const startEdit = (agent: Agent) => {
 		if (editing === agent.id) {
 			setEditing(null)
@@ -267,6 +288,16 @@ export default function Agents() {
 							{activeAgents}/{agents.length} aktiv
 						</span>
 					)}
+					<button
+						type="button"
+						className="btn"
+						onClick={installCatalog}
+						disabled={busy}
+						title="Fehlende Spezialisten des eingebauten Software-Teams anlegen"
+					>
+						<IconAgents size={15} />
+						Team-Katalog laden
+					</button>
 					<button type="button" className="btn primary" onClick={startCreate} aria-expanded={editing === ""}>
 						{editing === "" ? <IconClose size={15} /> : <IconPlus size={15} />}
 						{editing === "" ? "Abbrechen" : "Spezialist anlegen"}

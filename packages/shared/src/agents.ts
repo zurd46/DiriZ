@@ -245,6 +245,10 @@ export function tokenize(text: string): string[] {
  * - Beschreibungsterms im Prompt: +2 je (max 10)
  * - Pflicht-Fähigkeit matcht Task-Pflicht: +2 je (max 4)
  * - Wunsch-Fähigkeit matcht Task-Wunsch: +1 je (max 3)
+ * - Fähigkeitsprofil passt vollständig (alle Pflicht-Fähigkeiten des Agenten
+ *   deckt die Task ab): +2 — dafür braucht der Agent überhaupt Pflichtfelder
+ * - Fähigkeit gefordert, die die Task nicht braucht: −1 je (max −3). Sie
+ *   verengt sonst das Routing-Gate ohne Nutzen und schliesst Modelle aus
  * - Privacy: local-only-Agent bei local-only-Profil +1, Cloud-Agent −2
  *
  * Sortierung: Score absteigend, dann Name, dann ID (stabil).
@@ -283,6 +287,21 @@ export function scoreAgents(prompt: string, profile: AgentProfile, agents: Agent
 		if (preferredHits.length > 0) {
 			score += Math.min(3, preferredHits.length)
 			reasons.push(`Wunsch-Fähigkeiten: ${preferredHits.join(", ")}`)
+		}
+		// Fähigkeitsabgleich: Was der Agent zwingend braucht, muss die Task auch
+		// brauchen. Sonst zieht er das Routing-Gate unnötig eng — ein Spezialist,
+		// der `code` fordert, schliesst bei einer reinen Textaufgabe alle Modelle
+		// ohne Code-Fähigkeit aus, ohne dass das jemandem nützt.
+		if (agent.requiredCapabilities.length > 0) {
+			const taskNeeds = new Set([...profile.requiredCapabilities, ...profile.preferredCapabilities])
+			const surplus = agent.requiredCapabilities.filter((c) => !taskNeeds.has(c))
+			if (surplus.length === 0) {
+				score += 2
+				reasons.push("Fähigkeitsprofil passt vollständig")
+			} else {
+				score -= Math.min(3, surplus.length)
+				reasons.push(`Fordert ungenutzte Fähigkeiten: ${surplus.join(", ")}`)
+			}
 		}
 		if (profile.privacy === "local-only") {
 			if (agent.privacy === "local-only") {

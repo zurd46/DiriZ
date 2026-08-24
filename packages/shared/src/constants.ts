@@ -14,10 +14,18 @@ export const DEFAULT_CONCURRENCY = {
 } as const
 
 export const DEFAULT_TIMEOUTS = {
-	/** Kein Chunk in 60 s → Stream-Fehler → Failover. */
-	chunkMs: 60_000,
+	/**
+	 * Zeit bis zum **ersten** Token. Sie ist etwas völlig anderes als der
+	 * Abstand zwischen zwei Tokens: Der Server lädt womöglich erst das Modell
+	 * und verarbeitet den gesamten Prompt, bevor das erste Zeichen kommt. Bei
+	 * großen Modellen — erst recht über einen Tunnel — dauert das Minuten.
+	 * Überschreibbar per `DIRIZ_FIRST_CHUNK_MS`.
+	 */
+	firstChunkMs: Number(process.env.DIRIZ_FIRST_CHUNK_MS ?? 300_000),
+	/** Danach: kein weiterer Chunk in 60 s → Stream-Fehler → Failover. */
+	chunkMs: Number(process.env.DIRIZ_CHUNK_MS ?? 60_000),
 	/** Gesamtdauer-Timeout (Default 15 min). */
-	totalMs: 15 * 60_000,
+	totalMs: Number(process.env.DIRIZ_TOTAL_MS ?? 15 * 60_000),
 } as const
 
 export const MAX_FAILOVER_HOPS = 2

@@ -12,6 +12,7 @@ import { loadConfig } from "./config.js"
 import { openDatabase } from "./db/connection.js"
 import { migrate } from "./db/migrate.js"
 import { getRepo, getSetting, persistLog, providerApiKeyEnc, setTaskRepo } from "./db/repositories.js"
+import { refreshCatalogSwarms, seedTeamCatalog } from "./db/seed.js"
 import { EventBus } from "./execution/bus.js"
 import { ExecutionEngine } from "./execution/engine.js"
 import { taskWorktreePath } from "./execution/worktree.js"
@@ -26,6 +27,9 @@ async function main(): Promise<void> {
 	const config = loadConfig()
 	const db = openDatabase(config.dataDir)
 	const schemaVersion = migrate(db)
+	// Eingebautes Software-Team anlegen (einmalig, überschreibt nie Eigenes).
+	const seeded = seedTeamCatalog(db)
+	refreshCatalogSwarms(db)
 	const secret = loadOrCreateSecret(config.dataDir)
 
 	const bus = new EventBus()
@@ -151,6 +155,13 @@ async function main(): Promise<void> {
 		"core",
 		`DiriZ Core läuft auf http://${config.host}:${config.port} (Schema v${schemaVersion}, Data: ${config.dataDir})`,
 	)
+	if (seeded.agents.length > 0 || seeded.swarms.length > 0) {
+		log(
+			"info",
+			"core",
+			`Team-Katalog: ${seeded.agents.length} Spezialist(en) und ${seeded.swarms.length} Swarm(s) angelegt`,
+		)
+	}
 
 	// Startbanner auf stdout: Ohne ihn startet der Server stumm, und man sieht
 	// weder Port noch Datenverzeichnis — genau daran erkennt man aber einen

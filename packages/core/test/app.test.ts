@@ -188,6 +188,29 @@ describe("api: Tasks", () => {
 	})
 })
 
+describe("api: Team-Katalog", () => {
+	it("meldet, welche Katalog-Spezialisten fehlen, und legt sie an", async () => {
+		const before = await app.inject({ method: "GET", url: "/api/agents/catalog" })
+		expect(before.statusCode).toBe(200)
+		const catalog = before.json() as { agents: { slug: string; installed: boolean }[] }
+		expect(catalog.agents.length).toBeGreaterThan(20)
+		expect(catalog.agents.every((a) => !a.installed)).toBe(true)
+
+		const seeded = await app.inject({ method: "POST", url: "/api/agents/catalog" })
+		expect(seeded.statusCode).toBe(201)
+		expect((seeded.json() as { agents: string[] }).agents.length).toBe(catalog.agents.length)
+
+		const after = (await app.inject({ method: "GET", url: "/api/agents/catalog" })).json() as {
+			agents: { installed: boolean }[]
+		}
+		expect(after.agents.every((a) => a.installed)).toBe(true)
+
+		// Zweiter Aufruf legt nichts erneut an.
+		const again = await app.inject({ method: "POST", url: "/api/agents/catalog" })
+		expect((again.json() as { agents: string[] }).agents).toEqual([])
+	})
+})
+
 describe("api: Settings, Export & Import", () => {
 	it("GET /api/settings liefert renormierte Defaults (Summe 1)", async () => {
 		const res = await app.inject({ method: "GET", url: "/api/settings" })

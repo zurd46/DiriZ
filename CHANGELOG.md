@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/de/2.0
 ## Unreleased
 
 ### Added
+- **Eingebautes Software-Team (Team-Katalog): 33 Spezialisten und 8 Swarms** — von der Anforderung bis zum Betrieb, beim Start automatisch angelegt
+  - **Produkt & Analyse:** Requirements-Analyst, Product-Owner, Agile-Coach & Projektplaner
+  - **Architektur & Design:** Software-Architekt, API-Designer, Datenbank-Architekt, UX-Designer, Accessibility-Spezialist
+  - **Implementierung:** Frontend-, Backend-, Mobile-, Desktop-, Systems- und Integrations-Entwickler, Build- & Tooling-Engineer, Git-Spezialist
+  - **Daten & KI:** Daten-Ingenieur, ML-Ingenieur, LLM- & Prompt-Ingenieur
+  - **Qualität:** Code-Reviewer, Test-Engineer, E2E-Testautomatisierer, Debugging-, Refactoring-Spezialist, Performance- und Security-Engineer
+  - **Betrieb & Auslieferung:** DevOps-Engineer, Cloud- & Infrastruktur-Engineer, Site-Reliability-Engineer, Release-Manager
+  - **Dokumentation & Governance:** Technischer Redakteur, i18n- & Lokalisierungs-Spezialist, Compliance- & Datenschutz-Spezialist
+  - Jeder Spezialist kommt vollständig deklariert: Rolle (System-Prompt), ausgefülltes `plan.md` (Auftrag, Vorgehen, Leitplanken — wirksam als Arbeitsanweisung), `init.md` mit rollengerechter Temperatur und Max-Tokens (Reviewer und Security kühl, UX-Design wärmer), Pflicht- und Wunsch-Fähigkeiten sowie Privacy (Security und Datenschutz laufen `local-only`)
+  - Ein Swarm je Fachbereich plus „Software-Team (komplett)“ — im Modus `swarm` wählt die Engine daraus automatisch das passende Mitglied
+  - Das Seeding ist **einmalig und nicht übergriffig**: bestehende und namensgleiche eigene Spezialisten bleiben unangetastet, gelöschte Katalog-Einträge kommen nicht von selbst zurück, später ergänzte Katalog-Mitglieder werden in bestehende Swarms nachgetragen
+  - Ohne Neustart nachladbar: `GET /api/agents/catalog` (was ist installiert, was fehlt), `POST /api/agents/catalog` und der Knopf „Team-Katalog laden“ auf der Seite „Spezialisten“
+- **Fähigkeitsbasierte Auto-Zuordnung:** Das Scoring bewertet jetzt, ob die Fähigkeiten eines Spezialisten zur Task passen — voller Treffer gibt einen Bonus, geforderte aber ungenutzte Fähigkeiten kosten Punkte (sie verengen sonst das Routing-Gate und schließen Modelle ohne Nutzen aus). Damit setzt DiriZ den richtigen Spezialisten automatisch, statt bei mehreren Kandidaten alphabetisch zu würfeln; ein Test prüft für jeden der 33 Spezialisten einen typischen Prompt
 - **GitHub-Anbindung (M10) — das volle Programm:** Repositories verbinden, pro Task pinnen, Änderungen als Diff ansehen, committen, pushen und Pull-Requests öffnen
   - **Task-Pinning:** Jede Task lässt sich an ein Repository binden. Ihr Arbeitsverzeichnis **ist** dann ein Git-Worktree auf einem eigenen Branch (`diriz/<slug>`) — das Modell schreibt also direkt im echten Projekt, und mehrere Tasks arbeiten parallel ohne sich zu stören (ein Klon, viele Worktrees)
   - **Diff-Ansicht** wie auf GitHub: Datei für Datei, mit alter und neuer Zeilennummer, Farbmarkierung, Zeilenbilanz, Erkennung von Anlegen/Löschen/Umbenennen/Binärdateien; sehr große Diffs werden gekürzt statt den Browser zu blockieren
@@ -55,6 +68,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/de/2.0
 - None
 
 ### Fixed
+- **Der Chunk-Timeout traf die Zeit bis zum ersten Token.** 60 Sekunden gelten sinnvollerweise für die Pause *zwischen* zwei Tokens — bis zum *ersten* lädt der Server womöglich erst das Modell und verarbeitet den ganzen Prompt, was bei großen Modellen Minuten dauert. Beides ist jetzt getrennt (`firstChunkMs`, Default 5 min, gegenüber `chunkMs` mit 60 s) und über `DIRIZ_FIRST_CHUNK_MS`, `DIRIZ_CHUNK_MS` und `DIRIZ_TOTAL_MS` einstellbar. Die Fehlermeldung benennt jetzt auch, welcher der beiden Fälle eingetreten ist
+- **LM-Studio-Discovery meldete für jedes Modell 8192 Tokens Kontext.** Abgefragt wurde nur der OpenAI-kompatible Endpunkt `/v1/models`, der keine Kontextgröße liefert — also griff überall der Fallback. DiriZ nutzt jetzt zuerst LM Studios native API `/api/v0/models` und übernimmt von dort die echte Kontextgröße, die Quantisierung sowie erkennbare Fähigkeiten (Vision, Code); Embedding-Modelle werden aussortiert, weil sie nicht chatten können. Ältere LM-Studio-Versionen fallen weiterhin auf `/v1/models` zurück
+- Die Kontextgröße wird zusätzlich aus den Schreibweisen anderer Server gelesen (`context_length`, `max_context_length`, `max_model_len`, `context_window`, `n_ctx`)
+- **Die Kontext-Schätzung des Routings ignorierte den System-Prompt.** Gerechnet wurde nur mit dem Task-Prompt — seit `plan.md` als Arbeitsanweisung mitgeschickt wird, fehlten dadurch mehrere tausend Tokens, und das Context-Gate ließ zu kleine Modelle durch. System-Prompt und `plan.md` des Spezialisten zählen jetzt mit
+- **Code-Blöcke in `plan.md` wurden beim Übernehmen zerstört:** Die ```` ``` ````-Zeile galt nach dem Entfernen der Markdown-Deko als leer und flog heraus, wodurch der Block aufbrach. Code-Blöcke werden jetzt unverändert durchgereicht
+- **Gliederungs-Überschriften verschwanden aus der Arbeitsanweisung**, wenn direkt eine Unterüberschrift folgte (`# 2. Phasen` gefolgt von `## Phase 1`). Nur noch wirklich leere Abschnitte fallen weg
 - Das Arbeitsverzeichnis einer Task hing vom Pin-Zustand ab und wanderte damit beim Pinnen — der frisch angelegte Worktree lag dann woanders als der Arbeitsstand. Der Pfad ist jetzt über die gesamte Lebensdauer stabil
 - Gleichzeitiges Klonen und Synchronisieren desselben Repositories ließ den zweiten Aufruf scheitern; Synchronisierungen laufen jetzt pro Repository serialisiert
 - `vitest run` an der Wurzel brach ab, weil es die Playwright-Dateien einsammelte („Playwright Test did not expect test() to be called here"). Neue `vitest.config.ts` trennt Unit- und E2E-Tests sauber

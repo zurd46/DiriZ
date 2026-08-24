@@ -658,16 +658,22 @@ export class ExecutionEngine {
 			() => controller.abort(new Error(`Gesamt-Timeout nach ${DEFAULT_TIMEOUTS.totalMs / 1000} s`)),
 			DEFAULT_TIMEOUTS.totalMs,
 		)
-		let chunkTimer = setTimeout(
-			() => controller.abort(new Error(`Kein Chunk seit ${DEFAULT_TIMEOUTS.chunkMs / 1000} s`)),
-			DEFAULT_TIMEOUTS.chunkMs,
-		)
+		// Bis zum ersten Token gilt eine großzügige Frist (Modell laden + Prompt
+		// verarbeiten), danach die strenge: Ein Stream, der mittendrin
+		// verstummt, ist ein Fehler — ein Server, der lange nachdenkt, nicht.
+		let firstChunkSeen = false
+		const chunkDeadline = () => (firstChunkSeen ? DEFAULT_TIMEOUTS.chunkMs : DEFAULT_TIMEOUTS.firstChunkMs)
+		const chunkTimeoutError = () =>
+			firstChunkSeen
+				? new Error(`Kein Chunk seit ${Math.round(DEFAULT_TIMEOUTS.chunkMs / 1000)} s`)
+				: new Error(
+						`Keine Antwort seit ${Math.round(DEFAULT_TIMEOUTS.firstChunkMs / 1000)} s — Modell zu langsam oder Server überlastet`,
+					)
+		let chunkTimer = setTimeout(() => controller.abort(chunkTimeoutError()), chunkDeadline())
 		const resetChunkTimer = () => {
+			firstChunkSeen = true
 			clearTimeout(chunkTimer)
-			chunkTimer = setTimeout(
-				() => controller.abort(new Error(`Kein Chunk seit ${DEFAULT_TIMEOUTS.chunkMs / 1000} s`)),
-				DEFAULT_TIMEOUTS.chunkMs,
-			)
+			chunkTimer = setTimeout(() => controller.abort(chunkTimeoutError()), chunkDeadline())
 		}
 
 		let fullText = ""

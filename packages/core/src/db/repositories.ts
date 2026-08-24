@@ -1346,6 +1346,8 @@ function mapAgent(row: AgentRow): Agent {
 }
 
 export interface AgentInput {
+	/** Feste ID (Katalog-Seeding); ohne Angabe eine zufällige UUID. */
+	id?: string
 	name: string
 	description?: string
 	systemPrompt?: string
@@ -1361,7 +1363,7 @@ export interface AgentInput {
 }
 
 export function createAgent(db: Db, input: AgentInput): Agent {
-	const id = randomUUID()
+	const id = input.id ?? randomUUID()
 	const now = new Date().toISOString()
 	db.prepare(
 		`INSERT INTO agents (id, name, description, system_prompt, required_capabilities, preferred_capabilities,
@@ -1478,6 +1480,8 @@ function mapSwarm(row: SwarmRow): Swarm {
 }
 
 export interface SwarmInput {
+	/** Feste ID (Katalog-Seeding); ohne Angabe eine zufällige UUID. */
+	id?: string
 	name: string
 	description?: string
 	agentIds?: string[]
@@ -1485,7 +1489,7 @@ export interface SwarmInput {
 }
 
 export function createSwarm(db: Db, input: SwarmInput): Swarm {
-	const id = randomUUID()
+	const id = input.id ?? randomUUID()
 	const now = new Date().toISOString()
 	db.prepare(
 		"INSERT INTO swarms (id, name, description, agent_ids, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",

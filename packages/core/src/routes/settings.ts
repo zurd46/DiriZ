@@ -37,6 +37,7 @@ import {
 	updateSwarm,
 	updateTemplate,
 } from "../db/repositories.js"
+import { DEFAULT_WARMUP, type WarmupSettings } from "../execution/warmup.js"
 
 const WEIGHT_KEYS: (keyof ScoringWeights)[] = [
 	"contextFit",
@@ -173,6 +174,7 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 		timeouts: ctx.engine.timeouts(),
 		git: ctx.engine.gitSettings(),
 		agent: ctx.engine.agentSettings(),
+		warmup: { ...DEFAULT_WARMUP, ...getSetting<Partial<WarmupSettings>>(ctx.db, "warmup") },
 	})
 
 	app.get("/api/settings", () => currentSettings())
@@ -185,6 +187,7 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			timeouts?: Partial<TimeoutSettings>
 			git?: Partial<GitSettings>
 			agent?: Partial<AgentSettings>
+			warmup?: Partial<WarmupSettings>
 		}
 	}>("/api/settings", (req, reply) => {
 		const body = req.body ?? {}
@@ -194,11 +197,32 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			body.concurrency === undefined &&
 			body.timeouts === undefined &&
 			body.git === undefined &&
-			body.agent === undefined
+			body.agent === undefined &&
+			body.warmup === undefined
 		) {
-			return reply
-				.code(400)
-				.send({ error: "routingWeights, docTemplates, concurrency, timeouts, git oder agent erforderlich" })
+			return reply.code(400).send({
+				error: "routingWeights, docTemplates, concurrency, timeouts, git, agent oder warmup erforderlich",
+			})
+		}
+		if (body.warmup !== undefined) {
+			const current = { ...DEFAULT_WARMUP, ...getSetting<Partial<WarmupSettings>>(ctx.db, "warmup") }
+			const next: WarmupSettings = {
+				enabled: body.warmup.enabled ?? current.enabled,
+				intervalMinutes: body.warmup.intervalMinutes ?? current.intervalMinutes,
+				perProvider: body.warmup.perProvider ?? current.perProvider,
+			}
+			if (
+				typeof next.enabled !== "boolean" ||
+				!Number.isInteger(next.intervalMinutes) ||
+				next.intervalMinutes < 1 ||
+				!Number.isInteger(next.perProvider) ||
+				next.perProvider < 1
+			) {
+				return reply
+					.code(400)
+					.send({ error: "warmup braucht enabled (bool), intervalMinutes ≥ 1 und perProvider ≥ 1" })
+			}
+			setSetting(ctx.db, "warmup", next)
 		}
 		if (body.agent !== undefined) {
 			const maxSteps = body.agent.maxSteps

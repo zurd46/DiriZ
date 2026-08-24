@@ -21,6 +21,7 @@ import {
 } from "./db/seed.js"
 import { EventBus } from "./execution/bus.js"
 import { ExecutionEngine } from "./execution/engine.js"
+import { DEFAULT_WARMUP, WarmKeeper, type WarmupSettings } from "./execution/warmup.js"
 import { taskWorktreePath } from "./execution/worktree.js"
 import { ensureWorktree } from "./git/repo.js"
 import { log, setLogPersist } from "./logger.js"
@@ -133,6 +134,18 @@ async function main(): Promise<void> {
 
 	await registry.bootstrap()
 
+	// Modelle warm halten: Der erste Aufruf eines kalten 30-B-Modells kostet
+	// Minuten — und sieht aus wie ein hängendes Programm. Ein winziger Ping in
+	// regelmässigem Abstand hält, was ohnehin geladen ist, im Speicher.
+	const warmKeeper = new WarmKeeper({
+		db,
+		registry,
+		log: logFn,
+		isBusy: (providerId) => engine.isProviderBusy(providerId),
+		settings: () => ({ ...DEFAULT_WARMUP, ...getSetting<Partial<WarmupSettings>>(db, "warmup") }),
+	})
+	warmKeeper.start()
+
 	const app = await buildApp({
 		db,
 		bus,
@@ -152,6 +165,7 @@ async function main(): Promise<void> {
 		shuttingDown = true
 		log("info", "core", `${signal} — beende DiriZ Core …`)
 		registry.stopAllPolling()
+		warmKeeper.stop()
 		void app.close().finally(() => {
 			db.close()
 			process.exit(0)

@@ -362,6 +362,79 @@ describe("engine: Spezialisten-Kette", () => {
 		expect(folge?.prompt).toMatch(/^## Deine Aufgabe$/m)
 	})
 
+	it("startet eine Stufe mit mehreren Spezialisten gleichzeitig", async () => {
+		const analyst = createAgent(db, { name: "Stufen-Analyst", systemPrompt: "A" })
+		const bauer = createAgent(db, { name: "Stufen-Bauer", systemPrompt: "B" })
+		const daten = createAgent(db, { name: "Stufen-Daten", systemPrompt: "C" })
+
+		// Stufe 1: einer klärt. Stufe 2: zwei bauen — gleichzeitig.
+		const stages = [[analyst.id], [bauer.id, daten.id]]
+		const task = createTask(db, {
+			title: "Stufen",
+			prompt: "Auftrag mit zwei parallelen Schritten",
+			assignmentMode: "agent",
+			agentId: analyst.id,
+			metadata: {
+				chain: { id: "kette-1", agentIds: [analyst.id, bauer.id, daten.id], index: 0, stages, stage: 0 },
+			},
+		})
+		await engine.runTask(task)
+
+		const stufe2 = listTasks(db).filter(
+			(t) => t.metadata.chain?.id === "kette-1" && t.metadata.chain?.stage === 1,
+		)
+		expect(stufe2).toHaveLength(2)
+		expect(stufe2.map((t) => t.agentId).sort()).toEqual([bauer.id, daten.id].sort())
+		// Beide sehen dieselbe Vorarbeit derselben Stufe.
+		for (const t of stufe2) {
+			expect(t.prompt).toContain("## Vorarbeit aus Stufe 1")
+			expect(t.prompt).toContain("Auftrag mit zwei parallelen Schritten")
+		}
+	})
+
+	it("wartet mit der nächsten Stufe, bis alle Geschwister fertig sind", async () => {
+		const a = createAgent(db, { name: "Warte-A", systemPrompt: "A" })
+		const b = createAgent(db, { name: "Warte-B", systemPrompt: "B" })
+		const c = createAgent(db, { name: "Warte-C", systemPrompt: "C" })
+		const stages = [[a.id, b.id], [c.id]]
+
+		const chain = (stage: number) => ({
+			id: "kette-2",
+			agentIds: [a.id, b.id, c.id],
+			index: stage,
+			stages,
+			stage,
+		})
+		const ersteA = createTask(db, {
+			prompt: "Parallel A",
+			assignmentMode: "agent",
+			agentId: a.id,
+			metadata: { chain: chain(0) },
+		})
+		const ersteB = createTask(db, {
+			prompt: "Parallel B",
+			assignmentMode: "agent",
+			agentId: b.id,
+			metadata: { chain: chain(0) },
+		})
+
+		// A ist fertig, B läuft noch → Stufe 2 darf nicht starten.
+		await engine.runTask(ersteA)
+		expect(
+			listTasks(db).filter((t) => t.metadata.chain?.id === "kette-2" && t.metadata.chain?.stage === 1),
+		).toHaveLength(0)
+
+		// Jetzt wird auch B fertig — der Letzte zieht die Kette weiter.
+		await engine.runTask(ersteB)
+		const stufe2 = listTasks(db).filter(
+			(t) => t.metadata.chain?.id === "kette-2" && t.metadata.chain?.stage === 1,
+		)
+		expect(stufe2).toHaveLength(1)
+		// Die Vorarbeit trägt beide Beiträge, jeweils mit Namen.
+		expect(stufe2[0]?.prompt).toContain("### Warte-A")
+		expect(stufe2[0]?.prompt).toContain("### Warte-B")
+	})
+
 	it("endet nach dem letzten Schritt", async () => {
 		const einzig = createAgent(db, { name: "Ketten-Letzter", systemPrompt: "C" })
 		const vorher = listTasks(db).length

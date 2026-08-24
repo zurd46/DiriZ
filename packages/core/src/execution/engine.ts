@@ -60,9 +60,9 @@ import {
 	getSetting,
 	getSwarm,
 	getTask,
+	listAgents,
 	listExecutionsByTask,
 	listTasks,
-	listAgents,
 	replayOutput,
 	saveAgentSelection,
 	saveDecision,
@@ -319,7 +319,8 @@ export class ExecutionEngine {
 		// nicht, wessen Aussage sie vor sich hat.
 		const beitraege = geschwister
 			.map((t) => {
-				const text = t.id === task.id ? ergebnis : (listExecutionsByTask(this.deps.db, t.id).at(-1)?.output ?? "")
+				const text =
+					t.id === task.id ? ergebnis : (listExecutionsByTask(this.deps.db, t.id).at(-1)?.output ?? "")
 				const name = getAgent(this.deps.db, t.agentId ?? "")?.name
 				return { name: name ?? "Spezialist", text: text.trim() }
 			})
@@ -500,6 +501,11 @@ export class ExecutionEngine {
 	}
 
 	/** Was läuft gerade auf einem Rechner? (Anzahl + belegte Modell-Plätze) */
+	/** Arbeitet dieser Rechner gerade? Das Warmhalten hält sich davon fern. */
+	isProviderBusy(providerId: string): boolean {
+		return this.activityOf(providerId).count > 0
+	}
+
 	private activityOf(providerId: string): { count: number; models: string[] } {
 		const models = new Set<string>()
 		let count = 0

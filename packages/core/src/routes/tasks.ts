@@ -148,7 +148,12 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 				// Kettenschritt: Die Oberfläche zeigt eine Übergabe anders an als
 				// eine getippte Nachricht — sie stammt vom vorigen Spezialisten.
 				chain: task.metadata.chain
-					? { step: task.metadata.chain.index + 1, total: task.metadata.chain.agentIds.length }
+					? {
+							// Stufen, nicht Einzelschritte: Innerhalb einer Stufe arbeiten
+							// mehrere Spezialisten gleichzeitig.
+							step: (task.metadata.chain.stage ?? task.metadata.chain.index) + 1,
+							total: task.metadata.chain.stages?.length ?? task.metadata.chain.agentIds.length,
+						}
 					: null,
 				repoId: task.repoId ?? null,
 				// Welches Projekt, welcher Branch — „GitHub“ allein sagt nichts.

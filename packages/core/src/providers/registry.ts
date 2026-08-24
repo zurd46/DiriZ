@@ -124,6 +124,11 @@ export class ProviderRegistry {
 		return this.adapters.get(providerId)
 	}
 
+	/** Anzeigename eines Rechners — für Logzeilen, die ein Mensch liest. */
+	labelOf(providerId: string): string | undefined {
+		return this.meta.get(providerId)?.label
+	}
+
 	providerType(providerId: string): ProviderType | undefined {
 		return this.meta.get(providerId)?.type
 	}

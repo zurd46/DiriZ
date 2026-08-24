@@ -22,6 +22,7 @@ import {
 	type InstanceModel,
 	type Repo,
 	type SwarmStep,
+	stagesOf,
 } from "@diriz/shared"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import DiffView from "../components/DiffView.js"
@@ -651,6 +652,10 @@ export default function Chat() {
 			const kette = swarmMode
 				? plan.steps.map((s) => s.agentId)
 				: plan.steps.slice(0, 1).map((s) => s.agentId)
+			// Stufen statt Perlenschnur: Was fachlich nebeneinander liegt (bauen
+			// und Daten, prüfen und dokumentieren), läuft gleichzeitig — auf
+			// allen angebundenen Rechnern statt nacheinander auf einem.
+			const stufen = swarmMode ? stagesOf(plan.steps) : kette.map((id) => [id])
 
 			const task = await api.post<{ id: string }>("/api/tasks", {
 				title: titleFrom(text),
@@ -661,7 +666,18 @@ export default function Chat() {
 					// Agentik-Modus: nur wenn der Spezialist Dateien anfassen soll.
 					agentMode: target !== "answer",
 					chatId,
-					...(kette.length > 1 ? { chain: { agentIds: kette, index: 0, goal: text } } : {}),
+					...(kette.length > 1
+						? {
+								chain: {
+									id: crypto.randomUUID(),
+									agentIds: kette,
+									index: 0,
+									stages: stufen,
+									stage: 0,
+									goal: text,
+								},
+							}
+						: {}),
 				},
 				assignmentMode: kette.length > 0 ? "agent" : "auto",
 				agentId: kette[0],
@@ -875,7 +891,7 @@ export default function Chat() {
 									<div className={`chat-msg user ${handoff ? "handoff" : ""}`}>
 										<div className="chat-role">
 											{isHandoff && turn.chain
-												? `Übergabe · Schritt ${turn.chain.step} von ${turn.chain.total}`
+												? `Übergabe · Stufe ${turn.chain.step} von ${turn.chain.total}`
 												: "Du"}
 										</div>
 										{handoff ? (

@@ -184,7 +184,13 @@ export interface HostMetrics {
 
 /** Provider-eigene Load-Info (z. B. Ollama `/api/ps`). */
 export interface LoadInfo {
-	loadedModels: { modelId: string; memoryBytes: number }[]
+	/**
+	 * `memoryBytes` meldet nur Ollama; LM Studio kennt stattdessen
+	 * `contextWindow` — wie gross das Fenster **beim Laden** wurde. Das ist dort
+	 * die wichtigere Zahl: Sie liegt oft weit unter dem Maximum des Modells und
+	 * entscheidet, wie lang ein Lauf werden darf.
+	 */
+	loadedModels: { modelId: string; memoryBytes: number; contextWindow?: number }[]
 	totalMemoryBytes?: number
 	usedMemoryBytes?: number
 }

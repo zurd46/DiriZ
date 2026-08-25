@@ -9,7 +9,7 @@
  * dem Fallback-Wert 8192 in der Datenbank, obwohl sie ein Vielfaches können.
  */
 
-import type { Capability, DiscoveredModel } from "@diriz/shared"
+import type { Capability, DiscoveredModel, LoadInfo } from "@diriz/shared"
 import { errorMessage, fetchJson } from "./http.js"
 import { OpenAiCompatProvider } from "./openai-compat.js"
 
@@ -73,7 +73,7 @@ export class LmStudioProvider extends OpenAiCompatProvider {
 	 * das Byte. Ohne native API (reiner OpenAI-Modus) gibt es keine Auskunft;
 	 * dann bleibt die Achse neutral statt zu raten.
 	 */
-	async loadInfo(): Promise<{ loadedModels: { modelId: string; memoryBytes: number }[] }> {
+	async loadInfo(): Promise<LoadInfo> {
 		const data = await fetchJson<{ data?: NativeModel[] }>(`${this.root}/api/v0/models`, {
 			headers: this.headers(),
 			timeoutMs: 5000,
@@ -81,7 +81,10 @@ export class LmStudioProvider extends OpenAiCompatProvider {
 		return {
 			loadedModels: (data.data ?? [])
 				.filter((m) => m.state === "loaded")
-				.map((m) => ({ modelId: m.id, memoryBytes: 0 })),
+				// Speicher meldet LM Studio nicht — dafür die tatsächlich geladene
+				// Fenstergrösse. Sie gehört ins Dashboard, weil sie oft weit unter
+				// dem Maximum liegt (gemessen: 262 144 gemeldet, 60 160 geladen).
+				.map((m) => ({ modelId: m.id, memoryBytes: 0, contextWindow: m.loaded_context_length })),
 		}
 	}
 

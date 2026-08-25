@@ -20,7 +20,7 @@ import { useStore } from "../store.js"
 
 type Range = 24 | 168
 
-interface OllamaLoad extends LoadInfo {
+interface RechnerLast extends LoadInfo {
 	providerId: string
 	label?: string
 }
@@ -57,7 +57,7 @@ export default function Dashboard() {
 	const lastError = useStore((s) => s.lastError)
 	const [range, setRange] = useState<Range>(24)
 	const [series7d, setSeries7d] = useState<typeof timeseries | null>(null)
-	const [ollamaLoads, setOllamaLoads] = useState<OllamaLoad[]>([])
+	const [lasten, setLasten] = useState<RechnerLast[]>([])
 	const [host, setHost] = useState<HostMetrics | null>(null)
 	const [dismissedError, setDismissedError] = useState<string | null>(null)
 
@@ -89,16 +89,22 @@ export default function Dashboard() {
 		}
 	}, [range, series7d])
 
+	// **Alle lokalen Rechner**, nicht nur Ollama.
+	//
+	// Die Kachel hiess „Ollama Load" und fragte auch nur Ollama-Provider ab —
+	// wer LM Studio betreibt, sah dauerhaft „Kein Ollama-Provider verbunden",
+	// obwohl LM Studio dieselben Auskünfte gibt. Ein Überbleibsel aus der Zeit,
+	// als es nur Ollama gab.
 	useEffect(() => {
-		const ollama = providers.filter((p) => p.type === "ollama")
-		if (ollama.length === 0) {
-			setOllamaLoads([])
+		const lokale = providers.filter((p) => p.type === "ollama" || p.type === "lmstudio")
+		if (lokale.length === 0) {
+			setLasten([])
 			return
 		}
 		let cancelled = false
 		Promise.allSettled(
-			ollama.map(
-				async (p): Promise<OllamaLoad> => ({
+			lokale.map(
+				async (p): Promise<RechnerLast> => ({
 					...(await api.get<LoadInfo>(`/api/providers/${p.id}/load`)),
 					providerId: p.id,
 					label: p.label,
@@ -106,9 +112,9 @@ export default function Dashboard() {
 			),
 		).then((results) => {
 			if (!cancelled) {
-				setOllamaLoads(
+				setLasten(
 					results
-						.filter((r): r is PromiseFulfilledResult<OllamaLoad> => r.status === "fulfilled")
+						.filter((r): r is PromiseFulfilledResult<RechnerLast> => r.status === "fulfilled")
 						.map((r) => r.value),
 				)
 			}
@@ -306,26 +312,28 @@ export default function Dashboard() {
 						<div>
 							<div className="card-title">
 								<IconLayers size={16} />
-								Ollama Load
+								Geladene Modelle
 							</div>
-							<div className="card-sub">Geladene Modelle &amp; VRAM-Belegung</div>
+							<div className="card-sub">Was gerade im Speicher liegt — je Rechner</div>
 						</div>
-						{ollamaLoads.length > 0 && (
+						{lasten.length > 0 && (
 							<span className="pill ok">
-								{ollamaLoads.length} {ollamaLoads.length === 1 ? "Provider" : "Provider"}
+								{lasten.length} {lasten.length === 1 ? "Rechner" : "Rechner"}
 							</span>
 						)}
 					</div>
-					{ollamaLoads.length === 0 ? (
+					{lasten.length === 0 ? (
 						<div className="empty">
 							<span className="icon-chip lg" style={{ "--mc": "var(--muted)" } as CSSProperties}>
 								<IconServer size={20} />
 							</span>
-							<span className="empty-title">Kein Ollama-Provider verbunden</span>
-							<p>Verbinde einen lokalen Ollama-Endpunkt, um Modell-Load und VRAM live zu sehen.</p>
+							<span className="empty-title">Kein lokaler Rechner verbunden</span>
+							<p>
+								Verbinde ein lokales LM Studio oder Ollama, um live zu sehen, welche Modelle geladen sind.
+							</p>
 						</div>
 					) : (
-						ollamaLoads.map((l) => {
+						lasten.map((l) => {
 							const usedPct =
 								l.usedMemoryBytes !== undefined && l.totalMemoryBytes
 									? Math.round((l.usedMemoryBytes / l.totalMemoryBytes) * 100)
@@ -352,7 +360,14 @@ export default function Dashboard() {
 										<div className="model-chips">
 											{l.loadedModels.map((m) => (
 												<span key={m.modelId} className="chip">
-													{m.modelId} <b>{formatBytes(m.memoryBytes)}</b>
+													{m.modelId} {/* Ollama meldet Speicher, LM Studio die geladene Fenstergrösse. */}
+													<b>
+														{m.memoryBytes > 0
+															? formatBytes(m.memoryBytes)
+															: m.contextWindow
+																? `${formatCompact(m.contextWindow)} Kontext`
+																: "geladen"}
+													</b>
 												</span>
 											))}
 										</div>

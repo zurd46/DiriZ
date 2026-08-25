@@ -35,7 +35,7 @@ const STEPS: Step[] = [
 	{
 		icon: IconStar,
 		title: "3 · Bewerten & optimieren",
-		body: "Bewerte Ergebnisse mit 1–5 Sternen. DiriZ lernt daraus (Qualitäts-Prior) und wird mit der Zeit immer besser routen. Im Dashboard siehst du Tokens, Kosten und Ollama-Load.",
+		body: "Bewerte Ergebnisse mit 1–5 Sternen. DiriZ lernt daraus (Qualitäts-Prior) und wird mit der Zeit immer besser routen. Im Dashboard siehst du Tokens, Kosten und welche Modelle gerade geladen sind.",
 	},
 ]
 

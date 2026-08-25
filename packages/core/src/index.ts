@@ -203,8 +203,22 @@ async function main(): Promise<void> {
 	})
 
 	let shuttingDown = false
+	/**
+	 * Wie lange das Beenden auf laufende Aufträge wartet.
+	 *
+	 * Ein Neustart mitten in einem Agentik-Lauf vernichtet Minuten bis Stunden
+	 * Arbeit — beobachtet an einem Lauf, der nach sieben Werkzeug-Operationen
+	 * abgeschossen wurde, weil im Hintergrund neu gebaut wurde. Ein zweites
+	 * Signal (nochmal Strg+C) beendet sofort, wenn es eilt.
+	 */
+	const DRAIN_MS = 10 * 60_000
+
 	const shutdown = (signal: string) => {
 		if (shuttingDown) {
+			// Zweites Signal: jetzt wirklich sofort.
+			log("warn", "core", `${signal} erneut — beende sofort, laufende Aufträge werden abgebrochen`)
+			db.close()
+			process.exit(0)
 			return
 		}
 		shuttingDown = true
@@ -212,10 +226,40 @@ async function main(): Promise<void> {
 		registry.stopAllPolling()
 		warmKeeper.stop()
 		clearInterval(retentionTimer)
-		void app.close().finally(() => {
-			db.close()
-			process.exit(0)
-		})
+
+		// Erst die Arbeit zu Ende bringen, dann schliessen. Neue Aufträge kommen
+		// keine mehr herein: Der Server nimmt keine Verbindungen mehr an, sobald
+		// `close()` läuft — die laufenden dürfen fertig werden.
+		const start = Date.now()
+		const warten = () =>
+			new Promise<void>((fertig) => {
+				const prüfen = () => {
+					const offen = engine.activeCount
+					if (offen === 0) {
+						fertig()
+						return
+					}
+					if (Date.now() - start > DRAIN_MS) {
+						log(
+							"warn",
+							"core",
+							`${offen} Auftrag/Aufträge laufen noch — Wartefrist abgelaufen, beende trotzdem`,
+						)
+						fertig()
+						return
+					}
+					log("info", "core", `Warte auf ${offen} laufende(n) Auftrag/Aufträge … (Strg+C erzwingt Abbruch)`)
+					setTimeout(prüfen, 5_000)
+				}
+				prüfen()
+			})
+
+		void warten().then(() =>
+			app.close().finally(() => {
+				db.close()
+				process.exit(0)
+			}),
+		)
 	}
 	process.on("SIGINT", () => shutdown("SIGINT"))
 	process.on("SIGTERM", () => shutdown("SIGTERM"))

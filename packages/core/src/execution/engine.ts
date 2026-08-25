@@ -958,6 +958,7 @@ export class ExecutionEngine {
 			profile,
 			task.metadata.speed === "fast" ? fastWeights(this.baseWeights()) : this.baseWeights(),
 			this.limits(),
+			(id) => this.deps.registry.labelOf(id),
 		)
 		const scored = allowed
 			.map((c) => scoreCandidate(c, profile, weights, this.deps.feedback, task.prompt))
@@ -1060,7 +1061,8 @@ export class ExecutionEngine {
 		const candidates = await this.buildCandidates()
 		// Schnellmodus: Tempo zählt dreifach (siehe `fastWeights`).
 		const gewichte = task.metadata.speed === "fast" ? fastWeights(this.baseWeights()) : this.baseWeights()
-		let policy = applyPolicies(candidates, profile, gewichte, this.limits())
+		const rechnerName = (id: string) => this.deps.registry.labelOf(id)
+		let policy = applyPolicies(candidates, profile, gewichte, this.limits(), rechnerName)
 
 		// Kein Kandidat? Erst prüfen, **warum** — scheitern ist die letzte
 		// Antwort, nicht die erste.
@@ -1080,6 +1082,7 @@ export class ExecutionEngine {
 				{ ...profile, requiredCapabilities: [], preferredCapabilities: profile.requiredCapabilities },
 				gewichte,
 				this.limits(),
+				rechnerName,
 			)
 			if (gelockert.allowed.length > 0) {
 				log(
@@ -1108,7 +1111,19 @@ export class ExecutionEngine {
 			// Prompt schlicht zu lang ist. Also steht es jetzt in der Meldung —
 			// und die vollständige Entscheidung landet wie jede andere in der
 			// Datenbank.
-			const reason = `Keine Instanz verfügbar (${excluded.length} ausgeschlossen): ${summarizeExclusions(excluded)}`
+			// Ein Pin auf einen Rechner, den es im Rennen gar nicht gibt
+			// (deaktiviert, offline, gelöscht), ist eine Sackgasse, die niemand
+			// sieht: Die Task scheitert, und in der Meldung steht nur, dass
+			// gepinnt wurde. Also steht dort jetzt auch, **warum** das nicht
+			// aufgehen kann und was zu tun ist.
+			const pinTot =
+				profile.mode === "pinned" &&
+				profile.pinnedProviderId &&
+				!candidates.some((c) => c.instance.providerId === profile.pinnedProviderId)
+					? ` · Der Rechner „${this.deps.registry.labelOf(profile.pinnedProviderId) ?? profile.pinnedProviderId}“ ` +
+						"steht nicht zur Verfügung (deaktiviert oder offline). Pin am Spezialisten lösen oder den Rechner aktivieren."
+					: ""
+			const reason = `Keine Instanz verfügbar (${excluded.length} ausgeschlossen): ${summarizeExclusions(excluded)}${pinTot}`
 			log("warn", "routing", `${reason} für Task ${task.id}`)
 			// Sichtbares Scheitern: Execution-Record, damit die UI den Fehler zeigt und bewerten kann.
 			const execution = createExecution(db, { taskId: task.id })

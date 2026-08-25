@@ -51,6 +51,8 @@ export function applyPolicies(
 	profile: TaskProfile,
 	baseWeights: ScoringWeights,
 	limits?: ConcurrencySettings,
+	/** Kennung → Anzeigename, damit Ausschlussgründe lesbar sind. */
+	labelOf?: (providerId: string) => string | undefined,
 ): PolicyResult {
 	const weights =
 		profile.mode === "cost-aware"
@@ -114,7 +116,13 @@ export function applyPolicies(
 		}
 		if (profile.mode === "pinned") {
 			if (profile.pinnedProviderId && c.instance.providerId !== profile.pinnedProviderId) {
-				pushExcluded(c, `Pinned auf Provider ${profile.pinnedProviderId}`)
+				// Der Name, nicht die Kennung: „Pinned auf Provider
+				// c7e00965-8eea-…" zwingt zum Nachschlagen in der Datenbank, um
+				// eine Meldung zu verstehen, die eine Antwort geben sollte.
+				pushExcluded(
+					c,
+					`Pinned auf Rechner ${labelOf?.(profile.pinnedProviderId) ?? profile.pinnedProviderId}`,
+				)
 				continue
 			}
 			if (profile.pinnedModelId && c.instance.modelId !== profile.pinnedModelId) {

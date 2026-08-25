@@ -1100,9 +1100,15 @@ export default function Chat() {
 															</span>
 															{/* Zahlen als eigene Chips statt als ein durchlaufender Satz: So
 															    findet das Auge das Tempo, ohne die Zeile zu lesen. */}
-															{elapsedMs !== undefined && <span className="chat-stat mono">{duration(elapsedMs)}</span>}
-															{run?.usage ? <span className="chat-stat mono">{run.usage.tokensOut} Tok</span> : null}
-															{run?.usage?.tps ? <span className="chat-stat mono">{run.usage.tps.toFixed(1)} Tok/s</span> : null}
+															{elapsedMs !== undefined && (
+																<span className="chat-stat mono">{duration(elapsedMs)}</span>
+															)}
+															{run?.usage ? (
+																<span className="chat-stat mono">{run.usage.tokensOut} Tok</span>
+															) : null}
+															{run?.usage?.tps ? (
+																<span className="chat-stat mono">{run.usage.tps.toFixed(1)} Tok/s</span>
+															) : null}
 															{loadMs !== undefined && (
 																<span className="chat-stat mono" title="Ladezeit des Modells">
 																	Laden {seconds(loadMs)}

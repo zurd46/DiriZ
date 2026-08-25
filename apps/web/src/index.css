@@ -3249,18 +3249,6 @@ pre.code {
 	}
 }
 
-/* Rechner und Modell, die gerade rechnen. */
-.chat-worker {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	font-family: var(--mono);
-	font-size: var(--fs-xs);
-	color: var(--muted);
-	text-transform: none;
-	letter-spacing: 0;
-}
-
 .chat-answer {
 	margin-top: var(--sp-3);
 	padding-top: var(--sp-3);
@@ -3588,7 +3576,7 @@ pre.code {
 }
 
 .chat-thoughts {
-	margin-bottom: var(--sp-3);
+	margin-bottom: var(--sp-2);
 }
 
 .chat-thoughts .output {
@@ -3636,7 +3624,7 @@ pre.code {
  */
 .chat-head {
 	position: sticky;
-	top: calc(var(--sp-2) * -1);
+	top: 0;
 	z-index: 2;
 	display: flex;
 	align-items: center;
@@ -3647,16 +3635,26 @@ pre.code {
 	border-radius: calc(var(--r-md) - 1px) calc(var(--r-md) - 1px) 0 0;
 }
 
-/* Der Zustand färbt einen schmalen Streifen links — im langen Verlauf findet
-   das Auge damit fehlgeschlagene Läufe, ohne jede Statusnadel zu lesen. */
+.chat-head .pill,
+.chat-head .btn {
+	flex: none;
+}
+
+/* Der Zustand färbt einen schmalen Streifen über die ganze Karte — im langen
+   Verlauf findet das Auge damit fehlgeschlagene Läufe, ohne jede Statusnadel
+   zu lesen. Der Kopf bringt seinen eigenen Grund mit und deckt den Streifen
+   der Karte ab, deshalb trägt er ihn ein zweites Mal. */
+.chat-msg.agent[data-status="failed"],
 .chat-msg.agent[data-status="failed"] .chat-head {
 	box-shadow: inset 2px 0 0 var(--err-text);
 }
 
+.chat-msg.agent[data-status="cancelled"],
 .chat-msg.agent[data-status="cancelled"] .chat-head {
 	box-shadow: inset 2px 0 0 var(--warn-text);
 }
 
+.chat-msg.agent.live,
 .chat-msg.agent.live .chat-head {
 	box-shadow: inset 2px 0 0 var(--accent);
 }

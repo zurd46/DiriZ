@@ -18,7 +18,7 @@ import type {
 	ProviderType,
 } from "@diriz/shared"
 import { describe, expect, it } from "vitest"
-import { runAgentLoop, trimContext } from "../src/execution/agent.js"
+import { flattenToolHistory, runAgentLoop, trimContext } from "../src/execution/agent.js"
 
 type Behavior =
 	| "write-then-done"
@@ -456,5 +456,53 @@ describe("trimContext", () => {
 	it("tut nichts ohne bekanntes Kontextfenster", () => {
 		const messages: ChatMessage[] = Array.from({ length: 12 }, (_, i) => toolMsg(i))
 		expect(trimContext(messages, undefined).trimmed).toBe(0)
+	})
+})
+
+/**
+ * Der Abschluss-Schritt schickt keine Werkzeug-Definitionen mit — dann darf im
+ * Verlauf auch kein Werkzeug-Aufruf mehr stehen. Sonst bricht die Chat-Vorlage
+ * des Servers ab: LM Studio antwortete darauf mit HTTP 500 und einer
+ * HTML-Fehlerseite, und der ganze Lauf war verloren. Nachgewiesen in einem
+ * echten Kettenlauf.
+ */
+describe("flattenToolHistory", () => {
+	it("löst Werkzeug-Rollen in Text auf und behält, was passiert ist", () => {
+		const flach = flattenToolHistory([
+			{ role: "system", content: "Rolle" },
+			{ role: "user", content: "Auftrag" },
+			{
+				role: "assistant",
+				content: "",
+				toolCalls: [{ id: "c1", name: "read_file", arguments: { path: "src/a.js" } }],
+			},
+			{ role: "tool", toolCallId: "c1", content: JSON.stringify({ ok: true, detail: "Dateiinhalt" }) },
+		])
+
+		// Keine Werkzeug-Rollen mehr, keine `toolCalls` — nichts, worüber eine
+		// Vorlage stolpern könnte.
+		expect(flach.some((m) => m.role === "tool")).toBe(false)
+		expect(flach.some((m) => m.toolCalls?.length)).toBe(false)
+		// Aber der Vorgang ist noch nachvollziehbar.
+		expect(flach.map((m) => m.content).join("\n")).toContain("read_file(src/a.js)")
+		expect(flach.map((m) => m.content).join("\n")).toContain("Dateiinhalt")
+	})
+
+	it("wirft leere Assistenten-Nachrichten weg", () => {
+		const flach = flattenToolHistory([
+			{ role: "user", content: "Frage" },
+			{ role: "assistant", content: "   " },
+			{ role: "assistant", content: "Antwort" },
+		])
+		expect(flach).toHaveLength(2)
+		expect(flach[1]?.content).toBe("Antwort")
+	})
+
+	it("lässt einen Verlauf ohne Werkzeuge unangetastet", () => {
+		const rein = [
+			{ role: "system" as const, content: "Rolle" },
+			{ role: "user" as const, content: "Frage" },
+		]
+		expect(flattenToolHistory(rein)).toEqual(rein)
 	})
 })

@@ -435,7 +435,13 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 				: "Fasse dein Ergebnis jetzt als vollständige Textantwort zusammen. Keine Tool-Aufrufe.",
 		})
 
-		const final = await requestFinalAnswer(opts, messages)
+		// **Ohne Werkzeug-Rollen.** Der Abschluss-Schritt schickt bewusst keine
+		// Werkzeug-Definitionen mit — ein Verlauf, der trotzdem `tool_calls`
+		// enthält, bringt die Vorlagen-Engine mancher Server zum Absturz:
+		// LM Studio antwortet dann mit HTTP 500 und einer HTML-Fehlerseite, und
+		// der ganze Lauf ist verloren. Nachgewiesen in einem Kettenlauf, bei dem
+		// genau diese Anfrage dreimal in Folge scheiterte.
+		const final = await requestFinalAnswer(opts, flattenToolHistory(messages))
 		tokensIn += final.tokensIn
 		tokensOut += final.tokensOut
 		if (final.text.trim() !== "") {
@@ -452,6 +458,49 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 	}
 
 	return { text, steps, toolOps, tokensIn, tokensOut, stepLimitReached, finalized }
+}
+
+/**
+ * Macht aus einem Werkzeug-Verlauf einen reinen Textverlauf.
+ *
+ * Für den Abschluss-Schritt werden keine Werkzeug-Definitionen mitgeschickt —
+ * dann dürfen auch keine `assistant`-Nachrichten mit `tool_calls` und keine
+ * `tool`-Antworten mehr darin stehen. Server rendern den Verlauf über eine
+ * Chat-Vorlage; findet die einen Werkzeug-Aufruf ohne zugehörige Definition,
+ * bricht sie ab — LM Studio quittiert das mit HTTP 500 und einer
+ * HTML-Fehlerseite, und die gesamte Arbeit des Laufs ist verloren.
+ *
+ * Was das Modell getan hat, bleibt erhalten: Jeder Aufruf wird zu einer Zeile
+ * im Klartext. Leere `assistant`-Nachrichten fallen weg — auch die sind für
+ * manche Vorlagen ein Stolperstein.
+ */
+export function flattenToolHistory(messages: ChatMessage[]): ChatMessage[] {
+	const out: ChatMessage[] = []
+	for (const m of messages) {
+		if (m.role === "assistant" && m.toolCalls?.length) {
+			const zeilen = m.toolCalls.map((c) => `[Werkzeug: ${c.name}(${summarizeArgs(c)})]`)
+			out.push({ role: "assistant", content: [m.content?.trim(), ...zeilen].filter(Boolean).join("\n") })
+			continue
+		}
+		if (m.role === "tool") {
+			// Das Ergebnis gehört zum Verlauf — aber als Text, nicht als Rolle.
+			const detail = ((): string => {
+				try {
+					const parsed = JSON.parse(m.content) as { ok?: boolean; detail?: string }
+					return `${parsed.ok === false ? "Fehler" : "Ergebnis"}: ${parsed.detail ?? m.content}`
+				} catch {
+					return m.content
+				}
+			})()
+			out.push({ role: "assistant", content: `[${detail.slice(0, 2000)}]` })
+			continue
+		}
+		if (m.role === "assistant" && !m.content?.trim()) {
+			continue
+		}
+		out.push(m)
+	}
+	return out
 }
 
 /** Argumente eines Tool-Calls knapp für das Protokoll darstellen. */

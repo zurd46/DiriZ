@@ -3191,6 +3191,10 @@ pre.code {
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 5px;
+	/* Nur so breit wie ihr Inhalt: Über die ganze Spalte gezogen sah die
+	   Laufzeile aus wie ein zweiter Antwortkasten. */
+	width: fit-content;
+	max-width: 100%;
 	padding: 2px var(--sp-2);
 	border-radius: 6px;
 	background: var(--bg-soft);
@@ -3335,7 +3339,7 @@ pre.code {
 	flex: 1;
 	display: flex;
 	flex-direction: column;
-	gap: var(--sp-6);
+	gap: var(--sp-5);
 	min-height: 0;
 	padding: var(--sp-2) var(--sp-2) var(--sp-5) 0;
 	overflow-y: auto;

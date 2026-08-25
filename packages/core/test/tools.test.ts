@@ -7,7 +7,7 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import type { ToolCallRequest } from "@diriz/shared"
+import { AGENT_TOOLS, type ToolCallRequest } from "@diriz/shared"
 import { describe, expect, it } from "vitest"
 import { openDatabase } from "../src/db/connection.js"
 import { migrate } from "../src/db/migrate.js"
@@ -35,13 +35,26 @@ function call(name: string, arguments_: Record<string, unknown>): ToolCallReques
 }
 
 describe("tools: Sandbox", () => {
-	it("definiert genau die vier Werkzeuge mit JSON-Schemas", async () => {
+	it("definiert den vollständigen Dateizugriff mit JSON-Schemas", async () => {
+		// Lesen, Ändern, Ausführen — der Satz muss vollständig sein, sonst baut
+		// sich ein Modell den fehlenden Handgriff schlecht nach.
 		expect(TOOL_SPECS.map((t) => t.name).sort()).toEqual([
+			"append_file",
+			"copy_file",
+			"delete_file",
+			"edit_file",
+			"file_info",
 			"list_files",
+			"make_dir",
+			"move_file",
 			"read_file",
 			"run_command",
+			"search_files",
 			"write_file",
 		])
+		// Und er muss sich mit dem Katalog decken, aus dem die Datenblätter
+		// entstehen — sonst wäre ein Werkzeug still gesperrt.
+		expect(TOOL_SPECS.map((t) => t.name).sort()).toEqual([...AGENT_TOOLS].sort())
 		for (const spec of TOOL_SPECS) {
 			expect(spec.parameters.type).toBe("object")
 			expect(spec.description.length).toBeGreaterThan(0)
@@ -402,5 +415,132 @@ describe("Werkzeug im Bestand nachtragen", () => {
 			backfillToolInDocs(db2, "run_command", "führt aus", ["list_files", "read_file", "write_file"]),
 		).toBe(0)
 		db2.close()
+	})
+})
+
+describe("tools: vollständiger Dateizugriff", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-fileio-"))
+	const run = (name: string, args: Record<string, unknown>) => executeTool(dir, call(name, args), emitOp, log)
+
+	it("ändert eine Stelle, statt die ganze Datei zu überschreiben", async () => {
+		fs.writeFileSync(path.join(dir, "preise.js"), "const mwst = 1.077\nconst rabatt = 0.1\n")
+		const r = await run("edit_file", { path: "preise.js", old_text: "1.077", new_text: "1.081" })
+		expect(r.ok).toBe(true)
+		// Der Rest der Datei muss unangetastet sein — das ist der ganze Zweck.
+		expect(fs.readFileSync(path.join(dir, "preise.js"), "utf8")).toBe(
+			"const mwst = 1.081\nconst rabatt = 0.1\n",
+		)
+	})
+
+	it("verweigert eine mehrdeutige Ersetzung und sagt, wie viele Stellen es sind", async () => {
+		fs.writeFileSync(path.join(dir, "doppelt.js"), "const a = 1\nconst a = 1\n")
+		const r = await run("edit_file", { path: "doppelt.js", old_text: "const a = 1", new_text: "const b = 2" })
+		expect(r.ok).toBe(false)
+		expect(r.detail).toContain("2-mal")
+		// Nichts geändert — eine geratene Stelle wäre schlimmer als ein Fehler.
+		expect(fs.readFileSync(path.join(dir, "doppelt.js"), "utf8")).toBe("const a = 1\nconst a = 1\n")
+	})
+
+	it("ersetzt auf Wunsch alle Vorkommen", async () => {
+		const r = await run("edit_file", {
+			path: "doppelt.js",
+			old_text: "const a = 1",
+			new_text: "const b = 2",
+			replace_all: true,
+		})
+		expect(r.ok).toBe(true)
+		expect(fs.readFileSync(path.join(dir, "doppelt.js"), "utf8")).toBe("const b = 2\nconst b = 2\n")
+	})
+
+	it("erklärt einen nicht gefundenen Text mit dem häufigsten Grund", async () => {
+		const r = await run("edit_file", { path: "preise.js", old_text: "gibt es nicht", new_text: "x" })
+		expect(r.ok).toBe(false)
+		expect(r.detail).toContain("exakt")
+	})
+
+	it("hängt an, legt an, kopiert, verschiebt und löscht", async () => {
+		expect((await run("append_file", { path: "log.txt", content: "eins\n" })).ok).toBe(true)
+		expect((await run("append_file", { path: "log.txt", content: "zwei\n" })).ok).toBe(true)
+		expect(fs.readFileSync(path.join(dir, "log.txt"), "utf8")).toBe("eins\nzwei\n")
+
+		expect((await run("make_dir", { path: "unter/tief" })).ok).toBe(true)
+		expect(fs.statSync(path.join(dir, "unter/tief")).isDirectory()).toBe(true)
+
+		expect((await run("copy_file", { from: "log.txt", to: "unter/tief/log.txt" })).ok).toBe(true)
+		expect(fs.existsSync(path.join(dir, "unter/tief/log.txt"))).toBe(true)
+
+		expect((await run("move_file", { from: "unter/tief/log.txt", to: "unter/neu.txt" })).ok).toBe(true)
+		expect(fs.existsSync(path.join(dir, "unter/tief/log.txt"))).toBe(false)
+		expect(fs.existsSync(path.join(dir, "unter/neu.txt"))).toBe(true)
+
+		expect((await run("delete_file", { path: "unter/neu.txt" })).ok).toBe(true)
+		expect(fs.existsSync(path.join(dir, "unter/neu.txt"))).toBe(false)
+	})
+
+	it("überschreibt ein vorhandenes Ziel nicht ungefragt", async () => {
+		fs.writeFileSync(path.join(dir, "ziel.txt"), "wichtig")
+		const r = await run("copy_file", { from: "log.txt", to: "ziel.txt" })
+		expect(r.ok).toBe(false)
+		expect(fs.readFileSync(path.join(dir, "ziel.txt"), "utf8")).toBe("wichtig")
+		expect((await run("copy_file", { from: "log.txt", to: "ziel.txt", overwrite: true })).ok).toBe(true)
+	})
+
+	it("löscht ein volles Verzeichnis nur auf ausdrückliche Ansage", async () => {
+		fs.mkdirSync(path.join(dir, "voll"), { recursive: true })
+		fs.writeFileSync(path.join(dir, "voll/x.txt"), "x")
+		const r = await run("delete_file", { path: "voll" })
+		expect(r.ok).toBe(false)
+		expect(r.detail).toContain("recursive")
+		expect((await run("delete_file", { path: "voll", recursive: true })).ok).toBe(true)
+		expect(fs.existsSync(path.join(dir, "voll"))).toBe(false)
+	})
+
+	it("bleibt auch beim Verschieben in der Sandbox", async () => {
+		const r = await run("move_file", { from: "log.txt", to: "../entwischt.txt" })
+		expect(r.ok).toBe(false)
+		expect(fs.existsSync(path.join(dir, "..", "entwischt.txt"))).toBe(false)
+	})
+
+	it("findet eine Stelle mit Pfad und Zeilennummer", async () => {
+		fs.mkdirSync(path.join(dir, "src"), { recursive: true })
+		fs.writeFileSync(path.join(dir, "src/a.js"), "// oben\nconst sku = 'ABC'\n")
+		const r = await run("search_files", { query: "sku" })
+		expect(r.ok).toBe(true)
+		expect(r.detail).toContain("src/a.js:2:")
+	})
+
+	it("meldet eine leere Suche als Ergebnis, nicht als Fehler", async () => {
+		const r = await run("search_files", { query: "kommtnichtvor" })
+		expect(r.ok).toBe(true)
+		expect(r.detail).toContain("Keine Treffer")
+	})
+
+	it("überspringt node_modules beim Auflisten und Suchen", async () => {
+		fs.mkdirSync(path.join(dir, "node_modules/paket"), { recursive: true })
+		fs.writeFileSync(path.join(dir, "node_modules/paket/index.js"), "const sku = 1")
+		const liste = await run("list_files", {})
+		expect(liste.detail).not.toContain("node_modules")
+		const suche = await run("search_files", { query: "sku" })
+		expect(suche.detail).not.toContain("node_modules")
+	})
+
+	it("liest eine grosse Datei abschnittsweise mit Zeilennummern", async () => {
+		fs.writeFileSync(
+			path.join(dir, "lang.txt"),
+			Array.from({ length: 500 }, (_, i) => `Zeile ${i + 1}`).join("\n"),
+		)
+		const r = await run("read_file", { path: "lang.txt", start_line: 100, max_lines: 3 })
+		expect(r.ok).toBe(true)
+		expect(r.detail).toContain("100: Zeile 100")
+		expect(r.detail).toContain("102: Zeile 102")
+		expect(r.detail).not.toContain("103: Zeile 103")
+	})
+
+	it("sagt, was ein Pfad ist, ohne ihn zu lesen", async () => {
+		const r = await run("file_info", { path: "lang.txt" })
+		expect(r.ok).toBe(true)
+		expect(r.detail).toContain("Datei")
+		expect(r.detail).toContain("500 Zeilen")
+		expect((await run("file_info", { path: "gibtsnicht.txt" })).detail).toContain("existiert nicht")
 	})
 })

@@ -178,6 +178,6 @@ describe("Werkzeuge im Datenblatt", () => {
 			.split("\n")
 			.filter((l) => !l.startsWith("- write_file"))
 			.join("\n")
-		expect(parseLlmDoc(ohneSchreiben).tools).toEqual(["list_files", "read_file", "run_command"])
+		expect(parseLlmDoc(ohneSchreiben).tools).toEqual(AGENT_TOOLS.filter((t) => t !== "write_file"))
 	})
 })

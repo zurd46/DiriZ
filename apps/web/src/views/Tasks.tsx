@@ -383,7 +383,7 @@ export default function Tasks() {
 						<label
 							className="check-chip"
 							style={{ marginBottom: 6 }}
-							title="Agentik-Modus (M8): Das Modell darf Dateien im Workspace lesen und schreiben (list_files, read_file, write_file). Jede Operation wird live angezeigt."
+							title="Agentik-Modus (M8): Das Modell arbeitet selbst im Workspace — lesen und suchen, Dateien anlegen, ändern, verschieben und löschen, und mit run_command Programme ausführen. Jede Operation wird live angezeigt."
 						>
 							<input type="checkbox" checked={agentMode} onChange={(e) => setAgentMode(e.target.checked)} />
 							Agentik

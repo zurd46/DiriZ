@@ -353,8 +353,31 @@ function shortPath(value: string): string {
 const TOOL_LABEL: Record<string, string> = {
 	list_files: "Dateien auflisten",
 	read_file: "gelesen",
+	search_files: "gesucht",
+	file_info: "nachgesehen",
 	write_file: "geschrieben",
+	edit_file: "geändert",
+	append_file: "angehängt",
+	delete_file: "gelöscht",
+	move_file: "verschoben",
+	copy_file: "kopiert",
+	make_dir: "Ordner angelegt",
 }
+
+/**
+ * Werkzeuge, die etwas **verändern** — sie bekommen das Stift-Symbol und die
+ * grüne Färbung. Ein Blick auf die Leiste soll reichen, um zu sehen, ob ein
+ * Lauf nur gelesen oder auch gearbeitet hat.
+ */
+const MUTATING_BADGES = new Set([
+	"write_file",
+	"edit_file",
+	"append_file",
+	"delete_file",
+	"move_file",
+	"copy_file",
+	"make_dir",
+])
 
 /** Statusworte, wie ein Mensch sie erwartet — nicht die Datenbankwerte. */
 const STATUS_LABEL: Record<string, string> = {
@@ -402,7 +425,7 @@ function ToolStrip({ badges, total }: { badges: ToolBadge[]; total: number }) {
 			</span>
 			{sichtbar.map((b) => (
 				<span key={b.id} className={`tool-badge ${b.ok ? "" : "err"} ${b.name}`} title={b.target || b.name}>
-					{b.name === "write_file" ? <IconEdit size={11} /> : <IconDoc size={11} />}
+					{MUTATING_BADGES.has(b.name) ? <IconEdit size={11} /> : <IconDoc size={11} />}
 					<span className="tool-verb">{TOOL_LABEL[b.name] ?? b.name}</span>
 					{b.target && <span className="tool-target">{shortPath(b.target)}</span>}
 					{b.count > 1 && <span className="tool-count">×{b.count}</span>}

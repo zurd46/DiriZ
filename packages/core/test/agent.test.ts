@@ -28,6 +28,7 @@ type Behavior =
 	| "doppelt"
 	| "schreibschleife"
 	| "befehl-nach-änderung"
+	| "lesen-ändern-lesen"
 
 class ToolFakeAdapter implements LLMProvider {
 	readonly label = "ToolFake"
@@ -55,6 +56,30 @@ class ToolFakeAdapter implements LLMProvider {
 				yield { type: "delta", text: "Abschluss: Ich habe out/hello.txt geschrieben." }
 			}
 			yield { type: "usage", tokensIn: 4, tokensOut: 2 }
+			yield { type: "done" }
+			return
+		}
+		if (this.behavior === "lesen-ändern-lesen") {
+			// Der Normalfall mit `edit_file`: lesen, ändern, zur Kontrolle noch
+			// einmal lesen. Beim zweiten Lesen muss der **neue** Stand kommen.
+			const n = this.requests.length
+			const calls = [
+				{ id: "l1", name: "read_file", arguments: { path: "code.js" } },
+				{
+					id: "e1",
+					name: "edit_file",
+					arguments: { path: "code.js", old_text: "alt", new_text: "neu" },
+				},
+				{ id: "l2", name: "read_file", arguments: { path: "code.js" } },
+			]
+			if (n <= calls.length) {
+				yield { type: "tool_call", call: calls[n - 1] }
+				yield { type: "usage", tokensIn: 2, tokensOut: 1 }
+				yield { type: "done" }
+				return
+			}
+			yield { type: "delta", text: "Fertig." }
+			yield { type: "usage", tokensIn: 2, tokensOut: 1 }
 			yield { type: "done" }
 			return
 		}
@@ -504,5 +529,31 @@ describe("flattenToolHistory", () => {
 			{ role: "user" as const, content: "Frage" },
 		]
 		expect(flattenToolHistory(rein)).toEqual(rein)
+	})
+})
+
+describe("Agent-Loop: Stand nach einer Änderung", () => {
+	it("liefert nach edit_file den neuen Inhalt, nicht den gemerkten alten", async () => {
+		// Ohne das Verwerfen des Zwischenspeichers bekäme das Modell hier „steht
+		// schon oben im Verlauf" mit dem Stand von **vor** seiner eigenen
+		// Änderung — und hielte sie für gescheitert.
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-agent-cache-"))
+		fs.writeFileSync(path.join(dir, "code.js"), "const wert = 'alt'\n")
+		const ergebnisse: string[] = []
+		await runAgentLoop({
+			adapter: new ToolFakeAdapter("p", "ollama", "lesen-ändern-lesen"),
+			model: "m",
+			userPrompt: "Ändere den Wert",
+			baseDir: dir,
+			executionId: "e-cache",
+			maxSteps: 6,
+			onDelta: () => {},
+			emitToolCall: (d) => ergebnisse.push(`${d.name}:${d.ok}:${d.detail ?? ""}`),
+			log: () => {},
+		})
+		const zweitesLesen = ergebnisse.filter((e) => e.startsWith("read_file")).at(-1) ?? ""
+		expect(zweitesLesen).toContain("neu")
+		expect(zweitesLesen).not.toContain("Bereits in einem früheren Schritt gelesen")
+		fs.rmSync(dir, { recursive: true, force: true })
 	})
 })

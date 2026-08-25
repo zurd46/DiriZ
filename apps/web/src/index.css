@@ -3819,10 +3819,24 @@ pre.code {
 	opacity: 0.7;
 }
 
-.tool-badge.write_file {
+/* Verändernde Werkzeuge heben sich ab — gelesen wird viel, geändert wenig. */
+.tool-badge.write_file,
+.tool-badge.edit_file,
+.tool-badge.append_file,
+.tool-badge.move_file,
+.tool-badge.copy_file,
+.tool-badge.make_dir {
 	border-color: var(--ok-soft);
 	background: var(--ok-soft);
 	color: var(--ok-text);
+}
+
+/* Löschen ist die einzige Operation, die etwas vernichtet — sie wird als
+   solche gezeigt, nicht als grüner Fortschritt. */
+.tool-badge.delete_file {
+	border-color: var(--warn-soft);
+	background: var(--warn-soft);
+	color: var(--warn-text);
 }
 
 .tool-badge.err {

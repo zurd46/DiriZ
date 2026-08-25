@@ -29,6 +29,16 @@ const CLOUD_TYPES: ProviderType[] = ["openrouter", "openai"]
 export interface PolicyCandidate extends CandidateInfo {
 	providerType: ProviderType
 	providerOnline: boolean
+	/**
+	 * Das Modell stand bei der letzten Bestandsaufnahme des Rechners **nicht
+	 * mehr** in seiner Liste.
+	 *
+	 * Der Fall trat auf, als „LM Link" am Mac abgeschaltet wurde: Elf Modelle
+	 * verschwanden von einem Moment auf den anderen, blieben aber in der
+	 * Datenbank stehen. Ohne dieses Gate wählt das Routing weiter unter ihnen —
+	 * und bekommt „model not found", nachdem es das beste ausgesucht hat.
+	 */
+	instanceStale?: boolean
 	/** Modelle, die dieser Rechner **gerade ausführt** (GPU-Schutz). */
 	providerActiveModels?: string[]
 }
@@ -93,6 +103,13 @@ export function applyPolicies(
 		}
 		if (!c.providerOnline) {
 			pushExcluded(c, "Provider offline oder Circuit-Breaker offen")
+			continue
+		}
+		if (c.instanceStale) {
+			pushExcluded(
+				c,
+				`${c.instance.modelId} wird von diesem Rechner nicht mehr angeboten (zuletzt gesehen: ${c.instance.lastSeenAt.slice(11, 16)} Uhr)`,
+			)
 			continue
 		}
 		// GPU-Schutz (harte Gates, vor allem Scoring): Ein überfahrener Rechner

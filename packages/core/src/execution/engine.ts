@@ -200,6 +200,17 @@ export function summarizeExclusions(excluded: { reason: string }[]): string {
 const MODEL_LOCK_MS = 10 * 60_000
 
 /**
+ * So viel Rückstand darf die Sichtung eines Modells haben, bevor es als
+ * „nicht mehr angeboten" gilt.
+ *
+ * Die Bestandsaufnahme läuft alle zehn Sekunden; eine Minute Nachsicht deckt
+ * einen ausgefallenen Rundgang ab, ohne ein wirklich verschwundenes Modell
+ * lange mitzuschleppen. Gelöscht wird nichts: Wer „LM Link" wieder einschaltet,
+ * bekommt seine Modelle samt Datenblatt und Einstellungen zurück.
+ */
+const STALE_GRACE_MS = 60_000
+
+/**
  * Sperrdauer nach dem n-ten Ladefehler in Folge.
  *
  * Ein Modell, das 158 GB verlangt, wird auch in zehn Minuten nicht kleiner.
@@ -856,6 +867,14 @@ export class ExecutionEngine {
 		const instances = registry.instances()
 		const result: PolicyCandidate[] = []
 		const now = new Date().toISOString()
+		// Je Rechner die jüngste Sichtung — Massstab dafür, was noch im Bestand ist.
+		const neuesteSichtung = new Map<string, number>()
+		for (const i of instances) {
+			const t = Date.parse(i.lastSeenAt)
+			if (Number.isFinite(t)) {
+				neuesteSichtung.set(i.providerId, Math.max(neuesteSichtung.get(i.providerId) ?? 0, t))
+			}
+		}
 		for (const inst of instances) {
 			// Gesperrte Instanzen überspringen (§12.1)
 			if (inst.lockedUntil && inst.lockedUntil > now) {
@@ -882,12 +901,22 @@ export class ExecutionEngine {
 				hostRamUsagePct: host?.ramUsagePct,
 			}
 			const activity = this.activityOf(inst)
+			// **Steht das Modell noch im Bestand des Rechners?**
+			//
+			// Gemessen wird gegen die jüngste Sichtung **desselben Rechners**,
+			// nicht gegen die Uhr: Wurde ein Provider gerade gar nicht befragt,
+			// sind alle seine Modelle gleich alt und keines gilt als
+			// verschwunden. Erst wenn eine Bestandsaufnahme gelang und ein
+			// Modell dabei fehlte, fällt es zurück.
+			const juengste = neuesteSichtung.get(inst.providerId)
+			const stale = juengste !== undefined && juengste - Date.parse(inst.lastSeenAt) > STALE_GRACE_MS
 			result.push({
 				...info,
 				providerType: type,
 				providerOnline: providerStatus === "online" && !registry.isCircuitOpen(inst.providerId),
 				providerActiveCount: activity.count,
 				providerActiveModels: activity.models,
+				instanceStale: stale,
 			})
 		}
 		return result

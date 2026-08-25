@@ -460,3 +460,43 @@ describe("Pin: der Rechner zählt, nicht die Tür", () => {
 		expect(r.excluded.some((e) => e.reason.includes("Pinned auf Rechner"))).toBe(true)
 	})
 })
+
+describe("Verschwundene Modelle", () => {
+	function kand(modelId: string, stale: boolean): PolicyCandidate {
+		return {
+			instance: {
+				id: modelId,
+				providerId: "macdani",
+				modelId,
+				displayName: modelId,
+				contextWindow: 32_000,
+				capabilities: ["code"],
+				languages: [],
+				source: "discovered",
+				status: "online",
+				enabled: true,
+				lastSeenAt: "2026-08-25T13:48:57.000Z",
+			},
+			loadFactor: 0,
+			providerLatencyMs: 10,
+			basisPrior: 0.5,
+			local: true,
+			providerType: "lmstudio",
+			providerOnline: true,
+			instanceStale: stale,
+		} as unknown as PolicyCandidate
+	}
+
+	it("wählt nicht unter Modellen, die der Rechner nicht mehr anbietet", () => {
+		// Der echte Fall: „LM Link" am Mac abgeschaltet — elf durchgereichte
+		// Modelle verschwanden, blieben aber in der Datenbank stehen. Ohne Gate
+		// sucht das Routing das beste davon aus und bekommt „model not found".
+		const r = applyPolicies(
+			[kand("nvidia-nemotron", true), kand("qwen3.8-27b", false)],
+			{ mode: "balanced", requiredCapabilities: [], preferredCapabilities: [] } as unknown as TaskProfile,
+			DEFAULT_WEIGHTS,
+		)
+		expect(r.allowed.map((c) => c.instance.modelId)).toEqual(["qwen3.8-27b"])
+		expect(r.excluded[0].reason).toContain("nicht mehr angeboten")
+	})
+})

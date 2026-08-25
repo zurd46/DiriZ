@@ -1,6 +1,14 @@
 /**
- * Werkzeuge für den Agent-Loop: `list_files`, `read_file`, `write_file` und
- * `run_command` — strikt in der Task-Sandbox.
+ * Werkzeuge für den Agent-Loop — strikt in der Task-Sandbox.
+ *
+ * Lesen: `list_files`, `read_file`, `search_files`, `file_info`.
+ * Ändern: `write_file`, `edit_file`, `append_file`, `delete_file`, `move_file`,
+ * `copy_file`, `make_dir`. Ausführen: `run_command`.
+ *
+ * Der Satz ist mit Absicht vollständig. Fehlt ein Handgriff, baut ein Modell
+ * ihn sich nach — und zwar schlecht: Ohne `edit_file` schreibt es zum Ändern
+ * einer Zeile die ganze Datei neu (beobachtet: 51-mal dieselbe Datei), ohne
+ * `search_files` liest es Datei für Datei durch, bis der Kontext voll ist.
  *
  * Jede Operation wird per `tool.call`-Event + Log emittiert (volle
  * Transparenz). Pfad-Sicherheit: Relativ-Pfad-Validierung + Prefix-Check
@@ -38,6 +46,50 @@ const MAX_READ_BYTES = 100 * 1024
 
 /** Max. Ausgabe eines Befehls (32 kB) — ein `npm install` flutet sonst den Kontext. */
 const MAX_OUTPUT_BYTES = 32 * 1024
+
+/**
+ * Max. Grösse einer Datei, die geändert werden darf (2 MB).
+ *
+ * Grosszügiger als `MAX_READ_BYTES`: Beim Ändern landet der Inhalt **nicht** im
+ * Kontext, sondern nur die Meldung, was ersetzt wurde. Ein Deckel bleibt
+ * trotzdem — eine 400-MB-Logdatei im Speicher zu spiegeln, hilft niemandem.
+ */
+const MAX_EDIT_BYTES = 2 * 1024 * 1024
+
+/** Max. Treffer einer Suche — danach steht im Ergebnis, dass gekappt wurde. */
+const MAX_SEARCH_HITS = 100
+
+/** Max. Einträge einer Dateiliste. */
+const MAX_LIST_ENTRIES = 2000
+
+/**
+ * Verzeichnisse, die beim Auflisten und Suchen übersprungen werden.
+ *
+ * Ohne diese Liste lief `list_files` in einem Repository mit installierten
+ * Abhängigkeiten durch `node_modules` — zehntausende Pfade, die den Kontext
+ * füllen und in denen keine Antwort steht. Wer wirklich hineinsehen muss,
+ * nennt den Pfad direkt (`list_files` mit `path`) oder nimmt `run_command`.
+ */
+const SKIP_DIRS = new Set([
+	"node_modules",
+	".git",
+	".svn",
+	"dist",
+	"build",
+	".next",
+	".nuxt",
+	".output",
+	".cache",
+	"coverage",
+	"vendor",
+	"target",
+	".venv",
+	"venv",
+	"__pycache__",
+	".pytest_cache",
+	".turbo",
+	".gradle",
+])
 
 /** Frist je Befehl. Länger als ein Testlauf, kürzer als eine Kaffeepause. */
 export const DEFAULT_COMMAND_TIMEOUT_MS = 120_000
@@ -170,15 +222,30 @@ const GIT_READONLY = new Set(["status", "diff", "log", "show", "branch", "ls-fil
 export const TOOL_SPECS: ToolSpec[] = [
 	{
 		name: "list_files",
-		description: "Listet alle Dateien im Workspace-Verzeichnis (relative Pfade).",
-		parameters: { type: "object", properties: {}, required: [] },
+		description:
+			"Listet die Dateien im Workspace (relative Pfade). Ohne `path` alles, sonst nur das " +
+			"genannte Unterverzeichnis. Build- und Abhängigkeitsordner (node_modules, dist, .git …) " +
+			"bleiben aussen vor.",
+		parameters: {
+			type: "object",
+			properties: {
+				path: { type: "string", description: "Unterverzeichnis (optional, sonst der ganze Workspace)" },
+			},
+			required: [],
+		},
 	},
 	{
 		name: "read_file",
-		description: "Liest eine Datei aus dem Workspace (relativer Pfad, max. 100 kB).",
+		description:
+			"Liest eine Datei aus dem Workspace (relativer Pfad, max. 100 kB). Für grosse Dateien " +
+			"abschnittsweise: `start_line` + `max_lines`.",
 		parameters: {
 			type: "object",
-			properties: { path: { type: "string", description: "Relativer Dateipfad im Workspace" } },
+			properties: {
+				path: { type: "string", description: "Relativer Dateipfad im Workspace" },
+				start_line: { type: "number", description: "Erste Zeile (1-basiert, optional)" },
+				max_lines: { type: "number", description: "Höchstens so viele Zeilen (optional)" },
+			},
 			required: ["path"],
 		},
 	},
@@ -192,6 +259,112 @@ export const TOOL_SPECS: ToolSpec[] = [
 				content: { type: "string", description: "Vollständiger Dateiinhalt" },
 			},
 			required: ["path", "content"],
+		},
+	},
+	{
+		name: "edit_file",
+		description:
+			"Ersetzt eine Textstelle in einer Datei — der Rest bleibt unangetastet. Für Änderungen an " +
+			"bestehenden Dateien ist das der richtige Weg: `write_file` verlangt die ganze Datei und " +
+			"vernichtet bei einem Tippfehler den übrigen Inhalt. `old_text` muss genau einmal vorkommen " +
+			"(sonst `replace_all` setzen).",
+		parameters: {
+			type: "object",
+			properties: {
+				path: { type: "string", description: "Relativer Dateipfad im Workspace" },
+				old_text: { type: "string", description: "Der zu ersetzende Text — exakt, mit Einrückung" },
+				new_text: { type: "string", description: "Der neue Text (leer = löschen)" },
+				replace_all: { type: "boolean", description: "Alle Vorkommen ersetzen statt nur eines" },
+			},
+			required: ["path", "old_text", "new_text"],
+		},
+	},
+	{
+		name: "append_file",
+		description: "Hängt Text an eine Datei an (legt sie an, wenn sie fehlt).",
+		parameters: {
+			type: "object",
+			properties: {
+				path: { type: "string", description: "Relativer Dateipfad im Workspace" },
+				content: { type: "string", description: "Der anzuhängende Text" },
+			},
+			required: ["path", "content"],
+		},
+	},
+	{
+		name: "delete_file",
+		description:
+			"Löscht eine Datei im Workspace. Ein Verzeichnis nur mit `recursive: true` — und dann " +
+			"mitsamt Inhalt.",
+		parameters: {
+			type: "object",
+			properties: {
+				path: { type: "string", description: "Relativer Pfad im Workspace" },
+				recursive: { type: "boolean", description: "Verzeichnis samt Inhalt löschen" },
+			},
+			required: ["path"],
+		},
+	},
+	{
+		name: "move_file",
+		description: "Verschiebt oder benennt eine Datei bzw. ein Verzeichnis um (beides im Workspace).",
+		parameters: {
+			type: "object",
+			properties: {
+				from: { type: "string", description: "Bisheriger relativer Pfad" },
+				to: { type: "string", description: "Neuer relativer Pfad" },
+				overwrite: { type: "boolean", description: "Ein vorhandenes Ziel überschreiben" },
+			},
+			required: ["from", "to"],
+		},
+	},
+	{
+		name: "copy_file",
+		description: "Kopiert eine Datei oder ein Verzeichnis innerhalb des Workspaces.",
+		parameters: {
+			type: "object",
+			properties: {
+				from: { type: "string", description: "Quelle (relativer Pfad)" },
+				to: { type: "string", description: "Ziel (relativer Pfad)" },
+				overwrite: { type: "boolean", description: "Ein vorhandenes Ziel überschreiben" },
+			},
+			required: ["from", "to"],
+		},
+	},
+	{
+		name: "make_dir",
+		description: "Legt ein Verzeichnis an (mit allen Elternverzeichnissen).",
+		parameters: {
+			type: "object",
+			properties: { path: { type: "string", description: "Relativer Pfad im Workspace" } },
+			required: ["path"],
+		},
+	},
+	{
+		name: "search_files",
+		description:
+			"Sucht einen Text in allen Dateien des Workspaces und liefert Pfad, Zeilennummer und Zeile. " +
+			"Schneller Weg zu „wo steht das?“, ohne Datei für Datei zu lesen.",
+		parameters: {
+			type: "object",
+			properties: {
+				query: { type: "string", description: "Gesuchter Text (oder regulärer Ausdruck)" },
+				path: { type: "string", description: "Nur in diesem Unterverzeichnis suchen (optional)" },
+				regex: { type: "boolean", description: "`query` als regulären Ausdruck lesen" },
+				ignore_case: { type: "boolean", description: "Gross-/Kleinschreibung ignorieren" },
+			},
+			required: ["query"],
+		},
+	},
+	{
+		name: "file_info",
+		description:
+			"Sagt, ob ein Pfad existiert, ob er Datei oder Verzeichnis ist, wie gross und wie viele " +
+			"Zeilen — ohne den Inhalt in den Kontext zu holen.",
+		parameters: {
+			type: "object",
+			properties: { path: { type: "string", description: "Relativer Pfad im Workspace" } },
+			required: ["path"],
 		},
 	},
 	{
@@ -253,7 +426,20 @@ export async function executeTool(
 	try {
 		switch (call.name) {
 			case "list_files": {
-				result = { ok: true, detail: listFiles(baseDir).join("\n") || "(leer)" }
+				const unter = String(args.path ?? "").trim()
+				const wurzel = unter ? resolveInSandbox(baseDir, pfadPruefen(unter)) : baseDir
+				if (unter && !fs.existsSync(wurzel)) {
+					throw new Error(`Verzeichnis nicht gefunden: ${unter}`)
+				}
+				const alle = listFiles(wurzel)
+				const gekappt = alle.slice(0, MAX_LIST_ENTRIES)
+				const rest = alle.length - gekappt.length
+				result = {
+					ok: true,
+					detail:
+						(gekappt.join("\n") || "(leer)") +
+						(rest > 0 ? `\n[… ${rest} weitere — grenze mit „path" ein oder nutze search_files.]` : ""),
+				}
 				break
 			}
 			case "read_file": {
@@ -270,12 +456,36 @@ export async function executeTool(
 					throw new Error(`Datei nicht gefunden: ${p}`)
 				}
 				const stat = fs.statSync(abs)
-				if (stat.size > MAX_READ_BYTES) {
+				const von = zahl(args.start_line)
+				const wieviele = zahl(args.max_lines)
+				if (stat.size > MAX_READ_BYTES && von === undefined && wieviele === undefined) {
+					// Kein Sackgassen-Fehler mehr: Der Hinweis nennt den Ausweg,
+					// sonst versucht ein Modell dieselbe Datei ein zweites Mal.
 					throw new Error(
-						`Datei zu groß (${Math.round(stat.size / 1024)} kB, max. ${MAX_READ_BYTES / 1024} kB)`,
+						`Datei zu groß (${Math.round(stat.size / 1024)} kB, max. ${MAX_READ_BYTES / 1024} kB) — ` +
+							"lies sie abschnittsweise mit `start_line` und `max_lines`, oder suche gezielt mit `search_files`.",
 					)
 				}
-				result = { ok: true, detail: fs.readFileSync(abs, "utf8") }
+				const roh = fs.readFileSync(abs, "utf8")
+				if (von === undefined && wieviele === undefined) {
+					result = { ok: true, detail: roh }
+					break
+				}
+				const zeilen = roh.split(/\r?\n/)
+				const start = Math.max(1, von ?? 1)
+				const ende = Math.min(zeilen.length, start - 1 + (wieviele ?? zeilen.length))
+				const teil = zeilen.slice(start - 1, ende)
+				if (teil.length === 0) {
+					throw new Error(`Ab Zeile ${start} steht nichts mehr — die Datei hat ${zeilen.length} Zeilen.`)
+				}
+				result = {
+					ok: true,
+					// Mit Zeilennummern, damit ein anschliessendes `edit_file`
+					// weiss, worauf es sich bezieht.
+					detail:
+						teil.map((z, i) => `${start + i}: ${z}`).join("\n") +
+						(ende < zeilen.length ? `\n[… bis Zeile ${zeilen.length}]` : ""),
+				}
 				break
 			}
 			case "write_file": {
@@ -290,6 +500,153 @@ export async function executeTool(
 				fs.mkdirSync(path.dirname(abs), { recursive: true })
 				fs.writeFileSync(abs, content, "utf8")
 				result = { ok: true, detail: `Geschrieben: ${p} (${Buffer.byteLength(content)} Bytes)` }
+				break
+			}
+			case "edit_file": {
+				const p = pfadPruefen(String(args.path ?? ""))
+				const abs = resolveInSandbox(baseDir, p)
+				if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+					throw new Error(`Datei nicht gefunden: ${p} — mit write_file anlegen.`)
+				}
+				if (fs.statSync(abs).size > MAX_EDIT_BYTES) {
+					throw new Error(`Datei zu groß zum Ändern (max. ${MAX_EDIT_BYTES / 1024 / 1024} MB)`)
+				}
+				const alt = String(args.old_text ?? "")
+				const neu = String(args.new_text ?? "")
+				if (alt.length === 0) {
+					throw new Error("`old_text` ist leer — nenne den Text, der ersetzt werden soll.")
+				}
+				if (alt === neu) {
+					throw new Error("`old_text` und `new_text` sind gleich — der Aufruf würde nichts ändern.")
+				}
+				const inhalt = fs.readFileSync(abs, "utf8")
+				const treffer = zaehleVorkommen(inhalt, alt)
+				if (treffer === 0) {
+					// Der häufigste Grund ist Einrückung. Das zu sagen, spart den
+					// blinden zweiten Versuch mit demselben Text.
+					throw new Error(
+						`Text nicht gefunden in ${p}. Er muss **exakt** übereinstimmen, samt Einrückung und ` +
+							"Zeilenumbrüchen — lies die Stelle mit read_file und kopiere sie wörtlich.",
+					)
+				}
+				if (treffer > 1 && args.replace_all !== true) {
+					throw new Error(
+						`Text kommt ${treffer}-mal vor in ${p}. Nimm mehr Zeilen dazu, damit die Stelle ` +
+							"eindeutig ist — oder setze `replace_all: true`, wenn alle gemeint sind.",
+					)
+				}
+				const geaendert = args.replace_all === true ? inhalt.split(alt).join(neu) : inhalt.replace(alt, neu)
+				fs.writeFileSync(abs, geaendert, "utf8")
+				const diff = Buffer.byteLength(geaendert) - Buffer.byteLength(inhalt)
+				result = {
+					ok: true,
+					detail: `Ersetzt in ${p}: ${treffer > 1 && args.replace_all === true ? `${treffer} Stellen` : "1 Stelle"} (${diff >= 0 ? "+" : ""}${diff} Bytes)`,
+				}
+				break
+			}
+			case "append_file": {
+				const p = pfadPruefen(String(args.path ?? ""))
+				const abs = resolveInSandbox(baseDir, p)
+				const content = typeof args.content === "string" ? args.content : String(args.content ?? "")
+				fs.mkdirSync(path.dirname(abs), { recursive: true })
+				const gabEs = fs.existsSync(abs)
+				fs.appendFileSync(abs, content, "utf8")
+				result = {
+					ok: true,
+					detail: `${gabEs ? "Angehängt an" : "Angelegt"}: ${p} (+${Buffer.byteLength(content)} Bytes)`,
+				}
+				break
+			}
+			case "delete_file": {
+				const p = pfadPruefen(String(args.path ?? ""))
+				const abs = resolveInSandbox(baseDir, p)
+				if (abs === baseDir) {
+					throw new Error("Der Workspace selbst wird nicht gelöscht.")
+				}
+				if (!fs.existsSync(abs)) {
+					throw new Error(`Nicht gefunden: ${p}`)
+				}
+				const istOrdner = fs.statSync(abs).isDirectory()
+				if (istOrdner && args.recursive !== true) {
+					const drin = fs.readdirSync(abs).length
+					if (drin > 0) {
+						throw new Error(
+							`${p} ist ein Verzeichnis mit ${drin} Einträgen. Wenn es wirklich samt Inhalt weg soll, ` +
+								"setze `recursive: true`.",
+						)
+					}
+				}
+				fs.rmSync(abs, { recursive: istOrdner, force: false })
+				result = { ok: true, detail: `Gelöscht: ${p}${istOrdner ? " (Verzeichnis)" : ""}` }
+				break
+			}
+			case "move_file":
+			case "copy_file": {
+				const von = pfadPruefen(String(args.from ?? ""), "from")
+				const nach = pfadPruefen(String(args.to ?? ""), "to")
+				const absVon = resolveInSandbox(baseDir, von)
+				const absNach = resolveInSandbox(baseDir, nach)
+				if (!fs.existsSync(absVon)) {
+					throw new Error(`Quelle nicht gefunden: ${von}`)
+				}
+				if (absVon === absNach) {
+					throw new Error("Quelle und Ziel sind derselbe Pfad.")
+				}
+				if (fs.existsSync(absNach) && args.overwrite !== true) {
+					throw new Error(`${nach} gibt es bereits — setze \`overwrite: true\`, wenn es ersetzt werden soll.`)
+				}
+				const istOrdner = fs.statSync(absVon).isDirectory()
+				if (istOrdner && absNach.startsWith(absVon + path.sep)) {
+					throw new Error(`${nach} liegt in ${von} — ein Verzeichnis kann nicht in sich selbst wandern.`)
+				}
+				fs.mkdirSync(path.dirname(absNach), { recursive: true })
+				if (call.name === "move_file") {
+					fs.rmSync(absNach, { recursive: true, force: true })
+					fs.renameSync(absVon, absNach)
+					result = { ok: true, detail: `Verschoben: ${von} → ${nach}` }
+				} else {
+					fs.cpSync(absVon, absNach, { recursive: istOrdner, force: true })
+					result = { ok: true, detail: `Kopiert: ${von} → ${nach}` }
+				}
+				break
+			}
+			case "make_dir": {
+				const p = pfadPruefen(String(args.path ?? ""))
+				const abs = resolveInSandbox(baseDir, p)
+				if (fs.existsSync(abs)) {
+					if (!fs.statSync(abs).isDirectory()) {
+						throw new Error(`${p} gibt es bereits — als Datei, nicht als Verzeichnis.`)
+					}
+					result = { ok: true, detail: `Gibt es bereits: ${p}` }
+					break
+				}
+				fs.mkdirSync(abs, { recursive: true })
+				result = { ok: true, detail: `Angelegt: ${p}` }
+				break
+			}
+			case "search_files": {
+				result = searchFiles(baseDir, args)
+				break
+			}
+			case "file_info": {
+				const p = pfadPruefen(String(args.path ?? ""))
+				const abs = resolveInSandbox(baseDir, p)
+				if (!fs.existsSync(abs)) {
+					result = { ok: true, detail: `${p}: existiert nicht` }
+					break
+				}
+				const st = fs.statSync(abs)
+				if (st.isDirectory()) {
+					const drin = fs.readdirSync(abs).length
+					result = { ok: true, detail: `${p}: Verzeichnis, ${drin} Einträge` }
+					break
+				}
+				const zeilen =
+					st.size <= MAX_EDIT_BYTES ? fs.readFileSync(abs, "utf8").split(/\r?\n/).length : undefined
+				result = {
+					ok: true,
+					detail: `${p}: Datei, ${st.size} Bytes${zeilen !== undefined ? `, ${zeilen} Zeilen` : ""}, geändert ${st.mtime.toISOString()}`,
+				}
 				break
 			}
 			case "run_command": {
@@ -479,8 +836,11 @@ function listFiles(dir: string): string[] {
 		for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
 			const rel = prefix ? `${prefix}/${entry.name}` : entry.name
 			if (entry.isDirectory()) {
+				if (SKIP_DIRS.has(entry.name)) {
+					continue
+				}
 				walk(path.join(d, entry.name), rel)
-			} else {
+			} else if (entry.isFile()) {
 				out.push(rel)
 			}
 		}
@@ -493,14 +853,187 @@ function listFiles(dir: string): string[] {
 	return out.sort()
 }
 
+/**
+ * Prüft einen Pfad aus einem Werkzeugaufruf — mit einer Meldung, die weiterhilft.
+ *
+ * Modelle schicken gern absolute Pfade (`/src/x.js`). Der Hinweis, wie ein
+ * gültiger Pfad aussieht, spart den blinden zweiten Versuch; beobachtet wurde
+ * genau das: Abweisung, identische Wiederholung, Abbruch.
+ */
+function pfadPruefen(p: string, feld = "path"): string {
+	if (!p) {
+		throw new Error(`\`${feld}\` fehlt — nenne einen relativen Pfad im Workspace.`)
+	}
+	if (!isSafeRelPath(p)) {
+		throw new Error(
+			`Ungültiger Pfad (${feld}): ${p} — Pfade sind relativ zum Workspace, ohne führenden „/" und ohne „..“.`,
+		)
+	}
+	return p
+}
+
+/** Zahl aus einem Werkzeug-Argument, oder `undefined` bei Unsinn. */
+function zahl(v: unknown): number | undefined {
+	const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : Number.NaN
+	return Number.isFinite(n) ? n : undefined
+}
+
+/** Wie oft kommt `teil` in `text` vor? (Ohne Regex — der Text ist wörtlich gemeint.) */
+function zaehleVorkommen(text: string, teil: string): number {
+	let n = 0
+	let ab = text.indexOf(teil)
+	while (ab !== -1) {
+		n++
+		ab = text.indexOf(teil, ab + teil.length)
+	}
+	return n
+}
+
+/**
+ * Sucht Text in den Dateien des Workspaces.
+ *
+ * Warum eingebaut, obwohl `grep` auf der Erlaubnisliste steht: `grep` hängt an
+ * der Erlaubnisliste und an der jeweiligen Maschine, kennt die
+ * Sandbox-Grenzen nicht und liefert bei binären Dateien Kauderwelsch. Diese
+ * Suche überspringt dieselben Verzeichnisse wie `list_files`, hält sich an die
+ * Sandbox und kappt sauber.
+ */
+function searchFiles(baseDir: string, args: Record<string, unknown>): ToolOpResult {
+	const query = String(args.query ?? "")
+	if (!query) {
+		throw new Error("`query` fehlt — nenne den gesuchten Text.")
+	}
+	const unter = String(args.path ?? "").trim()
+	const wurzel = unter ? resolveInSandbox(baseDir, pfadPruefen(unter)) : baseDir
+	if (!fs.existsSync(wurzel)) {
+		throw new Error(`Nicht gefunden: ${unter}`)
+	}
+	const flags = args.ignore_case === true ? "i" : ""
+	let muster: RegExp
+	try {
+		muster = new RegExp(args.regex === true ? query : query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), flags)
+	} catch (e) {
+		throw new Error(`Ungültiger regulärer Ausdruck: ${e instanceof Error ? e.message : String(e)}`)
+	}
+
+	const dateien = fs.statSync(wurzel).isFile() ? [path.basename(wurzel)] : listFiles(wurzel)
+	const basis = fs.statSync(wurzel).isFile() ? path.dirname(wurzel) : wurzel
+	const vorne = unter && !fs.statSync(wurzel).isFile() ? `${unter.replace(/\/$/, "")}/` : ""
+	const treffer: string[] = []
+	let durchsucht = 0
+	for (const rel of dateien) {
+		if (treffer.length >= MAX_SEARCH_HITS) {
+			break
+		}
+		const abs = path.join(basis, rel)
+		let inhalt: string
+		try {
+			if (fs.statSync(abs).size > MAX_EDIT_BYTES) {
+				continue
+			}
+			inhalt = fs.readFileSync(abs, "utf8")
+		} catch {
+			continue
+		}
+		// Binärdateien überspringen: Ein Null-Byte in den ersten Kilobytes ist
+		// das verlässlichste Zeichen dafür.
+		if (inhalt.slice(0, 4096).includes("\u0000")) {
+			continue
+		}
+		durchsucht++
+		const zeilen = inhalt.split(/\r?\n/)
+		for (let i = 0; i < zeilen.length; i++) {
+			if (!muster.test(zeilen[i])) {
+				continue
+			}
+			treffer.push(`${vorne}${rel}:${i + 1}: ${zeilen[i].trim().slice(0, 200)}`)
+			if (treffer.length >= MAX_SEARCH_HITS) {
+				break
+			}
+		}
+	}
+	if (treffer.length === 0) {
+		return { ok: true, detail: `Keine Treffer für „${query}“ (${durchsucht} Dateien durchsucht).` }
+	}
+	return {
+		ok: true,
+		detail:
+			treffer.join("\n") +
+			(treffer.length >= MAX_SEARCH_HITS
+				? `\n[… bei ${MAX_SEARCH_HITS} Treffern gekappt — suche genauer.]`
+				: `\n(${treffer.length} Treffer in ${durchsucht} Dateien)`),
+	}
+}
+
+/**
+ * Werkzeuge, die den Workspace **verändern**.
+ *
+ * Der Agent-Loop braucht diese Unterscheidung an zwei Stellen: Ein gelesener
+ * Inhalt darf nach einer Änderung nicht mehr aus dem Verlauf beantwortet
+ * werden, und ein Befehl, der nach einer Änderung wiederholt wird, ist echte
+ * Arbeit statt einer Schleife. Steht hier, weil hier auch die Werkzeuge stehen
+ * — eine zweite Liste anderswo wäre beim nächsten Werkzeug schon veraltet.
+ */
+export const MUTATING_TOOLS = new Set([
+	"write_file",
+	"edit_file",
+	"append_file",
+	"delete_file",
+	"move_file",
+	"copy_file",
+	"make_dir",
+])
+
+/** Nur-lesende Werkzeuge — ihr Ergebnis darf aus dem Verlauf kommen. */
+export const READING_TOOLS = new Set(["list_files", "read_file", "search_files", "file_info"])
+
+/**
+ * Welche Pfade ein Aufruf berührt — für das Verwerfen veralteter Lese-Antworten.
+ *
+ * Leer heisst „keiner“; `undefined` heisst „unbekannt, alles verwerfen“. Der
+ * Unterschied zählt: Ein `run_command` kann jede Datei geändert haben.
+ */
+export function touchedPaths(call: ToolCallRequest): string[] | undefined {
+	const args = call.arguments ?? {}
+	if (!MUTATING_TOOLS.has(call.name)) {
+		return []
+	}
+	const raus: string[] = []
+	for (const feld of ["path", "from", "to"]) {
+		const v = args[feld]
+		if (typeof v === "string" && v.length > 0) {
+			raus.push(v)
+		}
+	}
+	return raus
+}
+
 /** Kurze Zusammenfassung der Argumente für Event/Log (ohne großen Content). */
 function summarizeArgs(call: ToolCallRequest): string {
 	const args = call.arguments ?? {}
-	if (call.name === "write_file") {
+	if (call.name === "write_file" || call.name === "append_file") {
 		const len = typeof args.content === "string" ? Buffer.byteLength(args.content) : 0
 		return `${args.path ?? "?"} (${len} Bytes)`
 	}
+	if (call.name === "edit_file") {
+		const alt = typeof args.old_text === "string" ? args.old_text : ""
+		const kurz = alt.split(/\r?\n/)[0]?.trim().slice(0, 40) ?? ""
+		return `${args.path ?? "?"}${kurz ? ` („${kurz}${alt.length > kurz.length ? "…" : ""}")` : ""}`
+	}
+	if (call.name === "move_file" || call.name === "copy_file") {
+		return `${args.from ?? "?"} → ${args.to ?? "?"}`
+	}
+	if (call.name === "search_files") {
+		return `„${String(args.query ?? "?").slice(0, 60)}"${args.path ? ` in ${args.path}` : ""}`
+	}
+	if (call.name === "list_files") {
+		return String(args.path ?? "—")
+	}
 	if (call.name === "read_file") {
+		const von = args.start_line
+		return `${String(args.path ?? "?")}${von ? ` ab Zeile ${von}` : ""}`
+	}
+	if (call.name === "delete_file" || call.name === "make_dir" || call.name === "file_info") {
 		return String(args.path ?? "?")
 	}
 	if (call.name === "run_command") {

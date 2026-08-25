@@ -133,15 +133,39 @@ const SETTING_LABELS: { key: keyof ModelSettings; label: string }[] = [
  * anfassen darf: Ein Modell, das Werkzeugaufrufe nicht sauber beherrscht,
  * schreibt sonst Dateien mit halb geratenen Pfaden.
  */
-export const AGENT_TOOLS = ["list_files", "read_file", "write_file", "run_command"] as const
+export const AGENT_TOOLS = [
+	// Lesen
+	"list_files",
+	"read_file",
+	"search_files",
+	"file_info",
+	// Ändern
+	"write_file",
+	"edit_file",
+	"append_file",
+	"delete_file",
+	"move_file",
+	"copy_file",
+	"make_dir",
+	// Ausführen
+	"run_command",
+] as const
 
 export type AgentTool = (typeof AGENT_TOOLS)[number]
 
 /** Was jedes Werkzeug tut — die Kurzfassung fürs Datenblatt. */
 export const AGENT_TOOL_HINTS: Record<AgentTool, string> = {
 	list_files: "listet die Dateien im Workspace der Task",
-	read_file: "liest eine Datei aus dem Workspace (max. 100 kB)",
-	write_file: "schreibt oder überschreibt eine Datei im Workspace",
+	read_file: "liest eine Datei aus dem Workspace (max. 100 kB, abschnittsweise möglich)",
+	search_files: "sucht Text in allen Dateien und nennt Pfad und Zeilennummer",
+	file_info: "sagt Grösse, Art und Zeilenzahl eines Pfades, ohne ihn zu lesen",
+	write_file: "schreibt eine Datei neu — überschreibt sie vollständig",
+	edit_file: "ersetzt eine Textstelle in einer Datei, der Rest bleibt unangetastet",
+	append_file: "hängt Text an eine Datei an",
+	delete_file: "löscht eine Datei oder ein Verzeichnis im Workspace",
+	move_file: "verschiebt oder benennt eine Datei um",
+	copy_file: "kopiert eine Datei oder ein Verzeichnis",
+	make_dir: "legt ein Verzeichnis an",
 	run_command: "führt ein erlaubtes Programm aus und liefert dessen Ausgabe (keine Shell)",
 }
 

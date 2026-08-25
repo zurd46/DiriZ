@@ -16,7 +16,15 @@
  */
 
 import type { ChatMessage, LLMProvider, ModelSettings, ToolCallRequest } from "@diriz/shared"
-import { type CommandPolicy, executeTool, TOOL_SPECS, type ToolOpResult } from "./tools.js"
+import {
+	type CommandPolicy,
+	executeTool,
+	MUTATING_TOOLS,
+	READING_TOOLS,
+	TOOL_SPECS,
+	type ToolOpResult,
+	touchedPaths,
+} from "./tools.js"
 
 /**
  * Schutz vor Endlosschleifen: max. Modell-Schritte **mit Tools** pro Execution.
@@ -190,8 +198,17 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 	const unlimited = !Number.isFinite(maxSteps)
 	// Kurze Tool-Anleitung — lokale Modelle brauchen den Hinweis explizit.
 	const darfAusführen = toolNames.includes("run_command")
+	// Änderungen: `edit_file` statt `write_file`. Der Hinweis muss ausdrücklich
+	// dastehen — ein Modell greift sonst zum vertrauteren „ganze Datei
+	// schreiben" und löscht dabei alles, was es nicht mitgeschrieben hat.
+	const darfÄndern = toolNames.includes("edit_file")
 	const toolHint =
 		`Du kannst im Workspace die Tools ${toolNames.join(", ")} nutzen. ` +
+		(darfÄndern
+			? "Zum **Ändern** bestehender Dateien nimm `edit_file` (Textstelle ersetzen) — `write_file` " +
+				"überschreibt die ganze Datei und löscht alles, was du nicht mitschreibst; nimm es nur für " +
+				"neue Dateien. `search_files` findet eine Stelle schneller, als sich durch die Dateien zu lesen. "
+			: "") +
 		(darfAusführen
 			? // Mit Ausführung: Sagen, wie sie zu nutzen ist — und wo sie endet.
 				"Mit `run_command` prüfst du deine Arbeit wirklich, statt sie zu vermuten: Schreib das Skript, " +
@@ -325,7 +342,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 			// schon oben" abzuspeisen macht das Werkzeug wertlos. Erkannt wurde
 			// das an einem Lauf, den DiriZ nach drei solchen Antworten selbst
 			// als „ohne Fortschritt" abbrach.
-			const istLesen = call.name === "list_files" || call.name === "read_file"
+			const istLesen = READING_TOOLS.has(call.name)
 			const wiederholung = istLesen ? gelesen.get(key) : undefined
 			// Wortgleicher Schreibvorgang: nicht noch einmal ausführen, sondern
 			// sagen, dass er nichts ändert. Sonst quittiert DiriZ Stillstand mit
@@ -362,11 +379,32 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 			if (nochmalGeschrieben || wiederholung || wirkungsloserBefehl) {
 				ohneFortschritt++
 			}
-			if (call.name === "write_file" && !nochmalGeschrieben) {
+			if (MUTATING_TOOLS.has(call.name) && !nochmalGeschrieben) {
 				seitLetztemBefehlGeschrieben = true
 			}
 			if (call.name === "run_command") {
 				seitLetztemBefehlGeschrieben = false
+			}
+			// **Nach einer Änderung ist der alte Inhalt falsch.**
+			//
+			// Ohne dieses Verwerfen bekäme ein Modell, das eine Datei ändert und
+			// danach noch einmal liest, den Stand von **vorher** — mit dem
+			// Hinweis, es stehe ja schon oben im Verlauf. Es würde also die
+			// eigene Änderung nicht sehen und sie für gescheitert halten. Mit
+			// `edit_file` ist genau diese Reihenfolge (lesen → ändern → prüfen)
+			// der Normalfall, deshalb muss der Zwischenspeicher hier weichen.
+			if (result.ok && MUTATING_TOOLS.has(call.name)) {
+				const beruehrt = touchedPaths(call)
+				for (const [k] of gelesen) {
+					if (beruehrt === undefined || k.startsWith("list_files:") || beruehrt.some((b) => k.includes(b))) {
+						gelesen.delete(k)
+					}
+				}
+			}
+			// Ein Befehl kann alles verändert haben — Tests schreiben Dateien,
+			// Generatoren erzeugen Code. Danach gilt kein gelesener Stand mehr.
+			if (call.name === "run_command") {
+				gelesen.clear()
 			}
 			gesehen.add(key)
 			if (istLesen && !wiederholung && result.ok) {

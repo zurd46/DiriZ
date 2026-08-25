@@ -17,11 +17,20 @@ import { type ReactNode, useState } from "react"
  * Code bekommt einen eigenen Rahmen mit Sprache und Kopier-Knopf. Ohne den
  * Knopf markiert man Code in einem scrollenden Verlauf von Hand — und erwischt
  * regelmässig zu viel oder zu wenig.
+ *
+ * **Zugeklappt.** Eine Antwort mit fünf Dateien ist sonst eine Wand aus Code,
+ * durch die man scrollt, um den einen erklärenden Satz dazwischen zu finden.
+ * Der Kopf sagt, was drinsteckt — Dateiname oder Sprache, Zeilenzahl und die
+ * erste Zeile —, aufgeklappt wird, was man wirklich lesen will. Der
+ * Kopier-Knopf funktioniert auch im zugeklappten Zustand.
  */
 function CodeBlock({ lang, code }: { lang?: string; code: string }) {
 	const [copied, setCopied] = useState(false)
 
-	const copy = () => {
+	const copy = (e: MouseEvent) => {
+		// Nicht das Akkordeon umschalten, nur weil der Knopf darin liegt.
+		e.preventDefault()
+		e.stopPropagation()
 		navigator.clipboard
 			?.writeText(code)
 			.then(() => {
@@ -34,18 +43,49 @@ function CodeBlock({ lang, code }: { lang?: string; code: string }) {
 			})
 	}
 
+	const zeilen = code.replace(/\n$/, "").split("\n")
+	// Die Sprachangabe trägt oft den Dateipfad (```js file:src/a.js) — dann ist
+	// das der beste Name für den Kopf.
+	const datei = lang?.match(/(?:file[:=])?([\w./-]+\.[a-z0-9]{1,6})$/i)?.[1]
+	const titel = datei ?? lang ?? "Code"
+
 	return (
-		<div className="code-block">
-			<div className="code-head">
-				<span className="code-lang">{lang ?? "Code"}</span>
-				<button type="button" className="btn ghost sm" onClick={copy}>
+		<details className="code-block accordion">
+			<summary className="code-head">
+				<IconChevron />
+				<span className="code-lang">{titel}</span>
+				<span className="code-meta">
+					{zeilen.length} {zeilen.length === 1 ? "Zeile" : "Zeilen"}
+					{zeilen[0] ? ` · ${zeilen[0].trim().slice(0, 48)}` : ""}
+				</span>
+				<button type="button" className="btn ghost sm" onClick={(e) => copy(e.nativeEvent)}>
 					{copied ? "kopiert" : "kopieren"}
 				</button>
-			</div>
+			</summary>
 			<pre className="md-pre">
 				<code>{code}</code>
 			</pre>
-		</div>
+		</details>
+	)
+}
+
+/** Pfeil des Akkordeons — dreht sich beim Aufklappen (rein per CSS). */
+function IconChevron() {
+	return (
+		<svg
+			className="accordion-arrow"
+			width="13"
+			height="13"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M9 18l6-6-6-6" />
+		</svg>
 	)
 }
 

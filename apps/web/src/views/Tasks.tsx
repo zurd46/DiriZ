@@ -26,6 +26,7 @@ import {
 	IconTrash,
 	IconXCircle,
 } from "../components/icons.js"
+import Markdown from "../components/Markdown.js"
 import TaskGitPanel from "../components/TaskGitPanel.js"
 import { api } from "../lib/api.js"
 import type { TaskDetail } from "../store.js"
@@ -885,10 +886,14 @@ export default function Tasks() {
 						</div>
 					)}
 
+					{/* Wie im Chat: die Antwort als Markdown, damit Code-Blöcke auch hier
+					    zugeklappte Akkordeons sind statt einer Textwand. Ein noch
+					    offener Code-Zaun wird beim Rendern mitgeführt — der Block wächst
+					    also live mit. */}
 					{liveRuns.length > 0 && (
-						<pre className="output live-cursor" style={{ marginTop: 14 }}>
-							{liveRuns.map(([, run]) => run.text).join("")}
-						</pre>
+						<div className="output live-cursor md" style={{ marginTop: 14 }}>
+							<Markdown source={liveRuns.map(([, run]) => run.text).join("")} />
+						</div>
 					)}
 
 					{liveRuns.length > 0 && liveRuns.flatMap(([, r]) => r.failovers).length > 0 && (

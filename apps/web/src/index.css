@@ -1695,6 +1695,20 @@ input[type="range"]::-moz-range-thumb {
 	font-size: var(--fs-sm);
 }
 
+/* Die Live-Antwort einer Task: derselbe Rahmen wie ein `pre.output`, aber mit
+   gerendertem Markdown darin — Code-Blöcke sind dort eigene Akkordeons und
+   bringen ihren eigenen Rahmen mit. */
+.output.md {
+	background: var(--bg-soft);
+	border: 1px solid var(--border);
+	border-radius: var(--r-md);
+	padding: var(--sp-3);
+	max-height: 420px;
+	overflow: auto;
+	font-size: var(--fs-sm);
+	line-height: 1.6;
+}
+
 pre.output,
 pre.code {
 	background: var(--bg-soft);
@@ -3251,20 +3265,58 @@ pre.code {
 	background: var(--bg-soft);
 }
 
+/* Der Kopf ist zugleich der Schalter des Akkordeons — zugeklappt trägt er die
+   ganze Auskunft: Name, Umfang, erste Zeile. */
 .code-head {
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
 	gap: var(--sp-2);
 	padding: var(--sp-1) var(--sp-2);
-	border-bottom: 1px solid var(--border-soft);
 	background: var(--surface);
+	cursor: pointer;
+	list-style: none;
+	user-select: none;
+}
+
+.code-head::-webkit-details-marker,
+.code-head::marker {
+	display: none;
+	content: "";
 }
 
 .code-lang {
 	font-family: var(--mono);
 	font-size: var(--fs-xs);
 	color: var(--muted);
+	flex: none;
+}
+
+/* Pfeil und Trennlinie beim Aufklappen kommen aus den `.accordion`-Regeln
+   weiter unten — dieser Block trägt beide Klassen. */
+.code-head:hover .code-lang {
+	color: var(--text);
+}
+
+/* Zeilenzahl und Vorschau der ersten Zeile — verschwindet, wenn kein Platz ist. */
+.code-meta {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--mono);
+	font-size: var(--fs-xs);
+	color: var(--muted);
+	opacity: 0.75;
+}
+
+.code-head > .btn {
+	flex: none;
+}
+
+/* In einer Live-Antwort sitzen die Blöcke enger beieinander. */
+.output.md .code-block {
+	margin: var(--sp-2) 0;
 }
 
 .code-block .md-pre {
@@ -3508,6 +3560,11 @@ pre.code {
 
 .chat-thoughts .output {
 	max-height: 260px;
+	/* Im Akkordeon sitzt der Gedankengang schon in einem Rahmen — ein zweiter
+	   drumherum sähe aus wie ein Fehler. */
+	border: none;
+	border-radius: 0;
+	background: transparent;
 }
 
 /* Hinweis, wenn die Zielwahl nicht zur Absicht im Text passt. */

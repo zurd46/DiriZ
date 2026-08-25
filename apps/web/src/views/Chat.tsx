@@ -1100,7 +1100,13 @@ export default function Chat() {
 													</span>
 													{isRunning && <span className="dot-pulse" />}
 												</summary>
-												<pre className="output">{run.reasoning}</pre>
+												{/* Auch der Gedankengang enthält Code — er wird deshalb wie
+												    jede andere Modellausgabe gerendert, mit zugeklappten
+												    Code-Blöcken. Sonst flutet ein aufgeklappter Gedankengang
+												    den Verlauf erneut. */}
+												<div className="output md">
+													<Markdown source={run.reasoning} />
+												</div>
 											</details>
 										)}
 

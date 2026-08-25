@@ -510,14 +510,22 @@ export async function executeTool(
 					throw new Error("`old_text` und `new_text` sind gleich — der Aufruf würde nichts ändern.")
 				}
 				const inhalt = fs.readFileSync(abs, "utf8")
-				const treffer = zaehleVorkommen(inhalt, alt)
+				// Erst suchen, was gemeint ist — dann zählen.
+				const gefunden = findeStelle(inhalt, alt)
+				const suchtext = gefunden?.text ?? alt
+				const ersatz = gefunden?.entdoppelt ? entdoppleBackslashes(neu) : neu
+				const treffer = zaehleVorkommen(inhalt, suchtext)
 				if (treffer === 0) {
-					// Der häufigste Grund ist Einrückung. Das zu sagen, spart den
-					// blinden zweiten Versuch mit demselben Text.
-					throw new Error(
-						`Text nicht gefunden in ${p}. Er muss **exakt** übereinstimmen, samt Einrückung und ` +
-							"Zeilenumbrüchen — lies die Stelle mit read_file und kopiere sie wörtlich.",
-					)
+					// **Zeigen, was wirklich dasteht.**
+					//
+					// „Muss exakt übereinstimmen" ist wahr und nutzlos: Das Modell
+					// weiss ja nicht, worin es sich unterscheidet. Beobachtet wurde
+					// die Folge davon — nach mehreren Fehlversuchen schrieb ein
+					// Modell Python- und Node-Skripte, um die Ersetzung selbst zu
+					// erledigen, und verbrauchte 39 Operationen ohne Ergebnis.
+					// Deshalb hier der Ist-Zustand der wahrscheinlich gemeinten
+					// Zeilen, mit sichtbar gemachten Leerzeichen.
+					throw new Error(`Text nicht gefunden in ${p}.\n${naheStellen(inhalt, alt)}`)
 				}
 				if (treffer > 1 && !alleErsetzen) {
 					throw new Error(
@@ -525,12 +533,16 @@ export async function executeTool(
 							"eindeutig ist — oder setze `replace_all: true`, wenn alle gemeint sind.",
 					)
 				}
-				const geaendert = alleErsetzen ? inhalt.split(alt).join(neu) : inhalt.replace(alt, neu)
+				const geaendert = alleErsetzen
+					? inhalt.split(suchtext).join(ersatz)
+					: inhalt.replace(suchtext, ersatz)
 				fs.writeFileSync(abs, geaendert, "utf8")
 				const diff = Buffer.byteLength(geaendert) - Buffer.byteLength(inhalt)
 				result = {
 					ok: true,
-					detail: `Ersetzt in ${p}: ${treffer > 1 && alleErsetzen ? `${treffer} Stellen` : "1 Stelle"} (${diff >= 0 ? "+" : ""}${diff} Bytes)`,
+					detail:
+						`Ersetzt in ${p}: ${treffer > 1 && alleErsetzen ? `${treffer} Stellen` : "1 Stelle"} ` +
+						`(${diff >= 0 ? "+" : ""}${diff} Bytes)${gefunden?.hinweis ? ` · ${gefunden.hinweis}` : ""}`,
 				}
 				break
 			}
@@ -748,8 +760,30 @@ async function runCommand(
 		}
 	}
 
-	// Argumente, die wie ein Pfad aussehen, müssen im Arbeitsordner bleiben.
-	for (const a of list) {
+	// Argumente, die wie ein Pfad aussehen, müssen im Arbeitsordner bleiben —
+	// **mit derselben Nachsicht wie beim Dateizugriff**.
+	//
+	// Beobachtet, und es hat einen ganzen Lauf gekostet: Das Modell schrieb
+	// `write_file("/tmp/fix.js")` (dort angenommen und als `tmp/fix.js`
+	// angelegt) und scheiterte anschliessend an `node /tmp/fix.js`. Zwei
+	// Werkzeuge, zwei Auffassungen desselben Pfades — das ist keine Sicherheit,
+	// das ist eine Falle. Ein führender „/" meint hier die Wurzel des
+	// Workspaces; „.." bleibt verboten.
+	const umgeschrieben: string[] = []
+	const bereinigteArgs = list.map((a) => {
+		if (!a.startsWith("/") && !a.startsWith("./")) {
+			return a
+		}
+		const sauber = normalisierePfad(a)
+		if (!sauber || !isSafeRelPath(sauber)) {
+			return a
+		}
+		if (sauber !== a) {
+			umgeschrieben.push(`${a} → ${sauber}`)
+		}
+		return sauber
+	})
+	for (const a of bereinigteArgs) {
 		if (a.startsWith("/") || a.startsWith("~") || a.split("/").includes("..")) {
 			return { ok: false, detail: `Argument zeigt aus dem Workspace heraus: ${a}` }
 		}
@@ -757,7 +791,7 @@ async function runCommand(
 
 	const { spawn } = await import("node:child_process")
 	return await new Promise<ToolOpResult>((resolve) => {
-		const child = spawn(command, list, {
+		const child = spawn(command, bereinigteArgs, {
 			cwd: baseDir,
 			// Keine Shell: Sonderzeichen bleiben Zeichen.
 			shell: false,
@@ -801,10 +835,16 @@ async function runCommand(
 				return
 			}
 			const bereinigt =
-				entfernt.length > 0
+				(entfernt.length > 0
 					? `\n[Ohne Shell ausgeführt — weggelassen: ${entfernt.join(" ")}. Die Ausgabe kommt vollständig.]`
-					: ""
-			const kopf = `${command} ${list.join(" ")} → Exit-Code ${code}${bereinigt}`
+					: "") +
+				// Nie stillschweigend: Wer `/etc/passwd` schreibt, soll erfahren,
+				// dass es ausserhalb des Workspaces nichts gibt — sonst deutet er
+				// „Datei nicht gefunden" als fehlende Datei statt als fehlende Welt.
+				(umgeschrieben.length > 0
+					? `\n[Pfad auf den Workspace bezogen: ${umgeschrieben.join(", ")} — ausserhalb gibt es nichts.]`
+					: "")
+			const kopf = `${command} ${bereinigteArgs.join(" ")} → Exit-Code ${code}${bereinigt}`
 			// Ein Exit-Code ≠ 0 ist **kein** Werkzeug-Fehler: Ein fehlgeschlagener
 			// Test ist genau die Auskunft, die das Modell braucht.
 			fertig(`${kopf}\n${text || "(keine Ausgabe)"}${rest}`, true)
@@ -942,6 +982,127 @@ function jaNein(v: unknown): boolean {
 function zahl(v: unknown): number | undefined {
 	const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : Number.NaN
 	return Number.isFinite(n) ? n : undefined
+}
+
+/**
+ * Macht aus `\\s` wieder `\s`.
+ *
+ * Modelle verdoppeln Backslashes, wenn sie JSON erzeugen — der Reflex ist
+ * richtig für einen String, falsch für den Inhalt einer Datei. Live gesehen:
+ * Das Modell las `String(value).replace(/\s+/g, ' ')`, schickte
+ * `replace(/\\s+/g, ' ')` und scheiterte an genau einem Zeichen. Danach
+ * schrieb es Python-Skripte, um die Ersetzung selbst zu erledigen.
+ */
+function entdoppleBackslashes(text: string): string {
+	return text.replace(/\\\\/g, "\\")
+}
+
+/**
+ * Findet die gemeinte Stelle — auch wenn der gesuchte Text leicht abweicht.
+ *
+ * Drei Anläufe, jeder nur gültig, wenn er **eindeutig** ist:
+ *
+ * 1. wörtlich — der Normalfall,
+ * 2. mit entdoppelten Backslashes (siehe oben),
+ * 3. Zeilenblock, bei dem nur die Einrückung abweicht.
+ *
+ * Mehrdeutiges wird nicht geraten: Dann kommt die Meldung mit dem Ist-Zustand,
+ * und das Modell entscheidet. Eine falsch geratene Stelle wäre schlimmer als
+ * ein Fehlschlag — sie fiele niemandem auf.
+ */
+function findeStelle(
+	inhalt: string,
+	gesucht: string,
+): { text: string; entdoppelt?: boolean; hinweis?: string } | undefined {
+	if (gesucht.length > 0 && inhalt.includes(gesucht)) {
+		return { text: gesucht }
+	}
+	const entdoppelt = entdoppleBackslashes(gesucht)
+	if (entdoppelt !== gesucht && zaehleVorkommen(inhalt, entdoppelt) === 1) {
+		return {
+			text: entdoppelt,
+			entdoppelt: true,
+			hinweis: "doppelte Backslashes erkannt und begradigt (\\\\s → \\s)",
+		}
+	}
+	// Zeilenweise, nur die Einrückung abweichend.
+	for (const kandidat of [gesucht, entdoppelt]) {
+		const such = kandidat.split(/\r?\n/)
+		const zeilen = inhalt.split(/\r?\n/)
+		const treffer: number[] = []
+		for (let i = 0; i + such.length <= zeilen.length; i++) {
+			if (such.every((z, k) => zeilen[i + k].trim() === z.trim())) {
+				treffer.push(i)
+			}
+		}
+		if (treffer.length === 1) {
+			const i = treffer[0]
+			return {
+				text: zeilen.slice(i, i + such.length).join("\n"),
+				entdoppelt: kandidat === entdoppelt && entdoppelt !== gesucht,
+				hinweis: `Einrückung wich ab — Stelle ab Zeile ${i + 1} übernommen`,
+			}
+		}
+	}
+	return undefined
+}
+
+/**
+ * Was steht statt des gesuchten Textes da?
+ *
+ * Sucht die Zeilen, die der ersten Zeile von `gesucht` am nächsten kommen, und
+ * gibt sie mit Zeilennummer und **sichtbaren Leerzeichen** zurück (· für
+ * Leerzeichen, → für Tabulator). Damit sieht ein Modell den Unterschied,
+ * statt ihn raten zu müssen — Einrückung mit Tabulatoren gegen Leerzeichen ist
+ * der mit Abstand häufigste Grund.
+ */
+function naheStellen(inhalt: string, gesucht: string): string {
+	const erste =
+		gesucht
+			.split(/\r?\n/)
+			.find((z) => z.trim().length > 0)
+			?.trim() ?? ""
+	const zeilen = inhalt.split(/\r?\n/)
+	const sichtbar = (z: string) => z.replace(/\t/g, "→").replace(/^ +/, (m) => "·".repeat(m.length))
+
+	// 1. Zeilen, die denselben Inhalt haben (nur andere Einrückung).
+	let kandidaten = zeilen.map((z, i) => ({ z, i })).filter(({ z }) => erste.length > 0 && z.trim() === erste)
+	// 2. Sonst: Zeilen, die den Anfang enthalten (etwa denselben Funktionsnamen).
+	if (kandidaten.length === 0 && erste.length >= 6) {
+		const anker = erste.slice(0, Math.min(30, erste.length))
+		kandidaten = zeilen.map((z, i) => ({ z, i })).filter(({ z }) => z.includes(anker))
+	}
+	if (kandidaten.length === 0) {
+		return (
+			"Diese Stelle gibt es dort nicht — auch nicht mit anderer Einrückung. Lies die Datei mit " +
+			"`read_file` (bei grossen Dateien mit `start_line`), und kopiere den Text wörtlich von dort."
+		)
+	}
+	// **Den ganzen Abschnitt zeigen, nicht nur die Ankerzeile.**
+	//
+	// Eine einzelne übereinstimmende Zeile beweist nur, dass die Stelle
+	// existiert — kopieren kann das Modell davon nichts. Live beobachtet: Der
+	// Hinweis nannte die Funktionszeile, das Modell gab trotzdem auf. Gezeigt
+	// wird deshalb so viel, wie der gesuchte Text lang ist.
+	const hoehe = Math.min(gesucht.split(/\r?\n/).length + 2, 25)
+	const zeigen = kandidaten.slice(0, 2)
+	const bloecke = zeigen.map(({ i }) => {
+		const bis = Math.min(zeilen.length, i + hoehe)
+		return zeilen
+			.slice(i, bis)
+			.map((z, k) => `  ${i + k + 1}: ${sichtbar(z).slice(0, 200)}`)
+			.join("\n")
+	})
+	return [
+		"So steht es dort wirklich (· = Leerzeichen, → = Tabulator) — kopiere `old_text` **wörtlich** von hier:",
+		...bloecke,
+		kandidaten.length > zeigen.length
+			? `  … und ${kandidaten.length - zeigen.length} weitere Fundstelle(n)`
+			: "",
+		"Meist unterscheidet sich nur die Einrückung. Nimm genau so viele Zeilen, wie du ersetzen willst.",
+	]
+		.filter(Boolean)
+		.join("\n")
 }
 
 /** Wie oft kommt `teil` in `text` vor? (Ohne Regex — der Text ist wörtlich gemeint.) */

@@ -638,6 +638,21 @@ async function requestFinalAnswer(
 	return { text: "", tokensIn, tokensOut, error: lastError }
 }
 
+/**
+ * Zeichnet den Werkzeug-Aufruf als Code aus, den Fehlertext dahinter nicht.
+ *
+ * Der Aufruf enthält Unterstriche und Pfade (die Markdown verstümmelt), der
+ * Fehlertext ganze Sätze (die als Code unlesbar wären).
+ */
+function alsCode(entry: string): string {
+	const pfeil = entry.indexOf(" → ")
+	if (pfeil === -1) {
+		return `\`${entry.replaceAll("`", "'")}\``
+	}
+	const aufruf = entry.slice(0, pfeil).replaceAll("`", "'")
+	return `\`${aufruf}\`${entry.slice(pfeil)}`
+}
+
 /** Letzte Rettung: Arbeitsstand aus dem Tool-Protokoll, statt einer leeren Antwort. */
 function composeFallback(toolTrail: string[], maxSteps: number, error?: string): string {
 	// „Infinity Tool-Schritte" ist keine Auskunft, sondern ein durchgereichter
@@ -656,7 +671,13 @@ function composeFallback(toolTrail: string[], maxSteps: number, error?: string):
 			lines.push(`- … ${toolTrail.length - shown.length} weitere Operation(en) davor`)
 		}
 		for (const entry of shown) {
-			lines.push(`- ${entry}`)
+			// **Als Code auszeichnen.** Der Arbeitsstand wird als Markdown
+			// dargestellt, und dort sind Unterstriche Kursiv-Zeichen: Aus
+			// `write_file(/tmp/replace_clean.py)` wurde in der Oberfläche
+			// „writefile(/tmp/replaceclean.py)" — ein Werkzeugname, den es nicht
+			// gibt, und ein Pfad, der nie geschrieben wurde. Wer damit
+			// Fehlersuche betreibt, sucht am falschen Ort.
+			lines.push(`- ${alsCode(entry)}`)
 		}
 	}
 	lines.push(

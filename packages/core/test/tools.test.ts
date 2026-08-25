@@ -317,11 +317,25 @@ describe("tools: Befehle ausführen", () => {
 	})
 
 	it("lässt keine Argumente zu, die aus dem Workspace zeigen", async () => {
-		for (const arg of ["/etc/passwd", "~/.ssh/id_rsa", "../../geheim.txt"]) {
+		for (const arg of ["~/.ssh/id_rsa", "../../geheim.txt", "src/../../weg.txt"]) {
 			const r = await executeTool(runDir, call("run_command", { command: "node", args: [arg] }), emitOp, log)
 			expect(r.ok, arg).toBe(false)
 			expect(r.detail, arg).toContain("Workspace")
 		}
+	})
+
+	it("bezieht einen absoluten Pfad auf den Workspace — und sagt es", async () => {
+		// `/etc/passwd` liest hier `<workspace>/etc/passwd`, also nichts. Das
+		// stumm zu tun wäre schlimm: „Datei nicht gefunden" liest sich wie eine
+		// fehlende Datei, nicht wie eine fehlende Welt.
+		const r = await executeTool(
+			runDir,
+			call("run_command", { command: "cat", args: ["/etc/passwd"] }),
+			emitOp,
+			log,
+		)
+		expect(r.detail).toContain("auf den Workspace bezogen")
+		expect(r.detail).not.toContain("root:")
 	})
 
 	it("bricht ab, wenn die Frist abläuft", async () => {
@@ -455,7 +469,8 @@ describe("tools: vollständiger Dateizugriff", () => {
 	it("erklärt einen nicht gefundenen Text mit dem häufigsten Grund", async () => {
 		const r = await run("edit_file", { path: "preise.js", old_text: "gibt es nicht", new_text: "x" })
 		expect(r.ok).toBe(false)
-		expect(r.detail).toContain("exakt")
+		// Statt „muss exakt übereinstimmen“ steht jetzt da, was wirklich dasteht.
+		expect(r.detail).toMatch(/gibt es dort nicht|kopiere sie/)
 	})
 
 	it("hängt an, legt an, kopiert, verschiebt und löscht", async () => {
@@ -628,5 +643,106 @@ describe("tools: Schreibweisen, die Modelle wirklich schicken", () => {
 			expect(r.ok, `„${böse}" wurde durchgelassen!`).toBe(false)
 		}
 		expect(fs.existsSync(path.join(dir, "..", "entwischt.txt"))).toBe(false)
+	})
+})
+
+describe("tools: derselbe Pfad überall", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-pfadgleich-"))
+	const run = (name: string, args: Record<string, unknown>) => executeTool(dir, call(name, args), emitOp, log)
+
+	it("führt aus, was write_file angenommen hat", async () => {
+		// Der Lauf, der 39 Operationen kostete: `write_file("/tmp/fix.js")` wurde
+		// angenommen, `node /tmp/fix.js` abgewiesen. Zwei Auffassungen desselben
+		// Pfades sind keine Sicherheit, sondern eine Falle.
+		const w = await run("write_file", { path: "/tmp/fix.js", content: "console.log('läuft')" })
+		expect(w.ok, w.detail).toBe(true)
+		const r = await run("run_command", { command: "node /tmp/fix.js" })
+		expect(r.ok, r.detail).toBe(true)
+		expect(r.detail).toContain("läuft")
+	})
+
+	it("lässt einen echten Ausbruch weiterhin nicht zu", async () => {
+		const r = await run("run_command", { command: "cat ../../../etc/passwd" })
+		expect(r.ok).toBe(false)
+		expect(r.detail).toContain("aus dem Workspace heraus")
+	})
+})
+
+describe("tools: edit_file zeigt, was wirklich dasteht", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-editfehler-"))
+	const run = (name: string, args: Record<string, unknown>) => executeTool(dir, call(name, args), emitOp, log)
+
+	it("zeigt den Ist-Zustand mit sichtbarer Einrückung, wenn die Stelle mehrdeutig ist", async () => {
+		// Zweimal derselbe Rumpf, verschieden eingerückt: Hier darf DiriZ nicht
+		// raten — es zeigt, was dasteht, und lässt das Modell entscheiden.
+		fs.writeFileSync(
+			path.join(dir, "a.js"),
+			"function f() {\n\treturn v.trim()\n}\n\nfunction g() {\n  return v.trim()\n}\n",
+		)
+		const r = await run("edit_file", {
+			path: "a.js",
+			old_text: "        return v.trim()",
+			new_text: "        return v.trim().toUpperCase()",
+		})
+		expect(r.ok).toBe(false)
+		// Der Tabulator wird sichtbar gemacht — sonst sieht man den Unterschied nicht.
+		expect(r.detail).toContain("→return v.trim()")
+	})
+
+	it("übernimmt eine eindeutige Stelle trotz abweichender Einrückung", async () => {
+		fs.writeFileSync(path.join(dir, "eindeutig.js"), "function clean(v) {\n\treturn v.trim()\n}\n")
+		const r = await run("edit_file", {
+			path: "eindeutig.js",
+			old_text: "    return v.trim()",
+			new_text: "\treturn v.trim().toUpperCase()",
+		})
+		expect(r.ok, r.detail).toBe(true)
+		expect(fs.readFileSync(path.join(dir, "eindeutig.js"), "utf8")).toContain("toUpperCase")
+	})
+
+	it("sagt es klar, wenn die Stelle wirklich fehlt", async () => {
+		const r = await run("edit_file", { path: "a.js", old_text: "gibtesnichtimtext", new_text: "x" })
+		expect(r.ok).toBe(false)
+		expect(r.detail).toContain("gibt es dort nicht")
+	})
+})
+
+describe("tools: edit_file verzeiht, was Modelle beim JSON tun", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-editrepair-"))
+	const run = (name: string, args: Record<string, unknown>) => executeTool(dir, call(name, args), emitOp, log)
+
+	it("begradigt doppelte Backslashes — der Fall aus dem echten Lauf", async () => {
+		fs.writeFileSync(path.join(dir, "render.js"), "const c = String(v).replace(/\\s+/g, ' ').trim()\n")
+		// Genau das schickte nvidia-nemotron: `\\s` statt `\s`.
+		const r = await run("edit_file", {
+			path: "render.js",
+			old_text: "String(v).replace(/\\\\s+/g, ' ')",
+			new_text: "String(v).replace(/[^a-zA-Z0-9_-]/g, '')",
+		})
+		expect(r.ok, r.detail).toBe(true)
+		expect(r.detail).toContain("Backslashes")
+		expect(fs.readFileSync(path.join(dir, "render.js"), "utf8")).toBe(
+			"const c = String(v).replace(/[^a-zA-Z0-9_-]/g, '').trim()\n",
+		)
+	})
+
+	it("findet den Block auch bei abweichender Einrückung — wenn er eindeutig ist", async () => {
+		fs.writeFileSync(path.join(dir, "b.js"), "function f() {\n\treturn 1\n}\n")
+		const r = await run("edit_file", {
+			path: "b.js",
+			old_text: "function f() {\n    return 1\n}",
+			new_text: "function f() {\n\treturn 2\n}",
+		})
+		expect(r.ok, r.detail).toBe(true)
+		expect(r.detail).toContain("Einrückung")
+		expect(fs.readFileSync(path.join(dir, "b.js"), "utf8")).toBe("function f() {\n\treturn 2\n}\n")
+	})
+
+	it("rät nicht, wenn es mehrdeutig ist", async () => {
+		fs.writeFileSync(path.join(dir, "c.js"), "  const a = 1\n\tconst a = 1\n")
+		const r = await run("edit_file", { path: "c.js", old_text: "const a = 1", new_text: "const a = 2" })
+		expect(r.ok).toBe(false)
+		// Unverändert — eine geratene Stelle fiele niemandem auf.
+		expect(fs.readFileSync(path.join(dir, "c.js"), "utf8")).toBe("  const a = 1\n\tconst a = 1\n")
 	})
 })

@@ -125,6 +125,42 @@ export function splitCommandLine(line: string): string[] {
 }
 
 /**
+ * Räumt Shell-Schreibweise aus einer Befehlszeile, statt sie abzuweisen.
+ *
+ * Modelle schreiben, was sie in jedem Terminal schreiben würden:
+ * `grep -rn "sku" src/ 2>/dev/null | grep -v node_modules`. Ohne Shell ist
+ * davon nichts ausführbar — abweisen kostet aber jedes Mal einen Schritt, und
+ * beobachtet wurde genau das: drei Abweisungen in einem Lauf, jede vom Modell
+ * brav korrigiert.
+ *
+ * Deshalb hier die stille Bereinigung, wo sie **nichts verändert**:
+ *
+ * - `2>/dev/null`, `2>&1` fallen weg — DiriZ sammelt stdout und stderr ohnehin.
+ * - Ab `|`, `&&`, `||` oder `;` wird abgeschnitten: Der erste Befehl läuft, der
+ *   Rest wäre nur Filterung oder Ausweichlogik. Die Ausgabe kommt vollständig,
+ *   das Modell kann selbst filtern.
+ *
+ * Was entfernt wurde, steht im Ergebnis — stille Abweichungen wären schlimmer
+ * als eine Abweisung.
+ */
+export function normalizeCommandLine(tokens: string[]): { tokens: string[]; entfernt: string[] } {
+	const entfernt: string[] = []
+	const out: string[] = []
+	for (const t of tokens) {
+		if (/^\d?>>?(&\d|\/dev\/null)?$/.test(t) || /^\d?>>?\/dev\/null$/.test(t) || t === "2>&1") {
+			entfernt.push(t)
+			continue
+		}
+		if (["|", "||", "&&", ";"].includes(t)) {
+			entfernt.push(`${t} …`)
+			break
+		}
+		out.push(t)
+	}
+	return { tokens: out, entfernt }
+}
+
+/**
  * Git-Unterbefehle, die nur lesen. Alles andere (`push`, `remote`, `config`,
  * `clean`, `reset`) bleibt dem Menschen vorbehalten: Was im Repository landet
  * und was hinausgeht, entscheidet nicht das Modell.
@@ -308,7 +344,7 @@ async function runCommand(
 	// halten zusammen, was zusammengehört; eine Shell ist weiterhin nicht im
 	// Spiel.
 	const roh = String(args.command ?? "").trim()
-	const zerlegt = splitCommandLine(roh)
+	const { tokens: zerlegt, entfernt } = normalizeCommandLine(splitCommandLine(roh))
 	const command = zerlegt[0] ?? ""
 	const ausZeile = zerlegt.slice(1)
 
@@ -335,14 +371,11 @@ async function runCommand(
 			: splitCommandLine(String(args.args ?? ""))),
 	]
 
-	// Ohne Shell gibt es keine Verkettung. Statt die Zeichen stumm als
-	// Argumente durchzureichen (und ein rätselhaftes Ergebnis zu liefern), wird
-	// gesagt, was fehlt.
-	//
-	// Geprüft werden **ganze Wörter**, nicht einzelne Zeichen: `()=>{}` in einem
-	// JavaScript-Schnipsel enthält ein `>`, ist aber keine Umleitung. Erkannt
-	// werden `|`, `&&`, `;`, `>`, `>>` und `2>/dev/null`.
-	const verkettung = list.find((a) => /^(\||\|\||&&|;|<|\d?>>?.*)$/.test(a))
+	// Was nach der Bereinigung noch nach Shell aussieht (etwa `<datei`), wird
+	// benannt statt stumm durchgereicht. Geprüft werden **ganze Wörter**:
+	// `()=>{}` in einem JavaScript-Schnipsel enthält ein `>`, ist aber keine
+	// Umleitung.
+	const verkettung = list.find((a) => /^(\||\|\||&&|;|<)$/.test(a))
 	if (verkettung) {
 		return {
 			ok: false,
@@ -419,7 +452,11 @@ async function runCommand(
 				fertig(`Abgebrochen nach ${Math.round(policy.timeoutMs / 1000)} s.\n${text}${rest}`.trim(), false)
 				return
 			}
-			const kopf = `${command} ${list.join(" ")} → Exit-Code ${code}`
+			const bereinigt =
+				entfernt.length > 0
+					? `\n[Ohne Shell ausgeführt — weggelassen: ${entfernt.join(" ")}. Die Ausgabe kommt vollständig.]`
+					: ""
+			const kopf = `${command} ${list.join(" ")} → Exit-Code ${code}${bereinigt}`
 			// Ein Exit-Code ≠ 0 ist **kein** Werkzeug-Fehler: Ein fehlgeschlagener
 			// Test ist genau die Auskunft, die das Modell braucht.
 			fertig(`${kopf}\n${text || "(keine Ausgabe)"}${rest}`, true)

@@ -113,14 +113,16 @@ try {
 }
 
 // Auf die Folgestufen warten — sie startet die Engine selbst.
-for (let i = 0; i < 180; i++) {
+for (let i = 0; i < 900; i++) {
 	const offen = listTasks(db).filter((t) => ["draft", "queued", "routing", "running"].includes(t.status))
 	if (offen.length === 0 && listTasks(db).length >= kette.length) break
 	await new Promise((r) => setTimeout(r, 2000))
 }
 
 console.log(`\n═══ Ergebnis nach ${Math.round((Date.now() - t0) / 1000)} s ═══`)
-console.log(`  Stufen: ${stufen.length} · Spezialisten: ${kette.length} · Tasks angelegt: ${listTasks(db).length}`)
+console.log(
+	`  Stufen: ${stufen.length} · Spezialisten: ${kette.length} · Tasks angelegt: ${listTasks(db).length}`,
+)
 let allesGut = true
 for (const t of listTasks(db).sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
 	const stufe = (t.metadata.chain?.stage ?? 0) + 1

@@ -46,6 +46,14 @@ export const MAX_AGENT_STEPS = readMaxStepsEnv() ?? 0
 const MAX_FAILED_TOOL_STREAK = 3
 
 /**
+ * Nach so vielen Werkzeug-Operationen erinnert DiriZ das Modell an den Stand.
+ *
+ * Keine Grenze — eine Standmeldung. Sie kostet zwei Zeilen Kontext und hat in
+ * den Läufen davor gefehlt, in denen ein Modell 274-mal las, ohne zu antworten.
+ */
+const REMINDER_EVERY_OPS = 50
+
+/**
  * Ab wie viel belegtem Kontext ältere Tool-Ergebnisse eingedampft werden.
  *
  * Jeder Schritt schickt den gesamten bisherigen Verlauf erneut — und die
@@ -242,6 +250,9 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 	 * Schleife.
 	 */
 	let seitLetztemBefehlGeschrieben = true
+	/** Werkzeug-Operationen insgesamt — Grundlage der Standmeldung. */
+	let operationen = 0
+	let zuletztErinnert = 0
 	/**
 	 * Ergebnisse bereits ausgeführter Lese-Aufrufe.
 	 *
@@ -375,6 +386,27 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 			})
 		}
 		opts.log("info", "agent", `Schritt ${step}: ${calls.length} Tool-Operation(en) ausgeführt`)
+
+		// Erinnerung statt Grenze.
+		//
+		// Beobachtet: eine Kettenstufe mit 274 Werkzeug-Operationen — das Modell
+		// las weiter und weiter, ohne je zu antworten. Ein Deckel wäre die
+		// falsche Antwort (manche Aufgaben brauchen wirklich hundert Schritte);
+		// gefehlt hat der Blick auf die Uhr. Den liefert DiriZ jetzt nach: alle
+		// 50 Operationen eine sachliche Standmeldung, ohne etwas zu erzwingen.
+		operationen += calls.length
+		if (operationen - zuletztErinnert >= REMINDER_EVERY_OPS) {
+			zuletztErinnert = operationen
+			messages.push({
+				role: "user",
+				content:
+					`[DiriZ: Du hast bisher ${operationen} Werkzeug-Operationen ausgeführt. Das ist erlaubt — ` +
+					"es gibt keine Obergrenze. Prüfe aber kurz: Hast du genug für eine Antwort? Wenn ja, " +
+					"antworte jetzt, statt weiterzusuchen. Wenn nein, nenne im nächsten Schritt, was dir " +
+					"konkret noch fehlt.]",
+			})
+			opts.log("info", "agent", `${operationen} Tool-Operationen — Standmeldung an das Modell`)
+		}
 
 		// Reissleine: Wenn mehrere Schritte hintereinander ausschliesslich
 		// fehlschlagen, kommt das Modell aus eigener Kraft nicht mehr heraus.

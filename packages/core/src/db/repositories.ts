@@ -2135,7 +2135,27 @@ export function lockInstance(db: Db, instanceId: string, until: string): void {
 
 /** Hebt eine Sperre wieder auf — etwa, wenn das Modell wieder läuft. */
 export function unlockInstance(db: Db, instanceId: string): void {
-	db.prepare("UPDATE instances SET locked_until = NULL WHERE id = ?").run(instanceId)
+	db.prepare("UPDATE instances SET locked_until = NULL, load_failures = 0 WHERE id = ?").run(instanceId)
+}
+
+/**
+ * Zählt einen Ladefehler und liefert den neuen Stand.
+ *
+ * Der Zähler ist das Gedächtnis hinter der Sperre: Beim ersten Mal ist ein
+ * Ladefehler eine Momentaufnahme (der Speicher war belegt), beim fünften Mal
+ * eine Eigenschaft des Modells. Nur so lässt sich beides unterscheiden.
+ */
+export function recordLoadFailure(db: Db, instanceId: string): number {
+	db.prepare("UPDATE instances SET load_failures = load_failures + 1 WHERE id = ?").run(instanceId)
+	const row = db.prepare("SELECT load_failures FROM instances WHERE id = ?").get(instanceId) as
+		| { load_failures: number }
+		| undefined
+	return row?.load_failures ?? 1
+}
+
+/** Löscht den Ladefehler-Zähler — das Modell hat geliefert. */
+export function clearLoadFailures(db: Db, instanceId: string): void {
+	db.prepare("UPDATE instances SET load_failures = 0 WHERE id = ? AND load_failures > 0").run(instanceId)
 }
 
 /**

@@ -33,6 +33,7 @@ import {
 import { EventBus } from "../src/execution/bus.js"
 import {
 	ExecutionEngine,
+	lockDurationMs,
 	looksLikeLoadFailure,
 	NoCandidateError,
 	summarizeExclusions,
@@ -436,5 +437,17 @@ describe("engine: Wechsel nach Ladefehler", () => {
 			true,
 		)
 		expect(looksLikeLoadFailure("Kein Chunk seit 180 s")).toBe(false)
+	})
+})
+
+describe("engine: Ladefehler-Treppe", () => {
+	it("verlängert die Sperre mit jedem weiteren Fehlschlag", () => {
+		// Der erste Fehlschlag ist eine Momentaufnahme, der vierte eine
+		// Eigenschaft des Modells — 158 GB werden nicht kleiner.
+		expect(lockDurationMs(1)).toBe(10 * 60_000)
+		expect(lockDurationMs(2)).toBe(60 * 60_000)
+		expect(lockDurationMs(3)).toBe(6 * 60 * 60_000)
+		expect(lockDurationMs(4)).toBe(24 * 60 * 60_000)
+		expect(lockDurationMs(9)).toBe(24 * 60 * 60_000)
 	})
 })

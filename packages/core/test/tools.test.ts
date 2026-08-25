@@ -230,15 +230,42 @@ describe("tools: Befehle ausführen", () => {
 		expect(r.detail).toContain("json-ld")
 	})
 
-	it("weist eine Pipe mit Erklärung ab, statt sie zu verschlucken", async () => {
+	it("führt eine Zeile mit Pipe aus, statt sie abzuweisen — ohne die Pipe", async () => {
+		// Modelle schreiben Terminal-Syntax. Abweisen kostet jedes Mal einen
+		// Schritt; der Teil vor der Pipe ist aber genau das, was gemeint war.
 		const r = await executeTool(
 			runDir,
 			call("run_command", { command: 'grep -r "schema" src | head -5' }),
 			emitOp,
 			log,
 		)
-		expect(r.ok).toBe(false)
-		expect(r.detail).toContain("keine Shell")
+		expect(r.ok).toBe(true)
+		expect(r.detail).toContain("json-ld")
+		// Und es steht dabei, was weggelassen wurde — keine stille Abweichung.
+		expect(r.detail).toContain("weggelassen")
+	})
+
+	it("lässt `2>/dev/null` weg, statt daran zu scheitern", async () => {
+		const r = await executeTool(
+			runDir,
+			call("run_command", { command: 'grep -r "schema" src 2>/dev/null' }),
+			emitOp,
+			log,
+		)
+		expect(r.ok).toBe(true)
+		expect(r.detail).toContain("json-ld")
+	})
+
+	it("führt bei `||` nur den ersten Befehl aus", async () => {
+		const r = await executeTool(
+			runDir,
+			call("run_command", { command: 'ls src || echo "nichts"' }),
+			emitOp,
+			log,
+		)
+		expect(r.ok).toBe(true)
+		expect(r.detail).toContain("a.js")
+		expect(r.detail).not.toContain("nichts")
 	})
 
 	it("lässt find nicht ausführen oder löschen", async () => {

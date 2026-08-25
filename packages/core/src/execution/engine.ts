@@ -49,6 +49,7 @@ import type { Db } from "../db/connection.js"
 import {
 	appendChunk,
 	appendToolCall,
+	clearLoadFailures,
 	createExecution,
 	createTask,
 	getAgent,
@@ -67,6 +68,7 @@ import {
 	listTasksByChain,
 	listToolCallsByTask,
 	lockInstance,
+	recordLoadFailure,
 	replayOutput,
 	sameServerProviders,
 	saveAgentSelection,
@@ -193,6 +195,32 @@ export function summarizeExclusions(excluded: { reason: string }[]): string {
 
 /** Wie lange ein Modell gesperrt bleibt, das sich nicht laden liess. */
 const MODEL_LOCK_MS = 10 * 60_000
+
+/**
+ * Sperrdauer nach dem n-ten Ladefehler in Folge.
+ *
+ * Ein Modell, das 158 GB verlangt, wird auch in zehn Minuten nicht kleiner.
+ * Trotzdem darf der erste Fehlschlag kein Urteil sein — der Speicher kann
+ * schlicht belegt gewesen sein. Deshalb die Treppe: kurz, dann länger, dann
+ * einen Tag. Jeder erfolgreiche Lauf setzt den Zähler zurück.
+ */
+export function lockDurationMs(failures: number): number {
+	if (failures >= 4) {
+		return 24 * 60 * 60_000
+	}
+	if (failures === 3) {
+		return 6 * 60 * 60_000
+	}
+	if (failures === 2) {
+		return 60 * 60_000
+	}
+	return MODEL_LOCK_MS
+}
+
+/** „10 min“, „1 h“, „24 h“ — für Log-Zeilen, die ein Mensch liest. */
+function formatDauer(ms: number): string {
+	return ms < 60 * 60_000 ? `${Math.round(ms / 60_000)} min` : `${Math.round(ms / 3_600_000)} h`
+}
 
 /**
  * Sagt der Fehlertext, dass das **Modell** nicht geladen werden konnte?
@@ -1223,12 +1251,14 @@ export class ExecutionEngine {
 				// besten Score) und scheitert erneut. Der Rechner selbst bleibt
 				// unangetastet: Seine anderen Modelle laufen weiter.
 				if (looksLikeLoadFailure(lastError)) {
-					const bis = new Date(Date.now() + MODEL_LOCK_MS).toISOString()
+					const fehler = recordLoadFailure(db, choice.instance.id)
+					const dauer = lockDurationMs(fehler)
+					const bis = new Date(Date.now() + dauer).toISOString()
 					lockInstance(db, choice.instance.id, bis)
 					log(
 						"warn",
 						"routing",
-						`${choice.instance.modelId} lässt sich nicht laden — für ${Math.round(MODEL_LOCK_MS / 60000)} min gesperrt`,
+						`${choice.instance.modelId} lässt sich nicht laden (${fehler}. Mal) — für ${formatDauer(dauer)} gesperrt`,
 					)
 					// Ein Ladefehler heisst fast immer: Der Speicher ist belegt.
 					// Für den nächsten Versuch zählt deshalb nicht mehr der beste
@@ -1579,6 +1609,9 @@ export class ExecutionEngine {
 		setTaskStatus(db, task.id, "done", now)
 		registry.recordSuccess(choice.instance.providerId)
 		feedback.record(choice.instance.id, true)
+		// Das Modell hat geliefert — frühere Ladefehler waren also Momentaufnahmen
+		// und sollen die nächste Sperre nicht verlängern.
+		clearLoadFailures(db, choice.instance.id)
 		await this.autoCommit(task)
 		this.startNextChainStep(task, fullText)
 		// Kapazität ist frei geworden — wartende Kettenschritte nachziehen.

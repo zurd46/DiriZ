@@ -2137,3 +2137,38 @@ export function lockInstance(db: Db, instanceId: string, until: string): void {
 export function unlockInstance(db: Db, instanceId: string): void {
 	db.prepare("UPDATE instances SET locked_until = NULL WHERE id = ?").run(instanceId)
 }
+
+/**
+ * Provider, die auf **denselben Server** zeigen — einschliesslich des gefragten.
+ *
+ * Erkannt am Fingerabdruck der Modell-Liste: Zwei Einträge mit exakt derselben
+ * Menge an Modell-IDs sind mit grosser Sicherheit dieselbe Maschine, einmal
+ * direkt und einmal über einen Tunnel. Nachgewiesen wurde genau dieser Fall:
+ * Ein über den lokalen Endpunkt geladenes Modell erschien im selben Augenblick
+ * am Tunnel-Endpunkt als geladen.
+ *
+ * Warum das zählt: Der GPU-Schutz („ein Modell je Rechner") wirkt sonst je
+ * Eintrag statt je Maschine — und die Grafikkarte hält zwei Modelle, wo eines
+ * hingehört. Beim Laden des zweiten fliegt das erste mitten im Stream heraus.
+ *
+ * Bewusst konservativ: Nur **exakte** Übereinstimmung gilt. Zwei Rechner mit
+ * zufällig identischem Modellbestand zusammenzufassen kostet etwas Parallelität
+ * — sie fälschlich zu trennen kostet abgebrochene Läufe.
+ */
+export function sameServerProviders(db: Db, providerId: string): string[] {
+	const fingerprint = (id: string) =>
+		(
+			db.prepare("SELECT model_id FROM instances WHERE provider_id = ? ORDER BY model_id").all(id) as {
+				model_id: string
+			}[]
+		)
+			.map((r) => r.model_id)
+			.join("\n")
+
+	const eigener = fingerprint(providerId)
+	if (eigener.length === 0) {
+		return [providerId]
+	}
+	const alle = (db.prepare("SELECT id FROM providers").all() as { id: string }[]).map((r) => r.id)
+	return alle.filter((id) => id === providerId || fingerprint(id) === eigener)
+}

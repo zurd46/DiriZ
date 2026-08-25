@@ -68,6 +68,7 @@ import {
 	listToolCallsByTask,
 	lockInstance,
 	replayOutput,
+	sameServerProviders,
 	saveAgentSelection,
 	saveDecision,
 	saveFile,
@@ -638,10 +639,21 @@ export class ExecutionEngine {
 	}
 
 	private activityOf(providerId: string): { count: number; models: string[] } {
+		// **Alle Einträge, die auf denselben Server zeigen**, zählen zusammen.
+		//
+		// Zwei Provider können dieselbe Maschine sein — etwa `http://127.0.0.1:1234`
+		// und ein Tunnel darauf. Für DiriZ sahen das zwei Rechner aus, jeder
+		// bekam sein „ein Modell gleichzeitig", und die Grafikkarte hielt
+		// plötzlich zwei. Beim Laden des zweiten wirft LM Studio das erste
+		// mitten im Stream aus dem Speicher — die Antwort stirbt mit einer
+		// HTTP-500-Fehlerseite. Genau so ist es passiert, nachweislich: Ein über
+		// den einen Endpunkt geladenes Modell erschien im selben Moment am
+		// anderen als geladen.
+		const gruppe = new Set(sameServerProviders(this.deps.db, providerId))
 		const models = new Set<string>()
 		let count = 0
 		for (const run of this.active.values()) {
-			if (run.providerId !== providerId) {
+			if (!run.providerId || !gruppe.has(run.providerId)) {
 				continue
 			}
 			count++

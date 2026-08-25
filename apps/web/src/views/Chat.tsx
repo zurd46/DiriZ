@@ -40,6 +40,7 @@ import {
 	IconRefresh,
 	IconServer,
 	IconStop,
+	IconTool,
 	IconTrash,
 	IconUpload,
 	IconWorkspace,
@@ -380,15 +381,24 @@ const STATUS_PILL: Record<string, string> = {
  * zwanzig Badges sagen nichts, was „20 Operationen“ plus die letzten acht
  * nicht kürzer sagen.
  */
+/*
+ * Vier Badges reichen für den Überblick — der Rest steckt hinter „+N“. Vorher
+ * standen acht in der Zeile, was bei einem Agentik-Lauf zwei bis drei Zeilen
+ * über der Antwort belegte, bevor sie überhaupt begann.
+ */
+const TOOL_PREVIEW = 4
+
 function ToolStrip({ badges, total }: { badges: ToolBadge[]; total: number }) {
 	const [alle, setAlle] = useState(false)
-	const sichtbar = alle ? badges : badges.slice(0, 8)
+	const sichtbar = alle ? badges : badges.slice(0, TOOL_PREVIEW)
 	const rest = badges.length - sichtbar.length
+	const fehler = badges.filter((b) => !b.ok).length
 
 	return (
 		<div className="chat-tools">
-			<span className="chat-tools-label">
-				{total} Operation{total === 1 ? "" : "en"}
+			<span className="chat-tools-label" title={`${total} Werkzeug-Aufrufe`}>
+				<IconTool size={11} />
+				{total}
 			</span>
 			{sichtbar.map((b) => (
 				<span key={b.id} className={`tool-badge ${b.ok ? "" : "err"} ${b.name}`} title={b.target || b.name}>
@@ -400,13 +410,19 @@ function ToolStrip({ badges, total }: { badges: ToolBadge[]; total: number }) {
 			))}
 			{rest > 0 && (
 				<button type="button" className="tool-more" onClick={() => setAlle(true)}>
-					+{rest} weitere
+					+{rest}
 				</button>
 			)}
-			{alle && badges.length > 8 && (
+			{alle && badges.length > TOOL_PREVIEW && (
 				<button type="button" className="tool-more" onClick={() => setAlle(false)}>
 					weniger
 				</button>
+			)}
+			{/* Fehlgeschlagene Aufrufe stecken sonst irgendwo hinter „+N“. */}
+			{!alle && rest > 0 && fehler > 0 && (
+				<span className="tool-badge err" title="fehlgeschlagene Aufrufe">
+					{fehler} Fehler
+				</span>
 			)}
 		</div>
 	)
@@ -985,20 +1001,27 @@ export default function Chat() {
 										)}
 									</div>
 
-									<div className="chat-msg agent">
+									<div className={`chat-msg agent ${isRunning ? "live" : ""}`} data-status={turn.status}>
+										{/* Der Kopf klebt oben: Bei einer langen Antwort weiss man
+										    sonst nach zwei Bildschirmen nicht mehr, wer gerade spricht. */}
 										<div className="chat-head">
 											<span className="chat-avatar" aria-hidden="true">
-												<IconAgents size={16} />
+												<IconAgents size={13} />
 											</span>
 											<div className="chat-ident">
 												<div className="chat-name">
-													{turn.agentName ??
-														(isRunning && !run ? "Spezialist wird gewählt …" : "Freies Routing")}
+													<span className="chat-name-text">
+														{turn.agentName ??
+															(isRunning && !run ? "Spezialist wird gewählt …" : "Freies Routing")}
+													</span>
 													{discipline && <span className="badge soft">{discipline}</span>}
 												</div>
 												{worker.model && (
-													<div className="chat-worker">
-														<IconServer size={12} />
+													<div
+														className="chat-worker"
+														title={worker.host ? `${worker.model} auf ${worker.host}` : worker.model}
+													>
+														<IconServer size={11} />
 														<span className="mono">{worker.model}</span>
 														{worker.host && (
 															<>
@@ -1012,14 +1035,17 @@ export default function Chat() {
 											<span className={`pill ${STATUS_PILL[turn.status] ?? "info"}`}>
 												{STATUS_LABEL[turn.status] ?? turn.status}
 											</span>
+											{/* Nur ein Symbol: Die Beschriftung drängte auf schmalen
+											    Fenstern Name und Modell aus der Kopfzeile. */}
 											{isRunning && (
 												<button
 													type="button"
-													className="btn ghost sm"
+													className="btn ghost sm icon-only"
+													title="Abbrechen"
+													aria-label="Abbrechen"
 													onClick={() => void cancel(turn.taskId)}
 												>
 													<IconStop size={13} />
-													Abbrechen
 												</button>
 											)}
 											{/* Steckengeblieben oder abgebrochen: Der Stand liegt vor,
@@ -1030,112 +1056,121 @@ export default function Chat() {
 													answer.includes("[Agentik:")) && (
 													<button
 														type="button"
-														className="btn ghost sm"
-														title="Neue Task im selben Arbeitsverzeichnis, mit dem bisherigen Stand als Vorarbeit"
+														className="btn ghost sm icon-only"
+														title="Fortsetzen — neue Task im selben Arbeitsverzeichnis, mit dem bisherigen Stand als Vorarbeit"
+														aria-label="Fortsetzen"
 														onClick={() => void resume(turn.taskId)}
 													>
 														<IconRefresh size={13} />
-														Fortsetzen
 													</button>
 												)}
 										</div>
 
-										{turn.agentReason && (
-											<div className="chat-reason" title="Warum dieser Spezialist gewählt wurde">
-												{turn.agentReason}
-											</div>
-										)}
+										<div className="chat-agent-body">
+											{turn.agentReason && (
+												<div className="chat-reason clamp" title={turn.agentReason}>
+													{turn.agentReason}
+												</div>
+											)}
 
-										{/* Was passiert gerade? Ohne diese Zeile sieht ein Modell,
+											{/* Was passiert gerade? Ohne diese Zeile sieht ein Modell,
 										    das lädt, aus wie ein Programm, das hängt. */}
-										{isRunning && (
-											<div className="chat-phase" data-tick={tick}>
-												{loading ? (
-													<>
-														<span className="dot-pulse" />
-														Modell wird geladen{loadMs !== undefined ? ` … ${duration(loadMs)}` : " …"}
-														<span className="field-hint">
-															Beim ersten Aufruf wandert das Modell in den Grafikspeicher — das dauert bei
-															grossen Modellen Minuten.
+											{isRunning && (
+												<div className="chat-phase" data-tick={tick}>
+													{loading ? (
+														<>
+															<span className="dot-pulse" />
+															Modell wird geladen{loadMs !== undefined ? ` … ${duration(loadMs)}` : " …"}
+															<span className="field-hint">
+																Beim ersten Aufruf wandert das Modell in den Grafikspeicher — das dauert bei
+																grossen Modellen Minuten.
+															</span>
+														</>
+													) : (
+														<>
+															<span className="dot-pulse" />
+															<span className="chat-phase-what">
+																{run?.text
+																	? "schreibt …"
+																	: lastTool
+																		? `arbeitet mit Dateien … ${lastTool.name}`
+																		: run?.reasoning
+																			? "denkt nach …"
+																			: "arbeitet …"}
+															</span>
+															{/* Zahlen als eigene Chips statt als ein durchlaufender Satz: So
+															    findet das Auge das Tempo, ohne die Zeile zu lesen. */}
+															{elapsedMs !== undefined && <span className="chat-stat mono">{duration(elapsedMs)}</span>}
+															{run?.usage ? <span className="chat-stat mono">{run.usage.tokensOut} Tok</span> : null}
+															{run?.usage?.tps ? <span className="chat-stat mono">{run.usage.tps.toFixed(1)} Tok/s</span> : null}
+															{loadMs !== undefined && (
+																<span className="chat-stat mono" title="Ladezeit des Modells">
+																	Laden {seconds(loadMs)}
+																</span>
+															)}
+														</>
+													)}
+												</div>
+											)}
+
+											{run && run.failovers.length > 0 && (
+												<div className="chat-reason">Wechsel: {run.failovers.join(" · ")}</div>
+											)}
+
+											{badges.length > 0 && <ToolStrip badges={badges} total={toolOps.length} />}
+
+											{/*
+											 * Der Gedankengang bleibt zugeklappt: Er ist oft zehnmal
+											 * länger als die Antwort und würde sie sonst begraben.
+											 * Wer wissen will, wie das Modell zum Ergebnis kam, klappt auf.
+											 */}
+											{run?.reasoning && (
+												<details className="accordion chat-thoughts">
+													<summary>
+														<IconChevronRight size={13} className="accordion-arrow" />
+														<span>Gedankengang</span>
+														<span className="badge">
+															{run.reasoning.length.toLocaleString("de-CH")} Zeichen
 														</span>
-													</>
-												) : (
-													<>
-														<span className="dot-pulse" />
-														{run?.text
-															? "schreibt …"
-															: lastTool
-																? `arbeitet mit Dateien … ${lastTool.name}`
-																: run?.reasoning
-																	? "denkt nach …"
-																	: "arbeitet …"}
-														{run?.usage ? ` ${run.usage.tokensOut} Tokens` : ""}
-														{run?.usage?.tps ? ` · ${run.usage.tps.toFixed(1)} Tokens/s` : ""}
-														{run?.reasoning ? ` · Gedankengang ${run.reasoning.length} Zeichen` : ""}
-														{loadMs !== undefined ? ` · Ladezeit ${seconds(loadMs)}` : ""}
-														{elapsedMs !== undefined ? ` · läuft seit ${duration(elapsedMs)}` : ""}
-													</>
-												)}
-											</div>
-										)}
-
-										{run && run.failovers.length > 0 && (
-											<div className="chat-reason">Wechsel: {run.failovers.join(" · ")}</div>
-										)}
-
-										{badges.length > 0 && <ToolStrip badges={badges} total={toolOps.length} />}
-
-										{/*
-										 * Der Gedankengang bleibt zugeklappt: Er ist oft zehnmal
-										 * länger als die Antwort und würde sie sonst begraben.
-										 * Wer wissen will, wie das Modell zum Ergebnis kam, klappt auf.
-										 */}
-										{run?.reasoning && (
-											<details className="accordion chat-thoughts">
-												<summary>
-													<IconChevronRight size={13} className="accordion-arrow" />
-													<span>Gedankengang</span>
-													<span className="badge">
-														{run.reasoning.length.toLocaleString("de-CH")} Zeichen
-													</span>
-													{isRunning && <span className="dot-pulse" />}
-												</summary>
-												{/* Auch der Gedankengang enthält Code — er wird deshalb wie
+														{isRunning && <span className="dot-pulse" />}
+													</summary>
+													{/* Auch der Gedankengang enthält Code — er wird deshalb wie
 												    jede andere Modellausgabe gerendert, mit zugeklappten
 												    Code-Blöcken. Sonst flutet ein aufgeklappter Gedankengang
 												    den Verlauf erneut. */}
-												<div className="output md">
-													<Markdown source={run.reasoning} />
+													<div className="output md">
+														<Markdown source={run.reasoning} />
+													</div>
+												</details>
+											)}
+
+											{answer ? (
+												<div className={`chat-answer ${isRunning ? "streaming" : ""}`}>
+													<Markdown source={answer} />
 												</div>
-											</details>
-										)}
+											) : (
+												turn.status === "failed" && null
+											)}
 
-										{answer ? (
-											<div className={`chat-answer ${isRunning ? "streaming" : ""}`}>
-												<Markdown source={answer} />
-											</div>
-										) : (
-											turn.status === "failed" && null
-										)}
+											{turn.error && <div className="chat-error">{turn.error}</div>}
 
-										{turn.error && <div className="chat-error">{turn.error}</div>}
+											{/* Erst die Arbeit … */}
+											{turn.repoId && <ChatDiff taskId={turn.taskId} refreshKey={toolOps.length} />}
 
-										{/* Erst die Arbeit … */}
-										{turn.repoId && <ChatDiff taskId={turn.taskId} refreshKey={toolOps.length} />}
+											{files.length > 0 && (
+												<div className="chat-files">
+													<strong>Dateien:</strong>{" "}
+													{files.map((f) => (
+														<span key={f.relPath} className="pill no-dot">
+															{f.relPath}
+														</span>
+													))}
+												</div>
+											)}
 
-										{files.length > 0 && (
-											<div className="chat-files">
-												<strong>Dateien:</strong>{" "}
-												{files.map((f) => (
-													<span key={f.relPath} className="pill no-dot">
-														{f.relPath}
-													</span>
-												))}
-											</div>
-										)}
-
-										{/* … und ganz zum Schluss: wohin sie gegangen ist. */}
-										{turn.repoId && <ChatGitHub taskId={turn.taskId} refreshKey={toolOps.length} />}
+											{/* … und ganz zum Schluss: wohin sie gegangen ist. */}
+											{turn.repoId && <ChatGitHub taskId={turn.taskId} refreshKey={toolOps.length} />}
+										</div>
 									</div>
 								</div>
 							)

@@ -3190,19 +3190,36 @@ pre.code {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
-	gap: var(--sp-2);
-	padding: 3px var(--sp-2);
+	gap: 5px;
+	padding: 2px var(--sp-2);
 	border-radius: 6px;
 	background: var(--bg-soft);
 	border: 1px solid var(--border-soft);
 	font-size: var(--fs-sm);
 	color: var(--muted);
-	margin-bottom: var(--sp-3);
+	margin-bottom: var(--sp-2);
 }
 
 .chat-phase .field-hint {
 	flex-basis: 100%;
 	margin: 0;
+}
+
+.chat-phase-what {
+	margin-right: var(--sp-1);
+}
+
+/* Tempo, Tokens, Ladezeit — je ein Chip. Als durchlaufender Satz musste man
+   die Zeile lesen, um eine Zahl zu finden. */
+.chat-stat {
+	flex: none;
+	padding: 0 5px;
+	border-radius: 4px;
+	background: var(--surface-2);
+	color: var(--faint);
+	font-size: var(--fs-xs);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
 }
 
 .dot-pulse {
@@ -3355,6 +3372,12 @@ pre.code {
 	background: var(--surface);
 }
 
+/* Der Rumpf bringt sein eigenes Innenmass mit (siehe `.chat-agent-body`) —
+   die Karte selbst ist nur noch Rahmen. */
+.chat-msg.agent {
+	padding: 0;
+}
+
 .chat-msg.user {
 	background: var(--accent-soft);
 	border-color: var(--accent-line);
@@ -3438,6 +3461,16 @@ pre.code {
 	font-size: var(--fs-xs);
 	color: var(--faint);
 	margin-bottom: var(--sp-2);
+}
+
+/* Die Wahlbegründung ist manchmal ein Absatz — zwei Zeilen genügen, der Rest
+   steht im Titel. */
+.chat-reason.clamp {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	line-clamp: 2;
+	overflow: hidden;
 }
 
 .chat-error {
@@ -3595,32 +3628,64 @@ pre.code {
 
 /* ------------------------- Chat: Kopfzeile & Badges ------------------------- */
 
+/*
+ * Kopf und Inhalt sind zwei Bänder statt einer Spalte gleich schwerer Kästen:
+ * Der Kopf trägt Name, Fachbereich, Modell und Status, der Rumpf gehört dem
+ * Ergebnis. Der Kopf bleibt beim Scrollen stehen — bei einer Antwort über
+ * mehrere Bildschirme weiss man sonst nicht mehr, wer da eigentlich spricht.
+ */
 .chat-head {
+	position: sticky;
+	top: calc(var(--sp-2) * -1);
+	z-index: 2;
 	display: flex;
 	align-items: center;
 	gap: var(--sp-2);
-	margin-bottom: var(--sp-3);
+	padding: 5px var(--sp-3);
+	background: var(--surface-2);
+	border-bottom: 1px solid var(--border-soft);
+	border-radius: calc(var(--r-md) - 1px) calc(var(--r-md) - 1px) 0 0;
+}
+
+/* Der Zustand färbt einen schmalen Streifen links — im langen Verlauf findet
+   das Auge damit fehlgeschlagene Läufe, ohne jede Statusnadel zu lesen. */
+.chat-msg.agent[data-status="failed"] .chat-head {
+	box-shadow: inset 2px 0 0 var(--err-text);
+}
+
+.chat-msg.agent[data-status="cancelled"] .chat-head {
+	box-shadow: inset 2px 0 0 var(--warn-text);
+}
+
+.chat-msg.agent.live .chat-head {
+	box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .chat-avatar {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 24px;
-	height: 24px;
+	width: 20px;
+	height: 20px;
 	flex: none;
-	border-radius: 8px;
+	border-radius: 6px;
 	background: var(--accent-soft);
 	color: var(--accent);
 	border: 1px solid var(--accent-line);
 }
 
+/*
+ * Name und Modell teilen sich eine Zeile, solange Platz ist, und rutschen erst
+ * bei Enge untereinander. Zwei fest gestapelte Zeilen kosteten in jeder
+ * Nachricht eine Zeile Höhe, auch wenn der Name nur acht Zeichen hatte.
+ */
 .chat-ident {
 	flex: 1;
 	min-width: 0;
 	display: flex;
-	flex-direction: column;
-	gap: 2px;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0 var(--sp-2);
 }
 
 .chat-name {
@@ -3628,22 +3693,56 @@ pre.code {
 	flex-wrap: wrap;
 	align-items: baseline;
 	gap: var(--sp-2);
-	font-size: var(--fs-md);
+	min-width: 0;
+	font-size: var(--fs-base);
 	font-weight: 600;
 	color: var(--text-strong);
 }
 
+.chat-name-text {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 34ch;
+}
+
 .chat-worker {
 	display: inline-flex;
-	flex-wrap: wrap;
+	flex-wrap: nowrap;
 	align-items: center;
-	gap: 5px;
+	gap: 4px;
+	min-width: 0;
 	font-size: var(--fs-xs);
-	color: var(--muted);
+	color: var(--faint);
+}
+
+.chat-worker .mono {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .chat-at {
 	opacity: 0.7;
+	flex: none;
+}
+
+/* Im Kopf zählt jeder Pixel Breite — deshalb tragen Abbrechen und Fortsetzen
+   nur ihr Symbol, die Beschriftung steckt im Titel. */
+.btn.icon-only {
+	padding: 3px;
+	gap: 0;
+}
+
+.chat-agent-body {
+	padding: var(--sp-3) var(--sp-4) var(--sp-4);
+}
+
+/* Steht die Antwort ganz oben im Rumpf, trennt sie schon die Kopfzeile. */
+.chat-agent-body > .chat-answer:first-child {
+	margin-top: 0;
+	padding-top: 0;
+	border-top: none;
 }
 
 /* Kleines, ruhiges Etikett — im Gegensatz zur `pill` ohne Statusfarbe. */
@@ -3681,15 +3780,21 @@ pre.code {
 	align-items: center;
 	justify-content: flex-start;
 	gap: 4px;
-	margin-bottom: var(--sp-3);
+	margin-bottom: var(--sp-2);
 }
 
+/* Nur noch die Zahl mit Werkzeug-Symbol: „12 Operationen“ in Versalien war
+   breiter als die Badges, die es zählte. */
 .chat-tools-label {
-	font-size: var(--fs-xs);
-	text-transform: uppercase;
-	letter-spacing: 0.04em;
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	padding: 1px 6px;
+	border-radius: 5px;
+	background: var(--surface-2);
 	color: var(--faint);
-	margin-right: var(--sp-1);
+	font-size: var(--fs-xs);
+	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
 }
 

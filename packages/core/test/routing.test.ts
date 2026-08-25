@@ -1,5 +1,11 @@
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import { type Capability, DEFAULT_WEIGHTS, type InstanceModel } from "@diriz/shared"
 import { describe, expect, it } from "vitest"
+import { openDatabase } from "../src/db/connection.js"
+import { migrate } from "../src/db/migrate.js"
+import { createProvider, sameServerProviders, upsertInstance } from "../src/db/repositories.js"
 import { looksLikeLoadFailure } from "../src/execution/engine.js"
 import { loadFactorFrom } from "../src/providers/registry.js"
 import { Feedback } from "../src/routing/feedback.js"
@@ -340,5 +346,57 @@ describe("routing: Ladefehler erkennen", () => {
 		for (const t of daneben) {
 			expect(looksLikeLoadFailure(t), t).toBe(false)
 		}
+	})
+})
+
+/**
+ * Zwei Provider-Einträge können **dieselbe Maschine** sein — direkt und über
+ * einen Tunnel. Nachgewiesen an einer echten Anlage: Ein über den lokalen
+ * Endpunkt geladenes Modell erschien im selben Augenblick am Tunnel-Endpunkt
+ * als geladen. Ohne Erkennung hält die Grafikkarte zwei Modelle, wo eines
+ * hingehört — und das erste fliegt mitten im Stream heraus.
+ */
+describe("routing: derselbe Server hinter zwei Einträgen", () => {
+	it("erkennt gleiche Modell-Listen als eine Maschine", () => {
+		const db = openDatabase(fs.mkdtempSync(path.join(os.tmpdir(), "diriz-dupe-")))
+		migrate(db)
+		const lokal = createProvider(db, { type: "lmstudio", label: "Lokal", baseUrl: "http://127.0.0.1:1234" })
+		const tunnel = createProvider(db, {
+			type: "lmstudio",
+			label: "Tunnel",
+			baseUrl: "https://x.ngrok.dev/v1",
+		})
+		const andere = createProvider(db, {
+			type: "ollama",
+			label: "Anderer",
+			baseUrl: "http://192.168.1.9:11434",
+		})
+
+		for (const p of [lokal, tunnel]) {
+			for (const m of ["modell-a", "modell-b"]) {
+				upsertInstance(db, p.id, { modelId: m, displayName: m, contextWindow: 8192 }, "manual")
+			}
+		}
+		upsertInstance(db, andere.id, { modelId: "ganz-anders", displayName: "X", contextWindow: 8192 }, "manual")
+
+		const gruppe = sameServerProviders(db, lokal.id).sort()
+		expect(gruppe).toEqual([lokal.id, tunnel.id].sort())
+		// Der dritte Rechner bleibt für sich.
+		expect(sameServerProviders(db, andere.id)).toEqual([andere.id])
+		db.close()
+	})
+
+	it("fasst nichts zusammen, solange die Listen sich unterscheiden", () => {
+		const db = openDatabase(fs.mkdtempSync(path.join(os.tmpdir(), "diriz-dupe2-")))
+		migrate(db)
+		const a = createProvider(db, { type: "lmstudio", label: "A", baseUrl: "http://a:1234" })
+		const b = createProvider(db, { type: "lmstudio", label: "B", baseUrl: "http://b:1234" })
+		upsertInstance(db, a.id, { modelId: "m1", displayName: "m1", contextWindow: 8192 }, "manual")
+		upsertInstance(db, b.id, { modelId: "m1", displayName: "m1", contextWindow: 8192 }, "manual")
+		upsertInstance(db, b.id, { modelId: "m2", displayName: "m2", contextWindow: 8192 }, "manual")
+
+		expect(sameServerProviders(db, a.id)).toEqual([a.id])
+		expect(sameServerProviders(db, b.id)).toEqual([b.id])
+		db.close()
 	})
 })

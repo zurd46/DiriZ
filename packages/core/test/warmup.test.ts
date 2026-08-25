@@ -15,7 +15,7 @@ import { beforeEach, describe, expect, it } from "vitest"
 import type { Db } from "../src/db/connection.js"
 import { openDatabase } from "../src/db/connection.js"
 import { migrate } from "../src/db/migrate.js"
-import { createProvider, upsertInstance } from "../src/db/repositories.js"
+import { createProvider, listInstances, lockInstance, upsertInstance } from "../src/db/repositories.js"
 import { DEFAULT_WARMUP, WarmKeeper } from "../src/execution/warmup.js"
 
 /** Adapter, der wahlweise antwortet oder das Laden verweigert. */
@@ -131,5 +131,45 @@ describe("WarmKeeper", () => {
 		})
 		await k.runOnce()
 		expect(adapter.calls).toHaveLength(0)
+	})
+})
+
+describe("WarmKeeper: eine Maschine, ein Warmhalten", () => {
+	it("wärmt einen Rechner nur einmal, auch wenn zwei Einträge auf ihn zeigen", async () => {
+		// `lokalai` (Tunnel) und `MacDani` (127.0.0.1) sind derselbe Rechner —
+		// erkannt an der identischen Modell-Liste. Zwei Ladeversuche im selben
+		// Moment brachten LM Studio nachweislich zum Straucheln.
+		const zweiter = createProvider(db, { type: "lmstudio", label: "Tunnel", baseUrl: "https://x.ngrok" }).id
+		upsertInstance(
+			db,
+			zweiter,
+			{ modelId: "zu-gross", displayName: "Zu gross", contextWindow: 8192, capabilities: ["reasoning"] },
+			"manual",
+		)
+		const adapter = new WarmFake("p")
+		const registry = {
+			providerIds: [providerId, zweiter],
+			status: () => "online" as const,
+			adapter: () => adapter,
+			labelOf: () => "Rechner",
+			loadedModelsOf: () => [],
+		}
+		const k = new WarmKeeper({
+			db,
+			registry: registry as unknown as ConstructorParameters<typeof WarmKeeper>[0]["registry"],
+			log: () => {},
+			isBusy: () => false,
+			settings: () => DEFAULT_WARMUP,
+		})
+		await k.runOnce()
+		expect(adapter.calls).toEqual(["zu-gross"])
+	})
+
+	it("lässt ein gesperrtes Modell in Ruhe", async () => {
+		const inst = listInstances(db, providerId)[0]
+		lockInstance(db, inst.id, new Date(Date.now() + 600_000).toISOString())
+		const adapter = new WarmFake("p")
+		await keeper(adapter).runOnce()
+		expect(adapter.calls).toEqual([])
 	})
 })

@@ -19,7 +19,12 @@
  */
 
 import type { Db } from "../db/connection.js"
-import { listInstances, recentlyUsedInstances, throughputByInstance } from "../db/repositories.js"
+import {
+	listInstances,
+	recentlyUsedInstances,
+	sameServerProviders,
+	throughputByInstance,
+} from "../db/repositories.js"
 import type { ProviderRegistry } from "../providers/registry.js"
 
 type LogFn = (level: "info" | "warn" | "error", scope: string, msg: string) => void
@@ -92,7 +97,22 @@ export class WarmKeeper {
 		}
 		this.running = true
 		try {
+			// **Eine Maschine, ein Warmhalten.**
+			//
+			// `lokalai` (ngrok) und `MacDani` (127.0.0.1) sind derselbe Rechner.
+			// Ohne diese Gruppierung wärmte DiriZ dasselbe Modell zweimal an —
+			// nachweislich im Abstand von 0,4 Sekunden. Der zweite Ladeversuch
+			// trifft auf den ersten, LM Studio bricht beide ab, und für die
+			// nächsten Sekunden scheitert dort **jede** Anfrage. Genau davor
+			// stand in den Protokollen der Fehlschlag der folgenden Aufgabe.
+			const erledigt = new Set<string>()
 			for (const providerId of this.deps.registry.providerIds) {
+				if (erledigt.has(providerId)) {
+					continue
+				}
+				for (const gleicher of sameServerProviders(this.deps.db, providerId)) {
+					erledigt.add(gleicher)
+				}
 				if (this.deps.isBusy(providerId)) {
 					continue
 				}
@@ -129,8 +149,11 @@ export class WarmKeeper {
 		if (geladen.length > 0) {
 			return geladen.slice(0, limit)
 		}
+		const jetzt = new Date().toISOString()
 		const aktiv = listInstances(this.deps.db, providerId).filter(
-			(i) => i.enabled && i.capabilities.length > 0,
+			// Ein gesperrtes Modell warm halten zu wollen, heisst: genau den
+			// Ladeversuch auslösen, wegen dem es gesperrt wurde.
+			(i) => i.enabled && i.capabilities.length > 0 && !(i.lockedUntil && i.lockedUntil > jetzt),
 		)
 		if (aktiv.length === 0) {
 			return []

@@ -231,10 +231,27 @@ function formatDauer(ms: number): string {
  * es wieder und wieder zu wählen, kostet jedes Mal eine Minute Ladeversuch.
  */
 export function looksLikeLoadFailure(error: string): boolean {
-	return /failed to load model|engine protocol|model not found|no such model|out of memory|insufficient memory/i.test(
+	// `model is unloaded` gehört dazu, obwohl es kein Ladefehler ist: Es ist die
+	// **Folge** eines fremden Ladevorgangs. Live nachgestellt — zwei Modelle
+	// gleichzeitig an denselben LM-Studio-Server, und der laufende Stream endet
+	// mitten im Satz mit genau dieser Meldung. Die Antwort darauf ist dieselbe
+	// wie bei einem Ladefehler: warten, dann das nehmen, was schon im Speicher
+	// liegt.
+	return /failed to load model|engine protocol|model not found|no such model|out of memory|insufficient memory|model is unloaded/i.test(
 		error,
 	)
 }
+
+/**
+ * Wie lange ein Rechner nach einem Ladefehler in Ruhe gelassen wird.
+ *
+ * Gemessen, nicht geschätzt: Nach einem gescheiterten Ladeversuch scheiterten
+ * an derselben LM-Studio-Instanz auch die **nächsten zwei** Anfragen — für ein
+ * völlig gesundes Modell —, und erst die dritte lief (nach 16 s). Wer sofort
+ * das nächste Modell probiert, erzeugt aus einem Fehler eine Lawine; genau das
+ * stand in den Protokollen: drei Modelle hintereinander, alle „HTTP 500".
+ */
+const MACHINE_COOLDOWN_MS = 15_000
 
 /** So viel Vorarbeit reicht ein Kettenschritt weiter (Zeichen). */
 const HANDOFF_MAX_CHARS = 6000
@@ -690,6 +707,22 @@ export class ExecutionEngine {
 			}
 		}
 		return { count, models: [...models] }
+	}
+
+	/**
+	 * Pause zwischen zwei Failover-Versuchen auf derselben Maschine.
+	 *
+	 * In Sekundenschritten, damit ein Abbruch durch den Nutzer nicht erst nach
+	 * der vollen Wartezeit wirkt — wer auf „Abbrechen" drückt, meint jetzt.
+	 */
+	private async abkuehlen(ms: number, executionId: string): Promise<void> {
+		const bis = Date.now() + ms
+		while (Date.now() < bis) {
+			if (this.active.get(executionId)?.cancelled) {
+				return
+			}
+			await new Promise((r) => setTimeout(r, Math.min(1000, bis - Date.now())))
+		}
 	}
 
 	/** Routing-Gewichte aus den Settings (Fallback: Plan-Defaults, §6.2). */
@@ -1266,6 +1299,17 @@ export class ExecutionEngine {
 					// Speicher braucht keinen Ladevorgang und kann nicht daran
 					// scheitern. Erst danach kommt der Rest in bisheriger Ordnung.
 					ordered = this.preferLoaded(ordered, attempt + 1)
+					// Und dem Rechner Zeit geben, sich zu fangen. Ohne diese Pause
+					// scheitert der nächste Versuch am Nachhall des vorigen.
+					const naechster = ordered[attempt + 1]
+					if (naechster) {
+						log(
+							"info",
+							"routing",
+							`Rechner erholt sich — ${Math.round(MACHINE_COOLDOWN_MS / 1000)} s Pause vor ${naechster.instance.modelId}`,
+						)
+						await this.abkuehlen(MACHINE_COOLDOWN_MS, execution.id)
+					}
 				}
 				// Was bis hierher entstand, bleibt erhalten. Ein Lauf, der nach 15
 				// Minuten am Gesamt-Timeout stirbt, hat womöglich Dateien gelesen,

@@ -8,6 +8,7 @@ import { openDatabase } from "../src/db/connection.js"
 import { migrate } from "../src/db/migrate.js"
 import {
 	appendChunk,
+	clearLoadFailures,
 	createExecution,
 	createProvider,
 	createTask,
@@ -27,6 +28,7 @@ import {
 	listTemplates,
 	metricsSummary,
 	persistLog,
+	recordLoadFailure,
 	replayOutput,
 	saveDecision,
 	saveFile,
@@ -34,6 +36,7 @@ import {
 	setProviderStatus,
 	setTaskStatus,
 	timeseries,
+	unlockInstance,
 	updateExecution,
 	updateInstance,
 	updateProvider,
@@ -309,5 +312,37 @@ describe("db: Prompt-Templates", () => {
 		expect(deleteTemplate(db, "keine-id")).toBe(false)
 
 		deleteTemplate(db, dup.id)
+	})
+})
+
+describe("Ladefehler-Zähler", () => {
+	it("zählt hoch, und ein erfolgreicher Lauf löscht ihn", () => {
+		const p = createProvider(db, { type: "lmstudio", label: "Zaehler", baseUrl: "http://z" })
+		const inst = upsertInstance(
+			db,
+			p.id,
+			{ modelId: "zu-gross", displayName: "Zu gross", contextWindow: 8192, capabilities: ["code"] },
+			"manual",
+		)
+		expect(recordLoadFailure(db, inst.id)).toBe(1)
+		expect(recordLoadFailure(db, inst.id)).toBe(2)
+		// Ein gelungener Lauf löscht die Vorgeschichte — sonst wüchse die Sperre
+		// eines Modells, das längst wieder läuft, bis auf 24 Stunden.
+		clearLoadFailures(db, inst.id)
+		expect(recordLoadFailure(db, inst.id)).toBe(1)
+	})
+
+	it("löscht den Zähler auch beim Entsperren", () => {
+		const p = createProvider(db, { type: "lmstudio", label: "Zaehler2", baseUrl: "http://z2" })
+		const inst = upsertInstance(
+			db,
+			p.id,
+			{ modelId: "m", displayName: "M", contextWindow: 8192, capabilities: ["code"] },
+			"manual",
+		)
+		recordLoadFailure(db, inst.id)
+		recordLoadFailure(db, inst.id)
+		unlockInstance(db, inst.id)
+		expect(recordLoadFailure(db, inst.id)).toBe(1)
 	})
 })

@@ -2200,19 +2200,50 @@ export function clearLoadFailures(db: Db, instanceId: string): void {
  * — sie fälschlich zu trennen kostet abgebrochene Läufe.
  */
 export function sameServerProviders(db: Db, providerId: string): string[] {
-	const fingerprint = (id: string) =>
-		(
-			db.prepare("SELECT model_id FROM instances WHERE provider_id = ? ORDER BY model_id").all(id) as {
-				model_id: string
-			}[]
+	const modelle = (id: string) =>
+		new Set(
+			(
+				db.prepare("SELECT model_id FROM instances WHERE provider_id = ?").all(id) as {
+					model_id: string
+				}[]
+			).map((r) => r.model_id),
 		)
-			.map((r) => r.model_id)
-			.join("\n")
 
-	const eigener = fingerprint(providerId)
-	if (eigener.length === 0) {
+	const eigene = modelle(providerId)
+	if (eigene.size === 0) {
 		return [providerId]
 	}
 	const alle = (db.prepare("SELECT id FROM providers").all() as { id: string }[]).map((r) => r.id)
-	return alle.filter((id) => id === providerId || fingerprint(id) === eigener)
+	return alle.filter((id) => id === providerId || istDieselbeMaschine(eigene, modelle(id)))
+}
+
+/**
+ * Zwei Modell-Listen — derselbe Rechner?
+ *
+ * **Nicht** über Gleichheit. Genau daran ist es gescheitert: `lokalai` (Tunnel)
+ * und `MacDani` (127.0.0.1) zeigen auf dieselbe LM-Studio-Instanz, aber die
+ * eine Liste hatte einen Eintrag mehr — `…-uncensored:2`, LM Studios Zweitkopie
+ * desselben Modells. Ein einziger Unterschied, und DiriZ sah zwei Rechner: Der
+ * Schutz „ein Modell pro Rechner" liess zwei Modelle auf dieselbe Grafikkarte,
+ * LM Studio warf das laufende aus dem Speicher, und die Antwort starb mitten im
+ * Satz mit einer HTTP-500-Fehlerseite. Genau das stand in den Protokollen.
+ *
+ * Deshalb: **weitgehende Überschneidung** genügt. Zwei zufällig verschiedene
+ * Rechner teilen sich nicht neun Zehntel ihrer Modelle; zwei Sichten auf
+ * denselben Rechner schon.
+ */
+export function istDieselbeMaschine(a: Set<string>, b: Set<string>): boolean {
+	if (a.size === 0 || b.size === 0) {
+		return false
+	}
+	const gemeinsam = [...a].filter((m) => b.has(m)).length
+	const kleinere = Math.min(a.size, b.size)
+	// Deckungsgleich zählt immer — auch bei einem einzigen Modell. Das ist der
+	// alte, engere Massstab, und er bleibt gültig.
+	if (a.size === b.size && gemeinsam === a.size) {
+		return true
+	}
+	// Sonst braucht es Substanz: Bei drei gemeinsamen Modellen ist eine
+	// Überschneidung von neun Zehnteln kein Zufall mehr, bei zweien schon.
+	return gemeinsam >= 3 && gemeinsam / kleinere >= 0.9
 }

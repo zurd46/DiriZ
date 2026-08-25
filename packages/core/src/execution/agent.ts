@@ -638,10 +638,21 @@ const STEP_ATTEMPTS = 3
  * Failover auf ein anderes Modell die richtige Antwort, nicht Geduld.
  */
 export function istVorübergehend(fehler: string): boolean {
-	if (/exceeds the available context|context size|400 Bad Request|401|403|404/i.test(fehler)) {
+	// **Nach der Ursache fragen, nicht nach dem Statuscode.**
+	//
+	// Live gestolpert: „Engine protocol startup was aborted" — ein Modell, das
+	// gerade verdrängt wurde und Sekunden später wieder lädt — kommt bei LM
+	// Studio als *HTTP 400 Bad Request* daher. Wer den Statuscode prüft, hält
+	// das für einen Anwendungsfehler und gibt auf. Wer den Text liest, sieht
+	// einen Serverzustand und wartet kurz.
+	if (
+		/exceeds the available context|context size|insufficient system resources|requires approximately|model not found|no such model|unauthorized|invalid api key|401|403/i.test(
+			fehler,
+		)
+	) {
 		return false
 	}
-	return /HTTP 5\d\d|terminated|socket|ECONNRESET|EPIPE|fetch failed|network|model is unloaded|engine protocol/i.test(
+	return /HTTP 5\d\d|terminated|socket|ECONNRESET|EPIPE|fetch failed|network|model is unloaded|engine protocol|failed to load model/i.test(
 		fehler,
 	)
 }

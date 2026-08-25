@@ -18,6 +18,7 @@ import {
 	getFileContent,
 	getTask,
 	getTemplate,
+	istDieselbeMaschine,
 	latestDecision,
 	listFileHistory,
 	listFilesByTask,
@@ -344,5 +345,30 @@ describe("Ladefehler-Zähler", () => {
 		recordLoadFailure(db, inst.id)
 		unlockInstance(db, inst.id)
 		expect(recordLoadFailure(db, inst.id)).toBe(1)
+	})
+})
+
+describe("Derselbe Rechner, zwei Zugänge", () => {
+	it("erkennt Tunnel und Direktzugang trotz einer abweichenden Modellkopie", () => {
+		// Der echte Fall: `lokalai` (ngrok) führte `…-uncensored:2` zusätzlich —
+		// LM Studios Zweitkopie desselben Modells. Ein Eintrag Unterschied, und
+		// DiriZ sah zwei Grafikkarten, wo eine steht.
+		const direkt = new Set(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n"])
+		const tunnel = new Set([...direkt, "n:2"])
+		expect(istDieselbeMaschine(direkt, tunnel)).toBe(true)
+		expect(istDieselbeMaschine(tunnel, direkt)).toBe(true)
+	})
+
+	it("hält wirklich verschiedene Rechner auseinander", () => {
+		const macbook = new Set(["qwen3", "llama3", "mistral", "phi4", "gemma"])
+		const server = new Set(["deepseek-v4", "kimi", "glm", "minimax", "qwen3"])
+		expect(istDieselbeMaschine(macbook, server)).toBe(false)
+	})
+
+	it("erklärt zwei kleine, ungleiche Listen nicht vorschnell für denselben Rechner", () => {
+		// Deckungsgleich zählt immer — das ist der alte, enge Massstab.
+		expect(istDieselbeMaschine(new Set(["a", "b"]), new Set(["a", "b"]))).toBe(true)
+		// Aber bei zwei Modellen reicht „fast gleich" nicht: zu wenig Substanz.
+		expect(istDieselbeMaschine(new Set(["a", "b"]), new Set(["a", "b", "c"]))).toBe(false)
 	})
 })

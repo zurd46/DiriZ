@@ -474,6 +474,17 @@ describe("Agent-Loop: vorübergehende Fehler", () => {
 		expect(istVorübergehend("fetch failed")).toBe(true)
 		// Wiederholen ändert nichts — hier gehört der Failover hin:
 		expect(istVorübergehend("request (70017 tokens) exceeds the available context size")).toBe(false)
-		expect(istVorübergehend("HTTP 400 Bad Request — Failed to load model")).toBe(false)
+		// Ein verdrängtes Modell meldet sich als HTTP 400 — es ist trotzdem ein
+		// Serverzustand und keine Anwendungssache. Live gestolpert.
+		expect(
+			istVorübergehend(
+				"HTTP 400 Bad Request — Failed to load model. Error: Engine protocol startup was aborted.",
+			),
+		).toBe(true)
+		// Ein Modell, das nicht in den Speicher passt, passt auch beim dritten
+		// Versuch nicht — dort gehört der Failover hin, nicht Geduld.
+		expect(istVorübergehend("Failed to load model. Error: requires approximately 158.94 GB of memory")).toBe(
+			false,
+		)
 	})
 })

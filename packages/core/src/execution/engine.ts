@@ -747,6 +747,12 @@ export class ExecutionEngine {
 		if (instance.deviceName) {
 			return `geraet:${instance.deviceName}`
 		}
+		// Was der Mensch erklärt hat, zählt vor jeder Vermutung: Über einen
+		// Tunnel kann DiriZ das Gerät nicht messen.
+		const erklaert = getProvider(this.deps.db, instance.providerId)?.config?.deviceName
+		if (typeof erklaert === "string" && erklaert.length > 0) {
+			return `geraet:${erklaert}`
+		}
 		const gruppe = sameServerProviders(this.deps.db, instance.providerId).sort()
 		return `zugang:${gruppe.join("+")}`
 	}

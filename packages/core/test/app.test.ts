@@ -580,3 +580,37 @@ describe("API: Provider zeigen ihre Rechner", () => {
 		await app.close()
 	})
 })
+
+describe("API: Rechner eines Zugangs erklären", () => {
+	it("nimmt den Rechnernamen entgegen und gibt ihn zurück", async () => {
+		// Über einen Tunnel kann DiriZ das Gerät nicht messen — der Mensch sagt
+		// es. Zwei Zugänge mit demselben Rechnernamen teilen sich eine Karte.
+		const app = await buildApp(ctx)
+		const tunnel = createProvider(ctx.db, {
+			type: "lmstudio",
+			label: "lokalai",
+			baseUrl: "https://lokalai.ngrok.dev/v1",
+		})
+		const res = await app.inject({
+			method: "PATCH",
+			url: `/api/providers/${tunnel.id}`,
+			payload: { deviceName: "LokalAI_Server1" },
+		})
+		expect(res.statusCode).toBe(200)
+
+		const liste = (await app.inject({ method: "GET", url: "/api/providers" })).json() as {
+			label: string
+			devices?: string[]
+		}[]
+		expect(liste.find((p) => p.label === "lokalai")?.devices).toContain("LokalAI_Server1")
+
+		// Leer = wieder vergessen.
+		await app.inject({ method: "PATCH", url: `/api/providers/${tunnel.id}`, payload: { deviceName: "" } })
+		const danach = (await app.inject({ method: "GET", url: "/api/providers" })).json() as {
+			label: string
+			devices?: string[]
+		}[]
+		expect(danach.find((p) => p.label === "lokalai")?.devices ?? []).toHaveLength(0)
+		await app.close()
+	})
+})

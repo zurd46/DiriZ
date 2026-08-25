@@ -53,6 +53,16 @@ interface CreateBody {
 interface PatchBody {
 	label?: string
 	baseUrl?: string
+	/**
+	 * Der Rechner, auf dem dieser Zugang rechnet.
+	 *
+	 * Nötig, wo DiriZ es nicht messen kann: Über einen Tunnel lässt sich der
+	 * `lms`-Befehl nicht befragen, also weiss DiriZ nicht, dass der Tunnel
+	 * denselben Windows-Rechner meint wie die per LM Link durchgereichten
+	 * Modelle des Macs. Wer es weiss, trägt es hier ein — geraten wäre hier
+	 * schlimmer als gefragt.
+	 */
+	deviceName?: string | null
 	enabled?: boolean
 	config?: Record<string, unknown>
 	/** "null" = zurücksetzen, weggelassen = unverändert. */
@@ -81,7 +91,8 @@ export function registerProviders(app: FastifyInstance, ctx: AppContext): void {
 			// Bei LM Studio mit „LM Link" ist das nicht zwingend der Rechner des
 			// Endpunkts: Der Mac reicht die Modelle eines Windows-Rechners durch.
 			// Wer das nicht sieht, sucht Engpässe am falschen Ort.
-			const devices = [...new Set(insts.map((i) => i.deviceName).filter(Boolean))] as string[]
+			const erklaert = typeof p.config?.deviceName === "string" ? p.config.deviceName : undefined
+			const devices = [...new Set([...insts.map((i) => i.deviceName), erklaert].filter(Boolean))] as string[]
 			return {
 				...p,
 				instanceCount: insts.filter((i) => i.enabled).length,
@@ -155,7 +166,16 @@ export function registerProviders(app: FastifyInstance, ctx: AppContext): void {
 			return reply.code(404).send({ error: "Provider nicht gefunden" })
 		}
 		// Model-Settings sind aus `init.md` abgeleitet — also dort hineinschreiben.
-		const { modelSettings, ...rest } = body
+		const { modelSettings, deviceName, ...rest } = body
+		if (deviceName !== undefined) {
+			const config = { ...(before.config ?? {}) }
+			if (deviceName === null || deviceName.trim() === "") {
+				delete config.deviceName
+			} else {
+				config.deviceName = deviceName.trim()
+			}
+			rest.config = { ...config, ...(rest.config ?? {}) }
+		}
 		if (modelSettings !== undefined) {
 			saveProviderDoc(
 				ctx.db,

@@ -28,6 +28,8 @@ interface ProviderDraft {
 	apiKey: string
 	clearApiKey: boolean
 	enabled: boolean
+	/** Rechner, auf dem dieser Zugang rechnet — leer = DiriZ misst oder rät. */
+	deviceName?: string
 }
 
 /** Entwurf beim Bearbeiten eines Modells (Instance). */
@@ -101,7 +103,14 @@ export default function Providers() {
 			return
 		}
 		setEditProvider(p.id)
-		setPDraft({ label: p.label, baseUrl: p.baseUrl, apiKey: "", clearApiKey: false, enabled: p.enabled })
+		setPDraft({
+			label: p.label,
+			baseUrl: p.baseUrl,
+			apiKey: "",
+			clearApiKey: false,
+			enabled: p.enabled,
+			deviceName: typeof p.config?.deviceName === "string" ? p.config.deviceName : "",
+		})
 	}
 
 	const saveProvider = async () => {
@@ -112,6 +121,7 @@ export default function Providers() {
 				label: pDraft.label,
 				baseUrl: pDraft.baseUrl,
 				enabled: pDraft.enabled,
+				deviceName: pDraft.deviceName ?? "",
 				apiKey: pDraft.apiKey || undefined,
 				clearApiKey: pDraft.clearApiKey || undefined,
 			})
@@ -519,6 +529,18 @@ export default function Providers() {
 								value={pDraft.baseUrl}
 								onChange={(e) => setPDraft({ ...pDraft, baseUrl: e.target.value })}
 								placeholder="http://localhost:11434"
+							/>
+						</label>
+						{/* Wo dieser Zugang rechnet. DiriZ misst das nur lokal (LM Studio auf
+						    demselben Rechner); über einen Tunnel muss es der Mensch sagen — sonst
+						    hält der GPU-Schutz zwei Wege zu einer Grafikkarte für zwei Rechner. */}
+						<label className="field" style={{ minWidth: 190 }}>
+							Rechner
+							<input
+								value={pDraft.deviceName ?? ""}
+								onChange={(e) => setPDraft({ ...pDraft, deviceName: e.target.value })}
+								placeholder="z. B. LokalAI_Server1"
+								title="Name des Rechners, auf dem dieser Zugang wirklich rechnet. Zwei Zugänge mit demselben Namen teilen sich eine Grafikkarte — DiriZ lädt dort nie zwei Modelle gleichzeitig."
 							/>
 						</label>
 						<label className="field" style={{ minWidth: 210 }}>

@@ -6,13 +6,14 @@
  * Fastify starten (127.0.0.1:8787). SIGINT/SIGTERM → sauber beenden.
  */
 
-import { AGENT_TOOL_HINTS, type CoreEvent, workBranchName } from "@diriz/shared"
+import { AGENT_TOOL_HINTS, AGENT_TOOLS, type CoreEvent, workBranchName } from "@diriz/shared"
 import { buildApp } from "./app.js"
 import { loadConfig } from "./config.js"
 import { openDatabase } from "./db/connection.js"
 import { migrate } from "./db/migrate.js"
 import {
 	backfillToolInDocs,
+	backfillToolsInDocs,
 	getRepo,
 	getSetting,
 	persistLog,
@@ -153,6 +154,25 @@ async function main(): Promise<void> {
 	])
 	if (nachgetragen > 0) {
 		log("info", "core", `Werkzeug „run_command" in ${nachgetragen} Datenblatt/Datenblätter nachgetragen`)
+	}
+
+	// Der vollständige Dateizugriff, in einem Zug — Datenblätter, die noch den
+	// alten Vierersatz führen, bekommen die übrigen Werkzeuge dazu.
+	const dazu = AGENT_TOOLS.filter(
+		(t) => !["list_files", "read_file", "write_file", "run_command"].includes(t),
+	).map((t) => ({ name: t, hint: AGENT_TOOL_HINTS[t] }))
+	const dateiWerkzeuge = backfillToolsInDocs(db, dazu, [
+		"list_files",
+		"read_file",
+		"write_file",
+		"run_command",
+	])
+	if (dateiWerkzeuge > 0) {
+		log(
+			"info",
+			"core",
+			`Dateiwerkzeuge (${dazu.map((d) => d.name).join(", ")}) in ${dateiWerkzeuge} Datenblatt/Datenblätter nachgetragen`,
+		)
 	}
 
 	// Läufe, die ein früherer Prozess hielt, sind mit ihm gestorben — sie als

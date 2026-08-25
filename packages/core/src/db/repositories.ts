@@ -2072,6 +2072,21 @@ export function listTasksByChain(db: Db, chainId: string): Task[] {
  * Entscheidung.
  */
 export function backfillToolInDocs(db: Db, tool: string, hint: string, previous: string[]): number {
+	return backfillToolsInDocs(db, [{ name: tool, hint }], previous)
+}
+
+/**
+ * Dieselbe Sache für **mehrere** Werkzeuge auf einmal.
+ *
+ * Nötig, seit der Dateizugriff vollständig ist: Acht Werkzeuge einzeln
+ * nachzutragen ginge schief, denn nach dem ersten stimmt die Liste nicht mehr
+ * mit `previous` überein und alle weiteren blieben liegen.
+ */
+export function backfillToolsInDocs(
+	db: Db,
+	neue: { name: string; hint: string }[],
+	previous: string[],
+): number {
 	let ergänzt = 0
 	for (const row of db.prepare("SELECT instance_id, content FROM instance_docs WHERE kind = 'llm'").all() as {
 		instance_id: string
@@ -2080,7 +2095,8 @@ export function backfillToolInDocs(db: Db, tool: string, hint: string, previous:
 		const vorhanden = parseLlmDoc(row.content).tools
 		const unverändert =
 			vorhanden.length === previous.length && previous.every((t) => vorhanden.includes(t as never))
-		if (!unverändert || vorhanden.includes(tool as never)) {
+		const fehlend = neue.filter((n) => !vorhanden.includes(n.name as never))
+		if (!unverändert || fehlend.length === 0) {
 			continue
 		}
 		// Direkt hinter die letzte Werkzeug-Zeile.
@@ -2092,11 +2108,11 @@ export function backfillToolInDocs(db: Db, tool: string, hint: string, previous:
 		if (pos === undefined) {
 			continue
 		}
-		zeilen.splice(pos + 1, 0, `- ${tool} — ${hint}`)
-		const neu = zeilen.join("\n")
+		zeilen.splice(pos + 1, 0, ...fehlend.map((n) => `- ${n.name} — ${n.hint}`))
+		const neuerText = zeilen.join("\n")
 		db.prepare(
 			"UPDATE instance_docs SET content = ?, updated_at = ? WHERE instance_id = ? AND kind = 'llm'",
-		).run(neu, new Date().toISOString(), row.instance_id)
+		).run(neuerText, new Date().toISOString(), row.instance_id)
 		ergänzt++
 	}
 	return ergänzt

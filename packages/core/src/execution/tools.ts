@@ -426,7 +426,7 @@ export async function executeTool(
 	try {
 		switch (call.name) {
 			case "list_files": {
-				const unter = String(args.path ?? "").trim()
+				const unter = normalisierePfad(textArg(args, "path", "dir", "directory", "folder"))
 				const wurzel = unter ? resolveInSandbox(baseDir, pfadPruefen(unter)) : baseDir
 				if (unter && !fs.existsSync(wurzel)) {
 					throw new Error(`Verzeichnis nicht gefunden: ${unter}`)
@@ -443,21 +443,14 @@ export async function executeTool(
 				break
 			}
 			case "read_file": {
-				const p = String(args.path ?? "")
-				if (!isSafeRelPath(p)) {
-					// Modelle schicken gern absolute Pfade. Der Hinweis spart den
-					// blinden zweiten Versuch.
-					throw new Error(
-						`Ungültiger Pfad: ${p} — Pfade sind relativ zum Workspace, ohne führenden „/" und ohne „..“.`,
-					)
-				}
+				const p = pfadPruefen(textArg(args, "path", "file", "filename", "file_path"))
 				const abs = resolveInSandbox(baseDir, p)
 				if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
 					throw new Error(`Datei nicht gefunden: ${p}`)
 				}
 				const stat = fs.statSync(abs)
-				const von = zahl(args.start_line)
-				const wieviele = zahl(args.max_lines)
+				const von = zahl(argOf(args, "start_line", "startLine", "offset", "from_line"))
+				const wieviele = zahl(argOf(args, "max_lines", "maxLines", "limit", "num_lines"))
 				if (stat.size > MAX_READ_BYTES && von === undefined && wieviele === undefined) {
 					// Kein Sackgassen-Fehler mehr: Der Hinweis nennt den Ausweg,
 					// sonst versucht ein Modell dieselbe Datei ein zweites Mal.
@@ -489,13 +482,9 @@ export async function executeTool(
 				break
 			}
 			case "write_file": {
-				const p = String(args.path ?? "")
-				if (!isSafeRelPath(p)) {
-					throw new Error(
-						`Ungültiger Pfad: ${p} — Pfade sind relativ zum Workspace, ohne führenden „/" und ohne „..“.`,
-					)
-				}
-				const content = typeof args.content === "string" ? args.content : JSON.stringify(args.content ?? "")
+				const p = pfadPruefen(textArg(args, "path", "file", "filename", "file_path"))
+				const rohInhalt = argOf(args, "content", "text", "contents", "data")
+				const content = typeof rohInhalt === "string" ? rohInhalt : JSON.stringify(rohInhalt ?? "")
 				const abs = resolveInSandbox(baseDir, p)
 				fs.mkdirSync(path.dirname(abs), { recursive: true })
 				fs.writeFileSync(abs, content, "utf8")
@@ -503,7 +492,7 @@ export async function executeTool(
 				break
 			}
 			case "edit_file": {
-				const p = pfadPruefen(String(args.path ?? ""))
+				const p = pfadPruefen(textArg(args, "path", "file", "filename", "file_path"))
 				const abs = resolveInSandbox(baseDir, p)
 				if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
 					throw new Error(`Datei nicht gefunden: ${p} — mit write_file anlegen.`)
@@ -511,8 +500,9 @@ export async function executeTool(
 				if (fs.statSync(abs).size > MAX_EDIT_BYTES) {
 					throw new Error(`Datei zu groß zum Ändern (max. ${MAX_EDIT_BYTES / 1024 / 1024} MB)`)
 				}
-				const alt = String(args.old_text ?? "")
-				const neu = String(args.new_text ?? "")
+				const alt = textArg(args, "old_text", "old_string", "search", "find", "from")
+				const neu = textArg(args, "new_text", "new_string", "replace", "replacement", "to")
+				const alleErsetzen = jaNein(argOf(args, "replace_all", "replaceAll", "all", "global"))
 				if (alt.length === 0) {
 					throw new Error("`old_text` ist leer — nenne den Text, der ersetzt werden soll.")
 				}
@@ -529,25 +519,25 @@ export async function executeTool(
 							"Zeilenumbrüchen — lies die Stelle mit read_file und kopiere sie wörtlich.",
 					)
 				}
-				if (treffer > 1 && args.replace_all !== true) {
+				if (treffer > 1 && !alleErsetzen) {
 					throw new Error(
 						`Text kommt ${treffer}-mal vor in ${p}. Nimm mehr Zeilen dazu, damit die Stelle ` +
 							"eindeutig ist — oder setze `replace_all: true`, wenn alle gemeint sind.",
 					)
 				}
-				const geaendert = args.replace_all === true ? inhalt.split(alt).join(neu) : inhalt.replace(alt, neu)
+				const geaendert = alleErsetzen ? inhalt.split(alt).join(neu) : inhalt.replace(alt, neu)
 				fs.writeFileSync(abs, geaendert, "utf8")
 				const diff = Buffer.byteLength(geaendert) - Buffer.byteLength(inhalt)
 				result = {
 					ok: true,
-					detail: `Ersetzt in ${p}: ${treffer > 1 && args.replace_all === true ? `${treffer} Stellen` : "1 Stelle"} (${diff >= 0 ? "+" : ""}${diff} Bytes)`,
+					detail: `Ersetzt in ${p}: ${treffer > 1 && alleErsetzen ? `${treffer} Stellen` : "1 Stelle"} (${diff >= 0 ? "+" : ""}${diff} Bytes)`,
 				}
 				break
 			}
 			case "append_file": {
-				const p = pfadPruefen(String(args.path ?? ""))
+				const p = pfadPruefen(textArg(args, "path", "file", "filename", "file_path"))
 				const abs = resolveInSandbox(baseDir, p)
-				const content = typeof args.content === "string" ? args.content : String(args.content ?? "")
+				const content = textArg(args, "content", "text", "contents", "data")
 				fs.mkdirSync(path.dirname(abs), { recursive: true })
 				const gabEs = fs.existsSync(abs)
 				fs.appendFileSync(abs, content, "utf8")
@@ -558,7 +548,7 @@ export async function executeTool(
 				break
 			}
 			case "delete_file": {
-				const p = pfadPruefen(String(args.path ?? ""))
+				const p = pfadPruefen(textArg(args, "path", "file", "filename", "file_path"))
 				const abs = resolveInSandbox(baseDir, p)
 				if (abs === baseDir) {
 					throw new Error("Der Workspace selbst wird nicht gelöscht.")
@@ -567,7 +557,7 @@ export async function executeTool(
 					throw new Error(`Nicht gefunden: ${p}`)
 				}
 				const istOrdner = fs.statSync(abs).isDirectory()
-				if (istOrdner && args.recursive !== true) {
+				if (istOrdner && !jaNein(argOf(args, "recursive", "force", "rekursiv"))) {
 					const drin = fs.readdirSync(abs).length
 					if (drin > 0) {
 						throw new Error(
@@ -582,8 +572,9 @@ export async function executeTool(
 			}
 			case "move_file":
 			case "copy_file": {
-				const von = pfadPruefen(String(args.from ?? ""), "from")
-				const nach = pfadPruefen(String(args.to ?? ""), "to")
+				const von = pfadPruefen(textArg(args, "from", "source", "src", "old_path", "path"), "from")
+				const nach = pfadPruefen(textArg(args, "to", "target", "destination", "dest", "new_path"), "to")
+				const ueberschreiben = jaNein(argOf(args, "overwrite", "force", "replace"))
 				const absVon = resolveInSandbox(baseDir, von)
 				const absNach = resolveInSandbox(baseDir, nach)
 				if (!fs.existsSync(absVon)) {
@@ -592,7 +583,7 @@ export async function executeTool(
 				if (absVon === absNach) {
 					throw new Error("Quelle und Ziel sind derselbe Pfad.")
 				}
-				if (fs.existsSync(absNach) && args.overwrite !== true) {
+				if (fs.existsSync(absNach) && !ueberschreiben) {
 					throw new Error(`${nach} gibt es bereits — setze \`overwrite: true\`, wenn es ersetzt werden soll.`)
 				}
 				const istOrdner = fs.statSync(absVon).isDirectory()
@@ -611,7 +602,7 @@ export async function executeTool(
 				break
 			}
 			case "make_dir": {
-				const p = pfadPruefen(String(args.path ?? ""))
+				const p = pfadPruefen(textArg(args, "path", "dir", "directory", "folder"))
 				const abs = resolveInSandbox(baseDir, p)
 				if (fs.existsSync(abs)) {
 					if (!fs.statSync(abs).isDirectory()) {
@@ -629,7 +620,7 @@ export async function executeTool(
 				break
 			}
 			case "file_info": {
-				const p = pfadPruefen(String(args.path ?? ""))
+				const p = pfadPruefen(textArg(args, "path", "file", "filename", "file_path"))
 				const abs = resolveInSandbox(baseDir, p)
 				if (!fs.existsSync(abs)) {
 					result = { ok: true, detail: `${p}: existiert nicht` }
@@ -854,22 +845,97 @@ function listFiles(dir: string): string[] {
 }
 
 /**
+ * Bringt einen Pfad in die Form, die DiriZ erwartet — statt ihn abzuweisen.
+ *
+ * Ein Modell schreibt den Pfad so, wie es ihn in jedem Terminal schreiben
+ * würde. Beobachtet, jedes Mal als roter Fehlschlag im Lauf:
+ *
+ * - `.` und `./` für „hier" — der häufigste Fall bei `list_files`/`search_files`
+ * - `./src/a.js` mit führendem Punkt
+ * - `/src/a.js` mit führendem Schrägstrich (gemeint ist die Workspace-Wurzel)
+ * - `src/` mit Schrägstrich am Ende
+ * - `src\\a.js` mit Backslashes
+ *
+ * Keine dieser Formen ist mehrdeutig, keine führt aus der Sandbox heraus — sie
+ * abzuweisen kostet nur einen Schritt und lehrt nichts. `..` bleibt verboten:
+ * Das **ist** mehrdeutig, und der Ausbruchsversuch gehört benannt.
+ */
+export function normalisierePfad(p: string): string {
+	let out = p.trim().replace(/\\/g, "/")
+	// Führender Schrägstrich: gemeint ist die Wurzel des Workspaces, nicht die
+	// des Rechners — dorthin käme das Modell ohnehin nicht.
+	out = out.replace(/^\/+/, "")
+	while (out.startsWith("./")) {
+		out = out.slice(2)
+	}
+	out = out
+		.replace(/\/\.\//g, "/")
+		.replace(/\/+/g, "/")
+		.replace(/\/+$/, "")
+	return out === "." ? "" : out
+}
+
+/**
  * Prüft einen Pfad aus einem Werkzeugaufruf — mit einer Meldung, die weiterhilft.
  *
- * Modelle schicken gern absolute Pfade (`/src/x.js`). Der Hinweis, wie ein
- * gültiger Pfad aussieht, spart den blinden zweiten Versuch; beobachtet wurde
- * genau das: Abweisung, identische Wiederholung, Abbruch.
+ * Liefert den **bereinigten** Pfad zurück; alles Weitere rechnet damit.
  */
 function pfadPruefen(p: string, feld = "path"): string {
-	if (!p) {
+	const sauber = normalisierePfad(p)
+	if (!sauber) {
 		throw new Error(`\`${feld}\` fehlt — nenne einen relativen Pfad im Workspace.`)
 	}
-	if (!isSafeRelPath(p)) {
+	if (!isSafeRelPath(sauber)) {
 		throw new Error(
-			`Ungültiger Pfad (${feld}): ${p} — Pfade sind relativ zum Workspace, ohne führenden „/" und ohne „..“.`,
+			`Ungültiger Pfad (${feld}): ${p} — Pfade sind relativ zum Workspace und dürfen kein „..“ enthalten.`,
 		)
 	}
-	return p
+	return sauber
+}
+
+/**
+ * Das erste belegte Argument aus einer Reihe von Namen.
+ *
+ * Modelle halten sich nicht immer an das Schema: `old_string` statt
+ * `old_text`, `pattern` statt `query`, `source`/`destination` statt
+ * `from`/`to`. Das sind keine Fehler, sondern die Schreibweisen anderer
+ * Werkzeugsätze, auf die sie trainiert wurden. Sie anzunehmen kostet eine
+ * Zeile — sie abzuweisen kostet einen Schritt.
+ */
+function argOf(args: Record<string, unknown>, ...namen: string[]): unknown {
+	for (const n of namen) {
+		const v = args[n]
+		if (v !== undefined && v !== null && v !== "") {
+			return v
+		}
+	}
+	return undefined
+}
+
+/** Text-Argument unter mehreren möglichen Namen. */
+function textArg(args: Record<string, unknown>, ...namen: string[]): string {
+	const v = argOf(args, ...namen)
+	return v === undefined ? "" : typeof v === "string" ? v : String(v)
+}
+
+/**
+ * Ja/Nein aus einem Werkzeug-Argument.
+ *
+ * `true`, `"true"`, `"yes"` und `1` meinen alle dasselbe. Ein Modell, das
+ * `"true"` schickt, hat sich entschieden — das an einem Typ scheitern zu
+ * lassen, wäre Rechthaberei.
+ */
+function jaNein(v: unknown): boolean {
+	if (typeof v === "boolean") {
+		return v
+	}
+	if (typeof v === "number") {
+		return v === 1
+	}
+	if (typeof v === "string") {
+		return ["true", "yes", "ja", "1"].includes(v.trim().toLowerCase())
+	}
+	return false
 }
 
 /** Zahl aus einem Werkzeug-Argument, oder `undefined` bei Unsinn. */
@@ -899,19 +965,20 @@ function zaehleVorkommen(text: string, teil: string): number {
  * Sandbox und kappt sauber.
  */
 function searchFiles(baseDir: string, args: Record<string, unknown>): ToolOpResult {
-	const query = String(args.query ?? "")
+	const query = textArg(args, "query", "pattern", "text", "search", "needle")
 	if (!query) {
 		throw new Error("`query` fehlt — nenne den gesuchten Text.")
 	}
-	const unter = String(args.path ?? "").trim()
+	const unter = normalisierePfad(textArg(args, "path", "dir", "directory", "folder"))
 	const wurzel = unter ? resolveInSandbox(baseDir, pfadPruefen(unter)) : baseDir
 	if (!fs.existsSync(wurzel)) {
 		throw new Error(`Nicht gefunden: ${unter}`)
 	}
-	const flags = args.ignore_case === true ? "i" : ""
+	const flags = jaNein(argOf(args, "ignore_case", "ignoreCase", "case_insensitive")) ? "i" : ""
 	let muster: RegExp
 	try {
-		muster = new RegExp(args.regex === true ? query : query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), flags)
+		const alsRegex = jaNein(argOf(args, "regex", "is_regex", "use_regex"))
+		muster = new RegExp(alsRegex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), flags)
 	} catch (e) {
 		throw new Error(`Ungültiger regulärer Ausdruck: ${e instanceof Error ? e.message : String(e)}`)
 	}

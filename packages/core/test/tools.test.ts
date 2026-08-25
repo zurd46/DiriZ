@@ -21,7 +21,7 @@ import {
 	saveInstanceDoc,
 	upsertInstance,
 } from "../src/db/repositories.js"
-import { executeTool, TOOL_SPECS } from "../src/execution/tools.js"
+import { executeTool, normalisierePfad, TOOL_SPECS } from "../src/execution/tools.js"
 
 const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-tools-"))
 const ops: { name: string; ok: boolean }[] = []
@@ -542,5 +542,91 @@ describe("tools: vollständiger Dateizugriff", () => {
 		expect(r.detail).toContain("Datei")
 		expect(r.detail).toContain("500 Zeilen")
 		expect((await run("file_info", { path: "gibtsnicht.txt" })).detail).toContain("existiert nicht")
+	})
+})
+
+describe("tools: Schreibweisen, die Modelle wirklich schicken", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-formen-"))
+	const run = (name: string, args: Record<string, unknown>) => executeTool(dir, call(name, args), emitOp, log)
+
+	it("normalisiert Pfade, statt sie abzuweisen", () => {
+		// Jede dieser Formen ist im Log als roter Fehlschlag aufgetaucht.
+		expect(normalisierePfad(".")).toBe("")
+		expect(normalisierePfad("./")).toBe("")
+		expect(normalisierePfad("./src/a.js")).toBe("src/a.js")
+		expect(normalisierePfad("/src/a.js")).toBe("src/a.js")
+		expect(normalisierePfad("src/")).toBe("src")
+		expect(normalisierePfad("src//a.js")).toBe("src/a.js")
+		expect(normalisierePfad("src\\a.js")).toBe("src/a.js")
+		expect(normalisierePfad("src/./a.js")).toBe("src/a.js")
+		// `..` bleibt `..` — der Ausbruchsversuch wird benannt, nicht geglättet.
+		expect(normalisierePfad("../geheim")).toBe("../geheim")
+	})
+
+	it('sucht mit `path: "."` — der Fall aus dem echten Lauf', async () => {
+		fs.mkdirSync(path.join(dir, "src"), { recursive: true })
+		fs.writeFileSync(path.join(dir, "src/a.js"), "const sku = 1\n")
+		const r = await run("search_files", { query: "sku", path: "." })
+		expect(r.ok).toBe(true)
+		expect(r.detail).toContain("src/a.js:1:")
+	})
+
+	it("liest eine Datei auch mit führendem Schrägstrich oder Punkt", async () => {
+		for (const form of ["/src/a.js", "./src/a.js", "src\\a.js".replace("a.js", "a.js")]) {
+			const r = await run("read_file", { path: form })
+			expect(r.ok, `Form „${form}" wurde abgewiesen: ${r.detail}`).toBe(true)
+		}
+	})
+
+	it("versteht die Argumentnamen anderer Werkzeugsätze", async () => {
+		// `old_string`/`new_string` statt `old_text`/`new_text` — verbreitete
+		// Schreibweise, auf die viele Modelle trainiert sind.
+		const r = await run("edit_file", { file: "src/a.js", old_string: "1", new_string: "2" })
+		expect(r.ok, r.detail).toBe(true)
+		expect(fs.readFileSync(path.join(dir, "src/a.js"), "utf8")).toBe("const sku = 2\n")
+
+		// `pattern` statt `query`
+		expect((await run("search_files", { pattern: "sku" })).detail).toContain("src/a.js")
+
+		// `source`/`destination` statt `from`/`to`
+		const m = await run("copy_file", { source: "src/a.js", destination: "src/b.js" })
+		expect(m.ok, m.detail).toBe(true)
+
+		// `text` statt `content`
+		const w = await run("write_file", { path: "notiz.txt", text: "hallo" })
+		expect(w.ok, w.detail).toBe(true)
+		expect(fs.readFileSync(path.join(dir, "notiz.txt"), "utf8")).toBe("hallo")
+	})
+
+	it('nimmt `"true"` als Ja — ein Modell, das sich entschieden hat', async () => {
+		fs.writeFileSync(path.join(dir, "viel.txt"), "x\nx\n")
+		const r = await run("edit_file", {
+			path: "viel.txt",
+			old_text: "x",
+			new_text: "y",
+			replace_all: "true",
+		})
+		expect(r.ok, r.detail).toBe(true)
+		expect(fs.readFileSync(path.join(dir, "viel.txt"), "utf8")).toBe("y\ny\n")
+
+		fs.mkdirSync(path.join(dir, "weg"), { recursive: true })
+		fs.writeFileSync(path.join(dir, "weg/x.txt"), "x")
+		expect((await run("delete_file", { path: "weg", recursive: "yes" })).ok).toBe(true)
+	})
+
+	it("nimmt Zeilenangaben auch als Text", async () => {
+		fs.writeFileSync(path.join(dir, "z.txt"), "eins\nzwei\ndrei\n")
+		const r = await run("read_file", { path: "z.txt", start_line: "2", max_lines: "1" })
+		expect(r.ok, r.detail).toBe(true)
+		expect(r.detail).toContain("2: zwei")
+		expect(r.detail).not.toContain("drei")
+	})
+
+	it("lässt einen Ausbruch weiterhin nicht durchgehen", async () => {
+		for (const böse of ["../entwischt.txt", "/../../etc/passwd", "src/../../weg.txt"]) {
+			const r = await run("write_file", { path: böse, content: "x" })
+			expect(r.ok, `„${böse}" wurde durchgelassen!`).toBe(false)
+		}
+		expect(fs.existsSync(path.join(dir, "..", "entwischt.txt"))).toBe(false)
 	})
 })

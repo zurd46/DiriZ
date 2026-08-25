@@ -245,6 +245,7 @@ interface InstanceRow {
 	display_name: string
 	context_window: number
 	loaded_context_window: number | null
+	device_name: string | null
 	capabilities_json: string
 	languages_json: string
 	quantization: string | null
@@ -266,6 +267,7 @@ function mapInstance(row: InstanceRow): InstanceModel {
 		displayName: row.display_name,
 		contextWindow: row.context_window,
 		loadedContextWindow: row.loaded_context_window ?? undefined,
+		deviceName: row.device_name ?? undefined,
 		capabilities: JSON.parse(row.capabilities_json) as Capability[],
 		languages: JSON.parse(row.languages_json) as string[],
 		quantization: row.quantization ?? undefined,
@@ -353,6 +355,7 @@ export function upsertInstance(
 			-- gesehene Wert bleibt trotzdem die beste Schätzung für das nächste
 			-- Laden — er wird also behalten, nicht gelöscht.
 			loaded_context_window = COALESCE(?, loaded_context_window),
+			device_name = COALESCE(?, device_name),
 			languages_json = ?,
 			quantization = COALESCE(?, quantization),
 			price_in_per_mtok = ?, price_out_per_mtok = ?,
@@ -362,6 +365,7 @@ export function upsertInstance(
 		model.displayName,
 		model.contextWindow ?? null,
 		model.loadedContextWindow ?? null,
+		model.deviceName ?? null,
 		JSON.stringify(model.languages ?? []),
 		model.quantization ?? null,
 		model.pricePerMTok?.in ?? null,

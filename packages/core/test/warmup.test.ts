@@ -17,6 +17,7 @@ import { openDatabase } from "../src/db/connection.js"
 import { migrate } from "../src/db/migrate.js"
 import { createProvider, listInstances, lockInstance, upsertInstance } from "../src/db/repositories.js"
 import { DEFAULT_WARMUP, WarmKeeper } from "../src/execution/warmup.js"
+import { isLocalEndpoint, parseLinkStatus } from "../src/providers/lmlink.js"
 
 /** Adapter, der wahlweise antwortet oder das Laden verweigert. */
 class WarmFake implements LLMProvider {
@@ -171,5 +172,36 @@ describe("WarmKeeper: eine Maschine, ein Warmhalten", () => {
 		const adapter = new WarmFake("p")
 		await keeper(adapter).runOnce()
 		expect(adapter.calls).toEqual([])
+	})
+})
+
+describe("LM Link: wo rechnet das Modell?", () => {
+	it("liest Gerätenamen und Kennungen aus `lms link status`", () => {
+		// Wortgetreu die Ausgabe von LM Studio 0.4 auf dem Rechner des Nutzers.
+		const ausgabe = [
+			"This device: MacBook-Pro-von-Daniel.local",
+			"Status: Online",
+			"",
+			"Found 1 device:",
+			"",
+			"  - LokalAI_Server1",
+			"    Status: connected",
+			"    Identifier: dc6370d36a292bacd8e25a52652e3b70",
+			"    Loaded Models Instances:",
+			"      - nvidia-nemotron-3.5-lightning-30b-a3b",
+		].join("\n")
+		const { eigener, namen } = parseLinkStatus(ausgabe)
+		expect(eigener).toBe("MacBook-Pro-von-Daniel.local")
+		expect(namen.get("dc6370d36a292bacd8e25a52652e3b70")).toBe("LokalAI_Server1")
+		// Das geladene Modell steht in derselben Einrückung wie ein Gerät — es
+		// darf trotzdem nicht als eines gezählt werden.
+		expect(namen.size).toBe(1)
+	})
+
+	it("hält einen Tunnel nicht für den eigenen Rechner", () => {
+		// Über einen Tunnel befragte `lms` den falschen Rechner: den eigenen.
+		expect(isLocalEndpoint("http://127.0.0.1:1234")).toBe(true)
+		expect(isLocalEndpoint("http://localhost:1234")).toBe(true)
+		expect(isLocalEndpoint("https://lokalai.ngrok.dev/v1")).toBe(false)
 	})
 })

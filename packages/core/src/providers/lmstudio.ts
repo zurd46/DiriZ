@@ -11,6 +11,7 @@
 
 import type { Capability, DiscoveredModel, LoadInfo } from "@diriz/shared"
 import { errorMessage, fetchJson } from "./http.js"
+import { isLocalEndpoint, readDeviceMap } from "./lmlink.js"
 import { OpenAiCompatProvider } from "./openai-compat.js"
 
 /**
@@ -100,6 +101,9 @@ export class LmStudioProvider extends OpenAiCompatProvider {
 			})
 			const models = data.data
 			if (Array.isArray(models) && models.length > 0) {
+				// Wo rechnet was? Nur lokal zu beantworten (siehe `lmlink.ts`) und
+				// nur Beiwerk: Fällt es aus, bleibt die Liste unverändert.
+				const geraete = isLocalEndpoint(this.root) ? await readDeviceMap() : new Map<string, string>()
 				return (
 					models
 						// Embedding-Modelle können nicht chatten — sie gehören nicht ins Routing.
@@ -112,6 +116,7 @@ export class LmStudioProvider extends OpenAiCompatProvider {
 							// Modell im Speicher liegt — deshalb wird der Wert nie mit
 							// „nichts" überschrieben, sondern behalten.
 							loadedContextWindow: m.loaded_context_length,
+							deviceName: geraete.get(m.id),
 							quantization: m.quantization,
 							capabilities: capabilitiesOf(m),
 						}))

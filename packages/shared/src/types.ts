@@ -35,6 +35,11 @@ export interface DiscoveredModel {
 	 * als das Maximum). Fehlt, solange das Modell nicht geladen ist.
 	 */
 	loadedContextWindow?: number
+	/**
+	 * Der Rechner, auf dem dieses Modell tatsächlich rechnet. Bei LM Studio mit
+	 * LM Link ist das oft **nicht** die Maschine des Endpunkts.
+	 */
+	deviceName?: string
 	capabilities?: Capability[]
 	languages?: string[]
 	quantization?: string
@@ -59,6 +64,8 @@ export interface InstanceModel {
 	 * Modells, dieser Wert die Wahrheit des Rechners.
 	 */
 	loadedContextWindow?: number
+	/** Rechner, auf dem das Modell tatsächlich läuft (LM Link), falls bekannt. */
+	deviceName?: string
 	capabilities: Capability[]
 	languages: string[]
 	quantization?: string

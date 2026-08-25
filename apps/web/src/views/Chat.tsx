@@ -694,12 +694,25 @@ export default function Chat() {
 	const instanceOf = (id?: string) => instances.find((i) => i.id === id)
 	const providerLabel = (providerId?: string) => providers.find((p) => p.id === providerId)?.label
 
-	/** Wer rechnet gerade woran? Live aus dem Stream, sonst aus dem Verlauf. */
+	/**
+	 * Wer rechnet gerade woran? Live aus dem Stream, sonst aus dem Verlauf.
+	 *
+	 * Wenn bekannt ist, auf **welchem Rechner** das Modell tatsächlich läuft,
+	 * steht der dort — und der Provider nur als Weg dorthin. LM Studio reicht
+	 * mit „LM Link" fremde Modelle durch: Der Endpunkt heisst dann `MacDani`,
+	 * gerechnet wird auf `LokalAI_Server1`. Die alte Anzeige nannte den
+	 * Briefkasten, nicht den Empfänger.
+	 */
 	const workerOf = (turn: Turn): { model?: string; host?: string } => {
 		const run = runOf(turn.taskId)
 		const inst = instanceOf(run?.instanceId)
 		if (inst) {
-			return { model: inst.displayName, host: providerLabel(inst.providerId) }
+			const weg = providerLabel(inst.providerId)
+			const geraet = inst.deviceName
+			return {
+				model: inst.displayName,
+				host: geraet && geraet !== weg ? `${geraet} · über ${weg}` : weg,
+			}
 		}
 		return { model: turn.modelName ?? undefined, host: turn.providerLabel ?? undefined }
 	}

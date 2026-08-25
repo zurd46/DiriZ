@@ -1,0 +1,11 @@
+-- Was LM Studio als Maximum meldet, ist nicht, was es lädt.
+--
+-- Nachgemessen am 2026-08-25: `qwen-agentworld-35b-a3b` meldet
+-- `max_context_length: 262144`, geladen war es mit **60 160**. DiriZ nahm das
+-- Maximum, hielt 200 000 Token für zulässig und bekam vom Server:
+--   „request (70017 tokens) exceeds the available context size (60160 tokens)“
+--
+-- Beide Zahlen werden deshalb getrennt geführt: `context_window` bleibt die
+-- Fähigkeit des Modells (dafür ist sie im Routing gedacht), `loaded_context_window`
+-- ist die Wahrheit des Augenblicks. Gerechnet wird mit der kleineren.
+ALTER TABLE instances ADD COLUMN loaded_context_window INTEGER;

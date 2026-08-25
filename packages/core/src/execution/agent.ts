@@ -15,7 +15,7 @@
  * leere Antworten kann es damit nicht mehr geben.
  */
 
-import type { ChatMessage, LLMProvider, ModelSettings, ToolCallRequest } from "@diriz/shared"
+import type { ChatChunk, ChatMessage, LLMProvider, ModelSettings, ToolCallRequest } from "@diriz/shared"
 import {
 	type CommandPolicy,
 	executeTool,
@@ -128,8 +128,15 @@ function readMaxStepsEnv(): number | undefined {
 	return Number.isFinite(raw) && raw > 0 ? raw : undefined
 }
 
-/** Versuche für den Abschluss-Schritt, bevor DiriZ selbst zusammenfasst. */
-const FINAL_ANSWER_ATTEMPTS = 2
+/**
+ * Versuche für den Abschluss-Schritt, bevor DiriZ selbst zusammenfasst.
+ *
+ * Vier statt zwei — mit Wartezeiten dazwischen. Zu diesem Zeitpunkt steckt die
+ * gesamte Arbeit eines Laufs im Verlauf: An dieser Stelle aufzugeben, wirft
+ * womöglich eine halbe Stunde Arbeit weg, während der Server sich zwanzig
+ * Sekunden später wieder gefangen hätte.
+ */
+const FINAL_ANSWER_ATTEMPTS = 4
 
 type LogFn = (level: "info" | "warn" | "error", scope: string, msg: string) => void
 
@@ -296,14 +303,44 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 			messages.push(...gekürzt.messages)
 			opts.log("info", "agent", `Kontext eingedampft: ${gekürzt.trimmed} alte Tool-Ergebnis(se) gekürzt`)
 		}
-		opts.onStepStart?.()
-		const stream = opts.adapter.chat({
-			messages,
-			model: opts.model,
-			settings: opts.settings,
-			tools,
-			signal: opts.signal,
-		})
+		// **Ein Zucken des Servers darf keinen Lauf töten.**
+		//
+		// Beobachtet: Im 26. Schritt kam ein HTTP 500 (eine HTML-Fehlerseite,
+		// nicht einmal JSON) — und damit war ein Lauf verloren, dessen Arbeit
+		// bereits auf der Platte lag. Diese Fehler sind vorübergehend: Derselbe
+		// Server lieferte nach ein paar Sekunden wieder. Also wird der Schritt
+		// wiederholt, statt alles zu verwerfen; der Verlauf ist ja unverändert.
+		let stream: AsyncIterable<ChatChunk> | undefined
+		for (let versuch = 1; versuch <= STEP_ATTEMPTS; versuch++) {
+			opts.onStepStart?.()
+			try {
+				stream = await ersterChunk(
+					opts.adapter.chat({
+						messages,
+						model: opts.model,
+						settings: opts.settings,
+						tools,
+						signal: opts.signal,
+					}),
+				)
+				break
+			} catch (e) {
+				const grund = e instanceof Error ? e.message : String(e)
+				if (opts.signal?.aborted || versuch === STEP_ATTEMPTS || !istVorübergehend(grund)) {
+					throw e
+				}
+				const pause = FINAL_ANSWER_BACKOFF_MS[versuch - 1] ?? 8000
+				opts.log(
+					"warn",
+					"agent",
+					`Schritt ${step} fehlgeschlagen (Versuch ${versuch}): ${grund.slice(0, 120)} — neuer Versuch in ${Math.round(pause / 1000)} s`,
+				)
+				await warte(pause, opts.signal)
+			}
+		}
+		if (!stream) {
+			throw new Error("Kein Stream erhalten")
+		}
 
 		let stepText = ""
 		const calls: ToolCallRequest[] = []
@@ -581,6 +618,75 @@ function summarizeArgs(call: ToolCallRequest): string {
 }
 
 /**
+ * Wartezeiten zwischen den Anläufen der Abschlussantwort.
+ *
+ * Kein gleichmässiger Takt: Der erste Fehlschlag kann ein Zucken sein, der
+ * zweite ist ein Zustand. Gemessen an LM Studio, das sich nach einem
+ * misslungenen Ladevorgang erst nach etwa 16 Sekunden fängt.
+ */
+const FINAL_ANSWER_BACKOFF_MS = [3000, 10_000, 20_000]
+
+/** Anläufe je Arbeitsschritt, bevor der Lauf an den Failover übergeben wird. */
+const STEP_ATTEMPTS = 3
+
+/**
+ * Ist der Fehler vorübergehend — lohnt ein zweiter Versuch am selben Modell?
+ *
+ * Ja bei Serverzuständen (500/502/503, abgebrochene Verbindungen, „terminated“,
+ * entladenes Modell). Nein bei allem, was sich durch Wiederholen nicht ändert:
+ * zu grosser Prompt, unbekanntes Modell, fehlende Berechtigung. Dort ist der
+ * Failover auf ein anderes Modell die richtige Antwort, nicht Geduld.
+ */
+export function istVorübergehend(fehler: string): boolean {
+	if (/exceeds the available context|context size|400 Bad Request|401|403|404/i.test(fehler)) {
+		return false
+	}
+	return /HTTP 5\d\d|terminated|socket|ECONNRESET|EPIPE|fetch failed|network|model is unloaded|engine protocol/i.test(
+		fehler,
+	)
+}
+
+/**
+ * Zieht den **ersten** Chunk aus dem Stream und gibt einen Strom zurück, der
+ * ihn wieder voranstellt.
+ *
+ * Nur so lässt sich ein Schritt gefahrlos wiederholen: Ein Fehler zeigt sich
+ * erst, wenn der Stream läuft — und wer schon Text ausgegeben hat, darf ihn
+ * nicht ein zweites Mal ausgeben.
+ */
+async function ersterChunk(stream: AsyncIterable<ChatChunk>): Promise<AsyncIterable<ChatChunk>> {
+	const it = stream[Symbol.asyncIterator]()
+	const erster = await it.next()
+	return {
+		async *[Symbol.asyncIterator]() {
+			if (!erster.done) {
+				yield erster.value
+			}
+			while (true) {
+				const n = await it.next()
+				if (n.done) {
+					return
+				}
+				yield n.value
+			}
+		},
+	}
+}
+
+/** Pause, die auf ein Abbruchsignal hört — Warten darf nicht unabbrechbar sein. */
+function warte(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve) => {
+		const timer = setTimeout(fertig, ms)
+		function fertig() {
+			clearTimeout(timer)
+			signal?.removeEventListener("abort", fertig)
+			resolve()
+		}
+		signal?.addEventListener("abort", fertig, { once: true })
+	})
+}
+
+/**
  * Ein Modell-Schritt **ohne** Tool-Specs: Das Modell kann keine weiteren Calls
  * absetzen und muss antworten. Tool-Call-Chunks werden ignoriert (manche
  * Backends senden sie trotzdem). Fehler brechen nichts ab — der Aufrufer
@@ -626,6 +732,19 @@ async function requestFinalAnswer(
 			opts.log("warn", "agent", `Abschluss-Schritt fehlgeschlagen (Versuch ${attempt}): ${lastError}`)
 			if (opts.signal?.aborted) {
 				break
+			}
+			// **Warten, bevor es wieder losgeht.**
+			//
+			// Ohne Pause folgten zwei Versuche im Abstand von zehn Millisekunden
+			// aufeinander — beide scheiterten am selben Serverzustand, und eine
+			// halbe Stunde Arbeit war verloren. Nachgemessen: Nach einem
+			// Fehlschlag scheitern an LM Studio auch die nächsten Anfragen, die
+			// dritte lief wieder (nach 16 s). Zehn Millisekunden sind kein
+			// Versuch, sie sind eine Formalität.
+			if (attempt < FINAL_ANSWER_ATTEMPTS) {
+				const pause = FINAL_ANSWER_BACKOFF_MS[attempt - 1] ?? 8000
+				opts.log("info", "agent", `Warte ${Math.round(pause / 1000)} s vor dem nächsten Versuch`)
+				await warte(pause, opts.signal)
 			}
 			continue
 		}

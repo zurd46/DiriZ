@@ -253,6 +253,18 @@ export function looksLikeLoadFailure(error: string): boolean {
  */
 const MACHINE_COOLDOWN_MS = 15_000
 
+/**
+ * Das kleinere von „was das Modell kann" und „was gerade geladen ist".
+ *
+ * Beides wird gebraucht: Die Fähigkeit gehört ins Routing (ein Modell mit
+ * 262 k Fenster ist für lange Aufgaben der bessere Kandidat), die geladene
+ * Grösse in die Rechnung (mehr passt heute nicht hinein).
+ */
+export function wirksamesFenster(instance: { contextWindow: number; loadedContextWindow?: number }): number {
+	const geladen = instance.loadedContextWindow
+	return geladen && geladen > 0 ? Math.min(instance.contextWindow, geladen) : instance.contextWindow
+}
+
 /** So viel Vorarbeit reicht ein Kettenschritt weiter (Zeichen). */
 const HANDOFF_MAX_CHARS = 6000
 
@@ -1506,8 +1518,13 @@ export class ExecutionEngine {
 					allowedTools: getInstanceSpec(db, choice.instance.id)?.tools,
 					// Jeder Schritt beginnt mit einer neuen Prompt-Verarbeitung.
 					onStepStart: relaxForNextStep,
-					// Damit der Loop weiss, wann der Verlauf zu gross wird.
-					contextWindow: choice.instance.contextWindow,
+					// Damit der Loop weiss, wann der Verlauf zu gross wird — und
+					// zwar nach der **Wahrheit des Rechners**, nicht nach der
+					// Fähigkeit des Modells. LM Studio meldet für dasselbe Modell
+					// 262 144 als Maximum und lädt es mit 60 160; wer dem Maximum
+					// glaubt, bekommt mitten in der Arbeit
+					// „request (70017 tokens) exceeds the available context size".
+					contextWindow: wirksamesFenster(choice.instance),
 					// Was `run_command` starten darf — eine Entscheidung des Menschen.
 					commandPolicy: this.commandPolicy(),
 					adapter,

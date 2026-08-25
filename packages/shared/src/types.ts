@@ -30,6 +30,11 @@ export interface DiscoveredModel {
 	modelId: string
 	displayName: string
 	contextWindow?: number
+	/**
+	 * Wie gross das Fenster **gerade wirklich** ist (LM Studio lädt oft kleiner
+	 * als das Maximum). Fehlt, solange das Modell nicht geladen ist.
+	 */
+	loadedContextWindow?: number
 	capabilities?: Capability[]
 	languages?: string[]
 	quantization?: string
@@ -48,6 +53,12 @@ export interface InstanceModel {
 	modelId: string
 	displayName: string
 	contextWindow: number
+	/**
+	 * Zuletzt beobachtete **geladene** Fenstergrösse. Gerechnet wird mit dem
+	 * kleineren der beiden Werte: `contextWindow` ist die Fähigkeit des
+	 * Modells, dieser Wert die Wahrheit des Rechners.
+	 */
+	loadedContextWindow?: number
 	capabilities: Capability[]
 	languages: string[]
 	quantization?: string

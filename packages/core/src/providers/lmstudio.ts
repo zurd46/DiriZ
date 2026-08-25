@@ -105,6 +105,10 @@ export class LmStudioProvider extends OpenAiCompatProvider {
 							modelId: m.id,
 							displayName: m.id,
 							contextWindow: m.max_context_length ?? m.loaded_context_length,
+							// Was gerade wirklich geladen ist. Nur gesetzt, solange das
+							// Modell im Speicher liegt — deshalb wird der Wert nie mit
+							// „nichts" überschrieben, sondern behalten.
+							loadedContextWindow: m.loaded_context_length,
 							quantization: m.quantization,
 							capabilities: capabilitiesOf(m),
 						}))

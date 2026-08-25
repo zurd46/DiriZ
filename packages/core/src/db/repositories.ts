@@ -244,6 +244,7 @@ interface InstanceRow {
 	model_id: string
 	display_name: string
 	context_window: number
+	loaded_context_window: number | null
 	capabilities_json: string
 	languages_json: string
 	quantization: string | null
@@ -264,6 +265,7 @@ function mapInstance(row: InstanceRow): InstanceModel {
 		modelId: row.model_id,
 		displayName: row.display_name,
 		contextWindow: row.context_window,
+		loadedContextWindow: row.loaded_context_window ?? undefined,
 		capabilities: JSON.parse(row.capabilities_json) as Capability[],
 		languages: JSON.parse(row.languages_json) as string[],
 		quantization: row.quantization ?? undefined,
@@ -346,6 +348,11 @@ export function upsertInstance(
 	db.prepare(
 		`UPDATE instances SET display_name = ?,
 			context_window = COALESCE(?, context_window),
+			-- COALESCE, nicht Zuweisung: Sobald das Modell aus dem Speicher
+			-- fliegt, meldet LM Studio keine geladene Grösse mehr. Der zuletzt
+			-- gesehene Wert bleibt trotzdem die beste Schätzung für das nächste
+			-- Laden — er wird also behalten, nicht gelöscht.
+			loaded_context_window = COALESCE(?, loaded_context_window),
 			languages_json = ?,
 			quantization = COALESCE(?, quantization),
 			price_in_per_mtok = ?, price_out_per_mtok = ?,
@@ -354,6 +361,7 @@ export function upsertInstance(
 	).run(
 		model.displayName,
 		model.contextWindow ?? null,
+		model.loadedContextWindow ?? null,
 		JSON.stringify(model.languages ?? []),
 		model.quantization ?? null,
 		model.pricePerMTok?.in ?? null,

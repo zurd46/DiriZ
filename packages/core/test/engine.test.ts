@@ -30,6 +30,7 @@ import {
 	updateInstance,
 	upsertInstance,
 } from "../src/db/repositories.js"
+import { istVorübergehend } from "../src/execution/agent.js"
 import { EventBus } from "../src/execution/bus.js"
 import {
 	ExecutionEngine,
@@ -37,6 +38,7 @@ import {
 	looksLikeLoadFailure,
 	NoCandidateError,
 	summarizeExclusions,
+	wirksamesFenster,
 } from "../src/execution/engine.js"
 import { taskWorktreePath } from "../src/execution/worktree.js"
 import { ProviderRegistry } from "../src/providers/registry.js"
@@ -449,5 +451,29 @@ describe("engine: Ladefehler-Treppe", () => {
 		expect(lockDurationMs(3)).toBe(6 * 60 * 60_000)
 		expect(lockDurationMs(4)).toBe(24 * 60 * 60_000)
 		expect(lockDurationMs(9)).toBe(24 * 60 * 60_000)
+	})
+})
+
+describe("engine: Kontextfenster nach der Wahrheit des Rechners", () => {
+	it("rechnet mit dem geladenen Fenster, nicht mit dem Maximum", () => {
+		// Gemessen: qwen-agentworld meldet 262144, geladen war es mit 60160.
+		expect(wirksamesFenster({ contextWindow: 262_144, loadedContextWindow: 60_160 })).toBe(60_160)
+		// Ohne Beobachtung bleibt es beim gemeldeten Wert.
+		expect(wirksamesFenster({ contextWindow: 32_768 })).toBe(32_768)
+		// Und ein grösseres geladenes Fenster hebt die Fähigkeit nicht an.
+		expect(wirksamesFenster({ contextWindow: 8192, loadedContextWindow: 60_160 })).toBe(8192)
+	})
+})
+
+describe("Agent-Loop: vorübergehende Fehler", () => {
+	it("unterscheidet ein Serverzucken von einem echten Hindernis", () => {
+		// Wiederholen lohnt sich:
+		expect(istVorübergehend("HTTP 500 Internal Server Error — HTML-Antwort: Error")).toBe(true)
+		expect(istVorübergehend("terminated")).toBe(true)
+		expect(istVorübergehend("Model is unloaded.")).toBe(true)
+		expect(istVorübergehend("fetch failed")).toBe(true)
+		// Wiederholen ändert nichts — hier gehört der Failover hin:
+		expect(istVorübergehend("request (70017 tokens) exceeds the available context size")).toBe(false)
+		expect(istVorübergehend("HTTP 400 Bad Request — Failed to load model")).toBe(false)
 	})
 })

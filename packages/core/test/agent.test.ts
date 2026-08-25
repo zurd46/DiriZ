@@ -557,3 +557,69 @@ describe("Agent-Loop: Stand nach einer Änderung", () => {
 		fs.rmSync(dir, { recursive: true, force: true })
 	})
 })
+
+describe("Agent-Loop: ein Serverzucken wirft den Lauf nicht weg", () => {
+	/** Scheitert bei bestimmten Aufrufen mit HTTP 500 — wie LM Studio es tut. */
+	class ZuckenAdapter implements LLMProvider {
+		readonly label = "Zucken"
+		readonly supportsTools = true
+		anrufe = 0
+		constructor(
+			readonly id: string,
+			readonly type: ProviderType,
+			private scheitertBei: number[],
+		) {}
+		async healthCheck(): Promise<HealthStatus> {
+			return { ok: true, latencyMs: 1 }
+		}
+		async listModels(): Promise<DiscoveredModel[]> {
+			return []
+		}
+		async *chat(req: ChatRequest): AsyncGenerator<ChatChunk> {
+			this.anrufe++
+			if (this.scheitertBei.includes(this.anrufe)) {
+				throw new Error("HTTP 500 Internal Server Error — HTML-Antwort: Error")
+			}
+			if (!req.tools) {
+				yield { type: "delta", text: "Fertig: Datei geschrieben." }
+				yield { type: "done" }
+				return
+			}
+			const schonGeschrieben = req.messages.some((m) => m.role === "tool")
+			if (!schonGeschrieben) {
+				yield {
+					type: "tool_call",
+					call: { id: "c1", name: "write_file", arguments: { path: "a.txt", content: "hallo" } },
+				}
+				yield { type: "done" }
+				return
+			}
+			yield { type: "delta", text: "Fertig." }
+			yield { type: "done" }
+		}
+		async cancel(): Promise<void> {}
+	}
+
+	it("wiederholt den Schritt und liefert das Ergebnis", async () => {
+		// Der Lauf aus dem Protokoll: 26 Operationen erledigt, dann ein 500er —
+		// und alles war verloren. Der zweite Anlauf gelingt.
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-zucken-"))
+		const adapter = new ZuckenAdapter("p", "ollama", [2])
+		const r = await runAgentLoop({
+			adapter,
+			model: "m",
+			userPrompt: "Schreib die Datei",
+			baseDir: dir,
+			executionId: "e-zucken",
+			maxSteps: 6,
+			onDelta: () => {},
+			emitToolCall: () => {},
+			log: () => {},
+		})
+		expect(r.text).toContain("Fertig")
+		expect(fs.readFileSync(path.join(dir, "a.txt"), "utf8")).toBe("hallo")
+		// Der gescheiterte Anruf wurde wiederholt — nicht übersprungen.
+		expect(adapter.anrufe).toBeGreaterThanOrEqual(3)
+		fs.rmSync(dir, { recursive: true, force: true })
+	}, 30_000)
+})

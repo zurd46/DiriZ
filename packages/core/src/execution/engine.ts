@@ -66,6 +66,7 @@ import {
 	listTasks,
 	listTasksByChain,
 	listToolCallsByTask,
+	lockInstance,
 	replayOutput,
 	saveAgentSelection,
 	saveDecision,
@@ -164,6 +165,46 @@ function chainStages(chain: NonNullable<TaskMetadata["chain"]>): string[][] {
 		return chain.stages
 	}
 	return chain.agentIds.map((id) => [id])
+}
+
+/**
+ * Fasst Ausschlussgründe zusammen: „14× Provider offline · 11× fehlende
+ * Fähigkeit · 4× Context-Fenster zu klein".
+ *
+ * Die Zahl allein sagt nichts. Wer liest, dass 29 Modelle ausgeschlossen
+ * wurden, will wissen **warum** — und zwar sofort, nicht nach einer Reise durch
+ * die Datenbank.
+ */
+export function summarizeExclusions(excluded: { reason: string }[]): string {
+	const gezählt = new Map<string, number>()
+	for (const e of excluded) {
+		// Vor dem Doppelpunkt steht die Art, dahinter das Detail (Modellname,
+		// Zahlen) — für die Zusammenfassung zählt die Art.
+		const art = e.reason.split(":")[0]?.trim() ?? e.reason
+		gezählt.set(art, (gezählt.get(art) ?? 0) + 1)
+	}
+	return [...gezählt.entries()]
+		.sort((a, b) => b[1] - a[1])
+		.slice(0, 3)
+		.map(([art, n]) => `${n}× ${art}`)
+		.join(" · ")
+}
+
+/** Wie lange ein Modell gesperrt bleibt, das sich nicht laden liess. */
+const MODEL_LOCK_MS = 10 * 60_000
+
+/**
+ * Sagt der Fehlertext, dass das **Modell** nicht geladen werden konnte?
+ *
+ * Der Unterschied zählt: Ein Server, der nicht antwortet, betrifft alle seine
+ * Modelle (dafür gibt es den Circuit-Breaker). Ein Modell, das nicht in den
+ * Speicher passt oder dessen Engine abbricht, betrifft nur dieses eine — und
+ * es wieder und wieder zu wählen, kostet jedes Mal eine Minute Ladeversuch.
+ */
+export function looksLikeLoadFailure(error: string): boolean {
+	return /failed to load model|engine protocol|model not found|no such model|out of memory|insufficient memory/i.test(
+		error,
+	)
 }
 
 /** So viel Vorarbeit reicht ein Kettenschritt weiter (Zeichen). */
@@ -461,6 +502,22 @@ export class ExecutionEngine {
 		if (gestartet === 0) {
 			this.deps.log("warn", "agents", `Kette: Stufe ${stage + 2} konnte nicht starten`)
 		}
+	}
+
+	/**
+	 * Stellt die noch offenen Versuche um: bereits **geladene** Modelle zuerst.
+	 *
+	 * Nur für den Fall, dass ein Ladevorgang gescheitert ist. Dann ist der
+	 * Speicher belegt, und der beste Score nützt nichts — ein Modell, das schon
+	 * im Speicher liegt, braucht keinen Ladevorgang und kann nicht daran
+	 * scheitern. Die bereits abgearbeiteten Versuche bleiben unangetastet,
+	 * sonst liefe die Kette rückwärts.
+	 */
+	private preferLoaded(ordered: PolicyCandidate[], from: number): PolicyCandidate[] {
+		const rest = ordered.slice(from)
+		const geladen = (c: PolicyCandidate) =>
+			this.deps.registry.loadedModelsOf(c.instance.providerId).includes(c.instance.modelId)
+		return [...ordered.slice(0, from), ...rest.filter(geladen), ...rest.filter((c) => !geladen(c))]
 	}
 
 	/** Alle Tasks derselben Kette — über die gemeinsame Kennung. */
@@ -995,6 +1052,33 @@ export class ExecutionEngine {
 
 		// Kein Kandidat? Erst prüfen, **warum** — scheitern ist die letzte
 		// Antwort, nicht die erste.
+		//
+		// Der Versuch entscheidet, nicht die Buchführung: Früher musste **jeder**
+		// Ausschluss dieselbe Ursache haben, damit gelockert wurde. Bei gemischten
+		// Gründen (ein Rechner offline **und** fehlende Fähigkeiten) griff die
+		// Lockerung nie — obwohl auf dem anderen Rechner brauchbare Modelle
+		// standen. Jetzt wird die Lockerung schlicht durchgerechnet.
+		if (policy.allowed.length === 0 && profile.requiredCapabilities.length > 0) {
+			// Nicht um jeden Preis: Ein Modell **ohne jede** Fähigkeit ist kein
+			// schwächeres Werkzeug, sondern gar keines — Einbettungs- und
+			// Rerank-Modelle beantworten keine Aufträge. Sie bleiben draussen,
+			// sonst käme statt einer Antwort ein Vektor zurück.
+			const gelockert = applyPolicies(
+				candidates.filter((c) => c.instance.capabilities.length > 0),
+				{ ...profile, requiredCapabilities: [], preferredCapabilities: profile.requiredCapabilities },
+				gewichte,
+				this.limits(),
+			)
+			if (gelockert.allowed.length > 0) {
+				log(
+					"warn",
+					"routing",
+					`Task ${task.id}: kein Modell mit ${profile.requiredCapabilities.join(", ")} — ` +
+						"Fähigkeits-Gate gelockert, es wird das bestbewertete verfügbare Modell genommen",
+				)
+				policy = gelockert
+			}
+		}
 		if (policy.allowed.length === 0 && policy.onlyBusy) {
 			// Alle Rechner arbeiten gerade. Die Task ist nicht unmöglich, nur zu
 			// früh: Sie wartet und wird gestartet, sobald etwas frei wird.
@@ -1002,34 +1086,31 @@ export class ExecutionEngine {
 			log("info", "routing", `Task ${task.id} wartet: alle Rechner ausgelastet`)
 			throw new NoCandidateError()
 		}
-		if (policy.allowed.length === 0 && policy.onlyCapabilities) {
-			// Kein Modell erfüllt die Pflicht-Fähigkeiten des Spezialisten. Lieber
-			// mit dem bestmöglichen Modell arbeiten als gar nicht: Ein Spezialist
-			// muss immer einsetzbar sein, notfalls auf schwächerem Werkzeug.
-			log(
-				"warn",
-				"routing",
-				`Task ${task.id}: kein Modell mit ${profile.requiredCapabilities.join(", ")} — ` +
-					"Fähigkeits-Gate gelockert, es wird das bestbewertete verfügbare Modell genommen",
-			)
-			// Aber nicht um jeden Preis: Ein Modell **ohne jede** Fähigkeit ist
-			// kein schwächeres Werkzeug, sondern gar keines — Einbettungs- und
-			// Rerank-Modelle beantworten keine Aufträge. Sie bleiben draussen,
-			// sonst käme statt einer Antwort ein Vektor zurück.
-			policy = applyPolicies(
-				candidates.filter((c) => c.instance.capabilities.length > 0),
-				{ ...profile, requiredCapabilities: [], preferredCapabilities: profile.requiredCapabilities },
-				gewichte,
-				this.limits(),
-			)
-		}
 		const { weights, excluded, allowed } = policy
 
 		if (allowed.length === 0) {
-			const reason = `Keine Instanz verfügbar (${excluded.length} ausgeschlossen)`
+			// **Die Begründung mitgeben, nicht wegwerfen.** „Keine Instanz
+			// verfügbar (29 ausgeschlossen)" ist keine Auskunft, sondern eine
+			// Zumutung: Wer das liest, muss in der Datenbank nachsehen, um zu
+			// erfahren, ob ein Rechner offline war, eine Fähigkeit fehlte oder der
+			// Prompt schlicht zu lang ist. Also steht es jetzt in der Meldung —
+			// und die vollständige Entscheidung landet wie jede andere in der
+			// Datenbank.
+			const reason = `Keine Instanz verfügbar (${excluded.length} ausgeschlossen): ${summarizeExclusions(excluded)}`
 			log("warn", "routing", `${reason} für Task ${task.id}`)
 			// Sichtbares Scheitern: Execution-Record, damit die UI den Fehler zeigt und bewerten kann.
 			const execution = createExecution(db, { taskId: task.id })
+			const decision: RoutingDecision = {
+				executionId: execution.id,
+				chosenInstanceId: undefined,
+				candidates: [],
+				excluded,
+				profile,
+				weights: weights as unknown as Record<string, number>,
+				createdAt: new Date().toISOString(),
+			}
+			saveDecision(db, decision)
+			emit({ event: "routing.decided", data: { taskId: task.id, executionId: execution.id, decision } })
 			updateExecution(db, execution.id, {
 				status: "failed",
 				error: reason,
@@ -1044,7 +1125,7 @@ export class ExecutionEngine {
 			.map((c) => scoreCandidate(c, profile, weights, feedback, task.prompt))
 			.sort((a, b) => b.score - a.score)
 
-		const ordered = this.orderByMode(scored, allowed, profile.mode)
+		let ordered = this.orderByMode(scored, allowed, profile.mode)
 		const maxAttempts = Math.min(ordered.length, MAX_FAILOVER_HOPS + 1)
 
 		let lastExecutionId: string | undefined
@@ -1109,6 +1190,26 @@ export class ExecutionEngine {
 				lastError = e instanceof Error ? e.message : String(e)
 				this.deps.registry.recordFailure(choice.instance.providerId, lastError)
 				feedback.record(choice.instance.id, false)
+				// Ein Modell, das der Server nicht laden kann, ist nicht „gerade
+				// unpässlich" — es ist bis auf Weiteres unbrauchbar. Ohne Sperre
+				// wählt das Routing es beim nächsten Auftrag wieder (es hat ja den
+				// besten Score) und scheitert erneut. Der Rechner selbst bleibt
+				// unangetastet: Seine anderen Modelle laufen weiter.
+				if (looksLikeLoadFailure(lastError)) {
+					const bis = new Date(Date.now() + MODEL_LOCK_MS).toISOString()
+					lockInstance(db, choice.instance.id, bis)
+					log(
+						"warn",
+						"routing",
+						`${choice.instance.modelId} lässt sich nicht laden — für ${Math.round(MODEL_LOCK_MS / 60000)} min gesperrt`,
+					)
+					// Ein Ladefehler heisst fast immer: Der Speicher ist belegt.
+					// Für den nächsten Versuch zählt deshalb nicht mehr der beste
+					// Score, sondern **was schon geladen ist** — ein Modell im
+					// Speicher braucht keinen Ladevorgang und kann nicht daran
+					// scheitern. Erst danach kommt der Rest in bisheriger Ordnung.
+					ordered = this.preferLoaded(ordered, attempt + 1)
+				}
 				// Was bis hierher entstand, bleibt erhalten. Ein Lauf, der nach 15
 				// Minuten am Gesamt-Timeout stirbt, hat womöglich Dateien gelesen,
 				// analysiert und halb geantwortet — das alles zu verwerfen und nur

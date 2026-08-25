@@ -2120,3 +2120,20 @@ export function recentlyUsedInstances(db: Db, providerId: string, limit = 3): st
 		.all(providerId, limit) as { instance_id: string }[]
 	return rows.map((r) => r.instance_id)
 }
+
+/**
+ * Sperrt ein Modell bis zum angegebenen Zeitpunkt (`instances.locked_until`).
+ *
+ * Die Spalte gab es seit dem ersten Schema, gelesen wurde sie auch — nur
+ * geschrieben hat sie nie jemand. Damit blieb ein Modell, das sich nicht laden
+ * lässt, ewig erste Wahl: bester Score, jedes Mal derselbe Fehlschlag, jedes
+ * Mal eine Minute Wartezeit.
+ */
+export function lockInstance(db: Db, instanceId: string, until: string): void {
+	db.prepare("UPDATE instances SET locked_until = ? WHERE id = ?").run(until, instanceId)
+}
+
+/** Hebt eine Sperre wieder auf — etwa, wenn das Modell wieder läuft. */
+export function unlockInstance(db: Db, instanceId: string): void {
+	db.prepare("UPDATE instances SET locked_until = NULL WHERE id = ?").run(instanceId)
+}

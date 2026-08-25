@@ -8,7 +8,7 @@ import type { AddressInfo } from "node:net"
 import type { ChatChunk } from "@diriz/shared"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createProvider } from "../src/providers/factory.js"
-import { summarizeBody } from "../src/providers/http.js"
+import { fetchJson, summarizeBody } from "../src/providers/http.js"
 import { LmStudioProvider } from "../src/providers/lmstudio.js"
 import { OllamaProvider } from "../src/providers/ollama.js"
 import { OpenAiCompatProvider, readContextWindow } from "../src/providers/openai-compat.js"
@@ -325,5 +325,46 @@ describe("LM Studio: geladene Modelle melden", () => {
 	it("liefert nur Modelle mit state=loaded", async () => {
 		const info = await new LmStudioProvider("lms-load", baseUrl).loadInfo()
 		expect(info.loadedModels.map((m) => m.modelId)).toEqual(["qwen3-coder-30b"])
+	})
+})
+
+/**
+ * Eine Fehlermeldung soll sagen, wo man nachsehen muss. „HTTP 500 —
+ * HTML-Antwort: Error" nennt nur das Symptom; die häufigen Ursachen sind
+ * bekannt und gehören dazu.
+ */
+describe("HTTP-Fehler mit Hinweis", () => {
+	const fehler = async (status: number, body: string, typ = "text/html") => {
+		const echterFetch = globalThis.fetch
+		globalThis.fetch = (async () =>
+			new Response(body, {
+				status,
+				statusText: "Internal Server Error",
+				headers: { "content-type": typ },
+			})) as typeof fetch
+		try {
+			await fetchJson("http://test.local/x", {})
+			return ""
+		} catch (e) {
+			return e instanceof Error ? e.message : String(e)
+		} finally {
+			globalThis.fetch = echterFetch
+		}
+	}
+
+	it("erklärt eine HTML-Fehlerseite bei 500", async () => {
+		const msg = await fehler(500, "<html><head><title>Error</title></head><body>Error</body></html>")
+		expect(msg).toContain("HTTP 500")
+		expect(msg).toContain("Prompt zu gross")
+	})
+
+	it("nennt bei 404 den fehlenden `/v1`-Pfad", async () => {
+		const msg = await fehler(404, "Not Found", "text/plain")
+		expect(msg).toContain("/v1")
+	})
+
+	it("nennt bei 401 den API-Schlüssel", async () => {
+		const msg = await fehler(401, "Unauthorized", "text/plain")
+		expect(msg).toContain("API-Schlüssel")
 	})
 })

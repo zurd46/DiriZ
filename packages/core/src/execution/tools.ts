@@ -53,6 +53,7 @@ export const DEFAULT_COMMAND_TIMEOUT_MS = 120_000
  * (`sh`, `bash`, `zsh`) — die würde alle übrigen Grenzen aushebeln.
  */
 export const DEFAULT_ALLOWED_COMMANDS = [
+	// Ausführen & Bauen
 	"node",
 	"npm",
 	"npx",
@@ -67,8 +68,61 @@ export const DEFAULT_ALLOWED_COMMANDS = [
 	"biome",
 	"go",
 	"cargo",
+	// Suchen & Ansehen — danach greift ein Modell als Erstes, um sich im
+	// Projekt zurechtzufinden. Fehlten sie, scheiterte jeder solche Versuch.
+	"grep",
+	"rg",
+	"find",
+	"ls",
+	"cat",
+	"head",
+	"tail",
+	"wc",
+	"sort",
+	"uniq",
+	"diff",
 	"git",
 ]
+
+/**
+ * Zerlegt eine Befehlszeile wie eine Shell es täte — **ohne** Shell.
+ *
+ * Anführungszeichen halten zusammen, was zusammengehört (`grep -r "json ld"`),
+ * alles andere trennt an Leerzeichen. Damit versteht DiriZ die Schreibweise,
+ * die Modelle tatsächlich verwenden, ohne die Gefahren einer Shell zu erben:
+ * Das Ergebnis ist eine reine Argumentliste, keine ausgeführte Zeile.
+ */
+export function splitCommandLine(line: string): string[] {
+	const out: string[] = []
+	let aktuell = ""
+	let quote: '"' | "'" | undefined
+	for (const zeichen of line.trim()) {
+		if (quote) {
+			if (zeichen === quote) {
+				quote = undefined
+			} else {
+				aktuell += zeichen
+			}
+			continue
+		}
+		if (zeichen === '"' || zeichen === "'") {
+			quote = zeichen
+			continue
+		}
+		if (/\s/.test(zeichen)) {
+			if (aktuell.length > 0) {
+				out.push(aktuell)
+				aktuell = ""
+			}
+			continue
+		}
+		aktuell += zeichen
+	}
+	if (aktuell.length > 0) {
+		out.push(aktuell)
+	}
+	return out
+}
 
 /**
  * Git-Unterbefehle, die nur lesen. Alles andere (`push`, `remote`, `config`,
@@ -169,7 +223,11 @@ export async function executeTool(
 			case "read_file": {
 				const p = String(args.path ?? "")
 				if (!isSafeRelPath(p)) {
-					throw new Error(`Ungültiger Pfad: ${p}`)
+					// Modelle schicken gern absolute Pfade. Der Hinweis spart den
+					// blinden zweiten Versuch.
+					throw new Error(
+						`Ungültiger Pfad: ${p} — Pfade sind relativ zum Workspace, ohne führenden „/" und ohne „..“.`,
+					)
 				}
 				const abs = resolveInSandbox(baseDir, p)
 				if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
@@ -187,7 +245,9 @@ export async function executeTool(
 			case "write_file": {
 				const p = String(args.path ?? "")
 				if (!isSafeRelPath(p)) {
-					throw new Error(`Ungültiger Pfad: ${p}`)
+					throw new Error(
+						`Ungültiger Pfad: ${p} — Pfade sind relativ zum Workspace, ohne führenden „/" und ohne „..“.`,
+					)
 				}
 				const content = typeof args.content === "string" ? args.content : JSON.stringify(args.content ?? "")
 				const abs = resolveInSandbox(baseDir, p)
@@ -240,11 +300,23 @@ async function runCommand(
 		}
 	}
 
-	const command = String(args.command ?? "").trim()
-	// Der Programmname darf kein Pfad sein: `./skript` oder `/bin/sh` würden
-	// die Erlaubnisliste umgehen.
+	// Modelle schicken oft die **ganze Zeile** als `command`:
+	// `grep -r "schema" src/ --include="*.vue"`. Das ist kein Fehlverhalten,
+	// sondern die verbreitete Schreibweise — sie zurückzuweisen kostete in einem
+	// beobachteten Lauf drei Versuche und den Abbruch. Also wird die Zeile hier
+	// zerlegt: erstes Wort = Programm, Rest = Argumente. Anführungszeichen
+	// halten zusammen, was zusammengehört; eine Shell ist weiterhin nicht im
+	// Spiel.
+	const roh = String(args.command ?? "").trim()
+	const zerlegt = splitCommandLine(roh)
+	const command = zerlegt[0] ?? ""
+	const ausZeile = zerlegt.slice(1)
+
 	if (!command || command.includes("/") || command.includes("\\")) {
-		return { ok: false, detail: `Ungültiges Programm: „${command}“ — nur Name, kein Pfad` }
+		return {
+			ok: false,
+			detail: `Ungültiges Programm: „${command}“ — nur der Programmname, kein Pfad (z. B. „node“).`,
+		}
 	}
 	if (!policy.allowed.includes(command)) {
 		return {
@@ -255,13 +327,36 @@ async function runCommand(
 		}
 	}
 
-	// Argumente: Liste bevorzugt. Ein einzelner String wird an Leerzeichen
-	// getrennt — ohne Shell, also ohne Anführungszeichen-Magie.
-	const list = Array.isArray(args.args)
-		? args.args.map((a) => String(a))
-		: String(args.args ?? "")
-				.split(/\s+/)
-				.filter((a) => a.length > 0)
+	// Argumente: was in der Zeile stand, plus was ausdrücklich übergeben wurde.
+	const list = [
+		...ausZeile,
+		...(Array.isArray(args.args)
+			? args.args.map((a) => String(a))
+			: splitCommandLine(String(args.args ?? ""))),
+	]
+
+	// Ohne Shell gibt es keine Verkettung. Statt die Zeichen stumm als
+	// Argumente durchzureichen (und ein rätselhaftes Ergebnis zu liefern), wird
+	// gesagt, was fehlt.
+	//
+	// Geprüft werden **ganze Wörter**, nicht einzelne Zeichen: `()=>{}` in einem
+	// JavaScript-Schnipsel enthält ein `>`, ist aber keine Umleitung. Erkannt
+	// werden `|`, `&&`, `;`, `>`, `>>` und `2>/dev/null`.
+	const verkettung = list.find((a) => /^(\||\|\||&&|;|<|\d?>>?.*)$/.test(a))
+	if (verkettung) {
+		return {
+			ok: false,
+			detail:
+				`„${verkettung}“ funktioniert hier nicht: Es gibt keine Shell, also keine Pipes, ` +
+				"Umleitungen oder Verkettungen. Führe den Befehl ohne aus — die vollständige Ausgabe " +
+				"bekommst du ohnehin (gekappt bei 32 kB).",
+		}
+	}
+
+	// `find -exec`/`-delete` wäre eine Hintertür an der Erlaubnisliste vorbei.
+	if (command === "find" && list.some((a) => ["-exec", "-execdir", "-delete", "-ok"].includes(a))) {
+		return { ok: false, detail: "find darf hier nur suchen — kein -exec, -execdir, -delete oder -ok." }
+	}
 
 	if (command === "git" && !GIT_READONLY.has(list[0] ?? "")) {
 		return {
@@ -370,6 +465,14 @@ function summarizeArgs(call: ToolCallRequest): string {
 	}
 	if (call.name === "read_file") {
 		return String(args.path ?? "?")
+	}
+	if (call.name === "run_command") {
+		// Was gelaufen ist, gehört in die Zeile — „(keine Argumente)" hilft
+		// weder in der Oberfläche noch im Log bei der Fehlersuche.
+		const rest = Array.isArray(args.args)
+			? args.args.map((a) => String(a)).join(" ")
+			: String(args.args ?? "")
+		return `${String(args.command ?? "?")}${rest ? ` ${rest}` : ""}`.slice(0, 120)
 	}
 	return "(keine Argumente)"
 }

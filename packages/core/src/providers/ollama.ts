@@ -12,7 +12,7 @@ import type {
 	LLMProvider,
 	LoadInfo,
 } from "@diriz/shared"
-import { errorMessage, fetchJson, jsonLines, ProviderHttpError, summarizeBody } from "./http.js"
+import { errorMessage, fetchJson, jsonLines, ProviderHttpError, statusHint, summarizeBody } from "./http.js"
 
 interface OllamaChatChunk {
 	message?: {
@@ -124,7 +124,7 @@ export class OllamaProvider implements LLMProvider {
 			const text = await res.text().catch(() => "")
 			const detail = summarizeBody(text)
 			throw new ProviderHttpError(
-				`HTTP ${res.status} ${res.statusText}${detail ? ` — ${detail}` : ""}`,
+				`HTTP ${res.status} ${res.statusText}${detail ? ` — ${detail}` : ""}${statusHint(res.status, text)}`,
 				res.status,
 			)
 		}

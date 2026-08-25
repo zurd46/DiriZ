@@ -1,5 +1,6 @@
 import { type Capability, DEFAULT_WEIGHTS, type InstanceModel } from "@diriz/shared"
 import { describe, expect, it } from "vitest"
+import { looksLikeLoadFailure } from "../src/execution/engine.js"
 import { loadFactorFrom } from "../src/providers/registry.js"
 import { Feedback } from "../src/routing/feedback.js"
 import type { PolicyCandidate } from "../src/routing/policies.js"
@@ -307,5 +308,37 @@ describe("routing: Gate-Lockerung", () => {
 		const übrig = [embedder, chat].filter((c) => c.instance.capabilities.length > 0)
 		const { allowed } = applyPolicies(übrig, { ...profile, requiredCapabilities: [] }, DEFAULT_WEIGHTS)
 		expect(allowed.map((c) => c.instance.id)).toEqual(["chat"])
+	})
+})
+
+/**
+ * Ein Modell, das der Server nicht laden kann, ist nicht „gerade unpässlich" —
+ * es ist unbrauchbar, bis sich etwas ändert. Ohne diese Unterscheidung wählt
+ * das Routing es beim nächsten Auftrag wieder (bester Score) und verliert
+ * erneut eine Minute im Ladeversuch.
+ */
+describe("routing: Ladefehler erkennen", () => {
+	it("erkennt die typischen Meldungen eines gescheiterten Ladevorgangs", () => {
+		const treffer = [
+			'HTTP 400 — { "error": { "message": "Failed to load model \\"qwen/qwen3.8-27b\\". Error: Engine protocol startup was aborted." } }',
+			"Model not found: llama3:70b",
+			"CUDA out of memory",
+			"insufficient memory to load model",
+		]
+		for (const t of treffer) {
+			expect(looksLikeLoadFailure(t), t).toBe(true)
+		}
+	})
+
+	it("hält gewöhnliche Laufzeitfehler auseinander — die sperren kein Modell", () => {
+		const daneben = [
+			"Kein Chunk seit 180 s",
+			"Gesamt-Timeout nach 900 s",
+			"HTTP 500 Internal Server Error — HTML-Antwort: Error",
+			"Abgebrochen vom Nutzer",
+		]
+		for (const t of daneben) {
+			expect(looksLikeLoadFailure(t), t).toBe(false)
+		}
 	})
 })

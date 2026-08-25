@@ -31,7 +31,12 @@ import {
 	upsertInstance,
 } from "../src/db/repositories.js"
 import { EventBus } from "../src/execution/bus.js"
-import { ExecutionEngine, NoCandidateError } from "../src/execution/engine.js"
+import {
+	ExecutionEngine,
+	looksLikeLoadFailure,
+	NoCandidateError,
+	summarizeExclusions,
+} from "../src/execution/engine.js"
 import { taskWorktreePath } from "../src/execution/worktree.js"
 import { ProviderRegistry } from "../src/providers/registry.js"
 import { Feedback } from "../src/routing/feedback.js"
@@ -392,5 +397,44 @@ describe("Timeouts: erster Token vs. laufender Stream", () => {
 		expect(DEFAULT_TIMEOUTS.firstChunkMs).toBeGreaterThanOrEqual(120_000)
 		// Und beides muss innerhalb der Gesamtdauer liegen.
 		expect(DEFAULT_TIMEOUTS.totalMs).toBeGreaterThan(DEFAULT_TIMEOUTS.firstChunkMs)
+	})
+})
+
+/**
+ * Wenn nichts geht, muss wenigstens klar sein **warum**. „29 ausgeschlossen"
+ * ohne Grund ist keine Auskunft, sondern eine Zumutung.
+ */
+describe("engine: Begründung beim Fehlschlag", () => {
+	it("fasst die häufigsten Ausschlussgründe zusammen", () => {
+		const text = summarizeExclusions([
+			{ reason: "Provider offline oder Circuit-Breaker offen" },
+			{ reason: "Provider offline oder Circuit-Breaker offen" },
+			{ reason: "Fehlende Pflicht-Fähigkeiten: reasoning" },
+			{ reason: "Context-Fenster zu klein: 8192 < 25759 Tokens" },
+			{ reason: "Context-Fenster zu klein: 4096 < 25759 Tokens" },
+			{ reason: "Context-Fenster zu klein: 2048 < 25759 Tokens" },
+		])
+		// Häufigstes zuerst, Details (Zahlen, Modellnamen) fallen weg.
+		expect(text).toBe(
+			"3× Context-Fenster zu klein · 2× Provider offline oder Circuit-Breaker offen · 1× Fehlende Pflicht-Fähigkeiten",
+		)
+	})
+
+	it("kommt mit einer leeren Liste zurecht", () => {
+		expect(summarizeExclusions([])).toBe("")
+	})
+})
+
+/**
+ * Ein Modell pro Rechner ist die Regel — aber der Wechsel muss klappen.
+ * Scheitert ein Ladevorgang (der Speicher ist belegt), zählt für den nächsten
+ * Versuch nicht mehr der beste Score, sondern was schon geladen ist.
+ */
+describe("engine: Wechsel nach Ladefehler", () => {
+	it("erkennt Ladefehler und trennt sie von gewöhnlichen Fehlern", () => {
+		expect(looksLikeLoadFailure('Failed to load model "qwen3". Engine protocol startup was aborted.')).toBe(
+			true,
+		)
+		expect(looksLikeLoadFailure("Kein Chunk seit 180 s")).toBe(false)
 	})
 })

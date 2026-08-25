@@ -44,9 +44,22 @@ export interface WarmKeeperDeps {
 	settings: () => WarmupSettings
 }
 
+/** Nach so vielen Fehlversuchen wird ein Modell nicht mehr warm gehalten. */
+const MAX_WARM_FAILURES = 2
+
 export class WarmKeeper {
 	private timer?: NodeJS.Timeout
 	private running = false
+	/**
+	 * Modelle, die sich nicht warm halten lassen — mit ihrer Fehlerzahl.
+	 *
+	 * Ein Modell, das der Server nicht laden kann, lässt sich auch beim
+	 * fünfzigsten Versuch nicht laden. Beobachtet: 55 identische Fehlschläge
+	 * für dasselbe Modell, alle vier Minuten einer, jeder mit einem
+	 * Ladeversuch auf der Grafikkarte. Nach zwei Versuchen ist Schluss; ein
+	 * Neustart des Cores gibt jedem Modell wieder eine Chance.
+	 */
+	private erfolglos = new Map<string, number>()
 
 	constructor(private readonly deps: WarmKeeperDeps) {}
 
@@ -87,6 +100,12 @@ export class WarmKeeper {
 					continue
 				}
 				for (const modelId of this.targets(providerId, settings.perProvider)) {
+					// Was sich zweimal nicht laden liess, lässt sich auch beim
+					// fünfzigsten Mal nicht laden — und jeder Versuch belegt die
+					// Grafikkarte.
+					if ((this.erfolglos.get(`${providerId}:${modelId}`) ?? 0) >= MAX_WARM_FAILURES) {
+						continue
+					}
 					await this.ping(providerId, modelId)
 				}
 			}
@@ -153,13 +172,20 @@ export class WarmKeeper {
 					break
 				}
 			}
+			// Geklappt: Ein früherer Fehlschlag zählt nicht mehr — vielleicht war
+			// nur gerade kein Speicher frei.
+			this.erfolglos.delete(`${providerId}:${modelId}`)
 			this.deps.log("info", "warmup", `${modelId} auf ${this.label(providerId)} warm gehalten`)
 		} catch (e) {
 			// Warmhalten darf nie stören: Ein Fehler wird notiert, nicht geworfen.
+			const key = `${providerId}:${modelId}`
+			const zahl = (this.erfolglos.get(key) ?? 0) + 1
+			this.erfolglos.set(key, zahl)
 			this.deps.log(
 				"warn",
 				"warmup",
-				`${modelId} auf ${this.label(providerId)}: ${e instanceof Error ? e.message : String(e)}`,
+				`${modelId} auf ${this.label(providerId)}: ${e instanceof Error ? e.message : String(e)}` +
+					(zahl >= MAX_WARM_FAILURES ? " — wird nicht mehr warm gehalten" : ""),
 			)
 		} finally {
 			clearTimeout(stop)

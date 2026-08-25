@@ -20,7 +20,14 @@ import type {
 import { describe, expect, it } from "vitest"
 import { runAgentLoop, trimContext } from "../src/execution/agent.js"
 
-type Behavior = "write-then-done" | "loop" | "stumm" | "kaputt" | "doppelt" | "schreibschleife"
+type Behavior =
+	| "write-then-done"
+	| "loop"
+	| "stumm"
+	| "kaputt"
+	| "doppelt"
+	| "schreibschleife"
+	| "befehl-nach-änderung"
 
 class ToolFakeAdapter implements LLMProvider {
 	readonly label = "ToolFake"
@@ -48,6 +55,25 @@ class ToolFakeAdapter implements LLMProvider {
 				yield { type: "delta", text: "Abschluss: Ich habe out/hello.txt geschrieben." }
 			}
 			yield { type: "usage", tokensIn: 4, tokensOut: 2 }
+			yield { type: "done" }
+			return
+		}
+		if (this.behavior === "befehl-nach-änderung") {
+			// Schreibt, prüft, schreibt, prüft — echte Arbeit, auch wenn der Befehl
+			// jedes Mal derselbe ist.
+			const n = this.requests.length
+			yield {
+				type: "tool_call",
+				call:
+					n % 2 === 1
+						? {
+								id: `w${n}`,
+								name: "write_file",
+								arguments: { path: "code.js", content: `// Fassung ${n}` },
+							}
+						: { id: `r${n}`, name: "run_command", arguments: { command: "node", args: ["-e", "0"] } },
+			}
+			yield { type: "usage", tokensIn: 2, tokensOut: 1 }
 			yield { type: "done" }
 			return
 		}
@@ -219,6 +245,32 @@ describe("agent: Tool-Loop", () => {
 		// Der zweite Aufruf wird beantwortet, aber nicht mehr ausgeführt:
 		// Deshalb meldet nur der erste eine echte Tool-Operation.
 		expect(ops.filter((o) => o.name === "read_file")).toHaveLength(1)
+	})
+
+	it("lässt denselben Befehl nach jeder Änderung erneut zu — das ist der Sinn", async () => {
+		// Schreiben → prüfen → schreiben → prüfen ist Arbeit, keine Schleife.
+		// Zuvor wurde ein wiederholter Befehl wie ein Lesevorgang aus dem Verlauf
+		// beantwortet und der Lauf nach drei „Wiederholungen" abgebrochen.
+		const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-agent-pruefen-"))
+		const adapter = new ToolFakeAdapter("fake", "ollama", "befehl-nach-änderung")
+		const ops: { name: string; ok: boolean }[] = []
+
+		const result = await runAgentLoop({
+			maxSteps: 8,
+			adapter,
+			model: "m1",
+			userPrompt: "Bau und prüfe",
+			baseDir,
+			executionId: "e-pruefen",
+			onDelta: () => {},
+			emitToolCall: (d) => ops.push({ name: d.name, ok: d.ok }),
+			log: () => {},
+		})
+
+		// Der Lauf geht bis zum Budget durch, statt nach drei Schritten
+		// abgewürgt zu werden — und jeder Befehl wird wirklich ausgeführt.
+		expect(result.steps).toBe(8)
+		expect(ops.filter((o) => o.name === "run_command").length).toBeGreaterThanOrEqual(3)
 	})
 
 	it("bricht ab, wenn dieselbe Datei immer wieder identisch geschrieben wird", async () => {

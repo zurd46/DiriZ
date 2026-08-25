@@ -201,8 +201,9 @@ describe("tools: Befehle ausführen", () => {
 		}
 	})
 
-	it("kennt keine Shell: Sonderzeichen bleiben Zeichen", async () => {
-		// Ohne Shell ist das ein Argument für `node -e`, keine Befehlskette.
+	it("kennt keine Shell — und sagt das, statt still etwas anderes zu tun", async () => {
+		// Ohne Shell wäre `;` bloss ein Argument. Das stumm durchzureichen liefert
+		// ein rätselhaftes Ergebnis; deshalb wird es benannt. Gelöscht wird nichts.
 		const opfer = path.join(runDir, "nicht-loeschen.txt")
 		fs.writeFileSync(opfer, "ich bleibe")
 		const r = await executeTool(
@@ -214,8 +215,43 @@ describe("tools: Befehle ausführen", () => {
 			emitOp,
 			log,
 		)
-		expect(r.ok).toBe(true)
+		expect(r.ok).toBe(false)
+		expect(r.detail).toContain("keine Shell")
 		expect(fs.existsSync(opfer)).toBe(true)
+	})
+
+	it("versteht eine ganze Befehlszeile in `command` — so schreiben es Modelle", async () => {
+		// Beobachtet: `grep -r "schema" src/` als ein einziger String. Früher
+		// dreimal abgewiesen („nur Name, kein Pfad"), dann Abbruch.
+		fs.mkdirSync(path.join(runDir, "src"), { recursive: true })
+		fs.writeFileSync(path.join(runDir, "src", "a.js"), 'const schema = "json-ld"')
+		const r = await executeTool(runDir, call("run_command", { command: 'grep -r "schema" src' }), emitOp, log)
+		expect(r.ok).toBe(true)
+		expect(r.detail).toContain("json-ld")
+	})
+
+	it("weist eine Pipe mit Erklärung ab, statt sie zu verschlucken", async () => {
+		const r = await executeTool(
+			runDir,
+			call("run_command", { command: 'grep -r "schema" src | head -5' }),
+			emitOp,
+			log,
+		)
+		expect(r.ok).toBe(false)
+		expect(r.detail).toContain("keine Shell")
+	})
+
+	it("lässt find nicht ausführen oder löschen", async () => {
+		for (const arg of ["-exec", "-delete"]) {
+			const r = await executeTool(
+				runDir,
+				call("run_command", { command: `find . -name "*.js" ${arg}` }),
+				emitOp,
+				log,
+			)
+			expect(r.ok, arg).toBe(false)
+			expect(r.detail, arg).toContain("nur suchen")
+		}
 	})
 
 	it("lässt bei git nur lesende Unterbefehle zu", async () => {

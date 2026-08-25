@@ -144,6 +144,7 @@ Jeder Push und Pull-Request durchläuft dieselben Schritte in der
 | Provider bleibt „offline" | Base-URL prüfen (LM Studio braucht `/v1`), dann Tab **Provider** → Health-Check. Details im Tab **Logs**. |
 | Anmeldung vergessen | Die Benutzer stehen in `~/.diriz/diriz.sqlite`. Ohne Zugang hilft nur: `sqlite3 ~/.diriz/diriz.sqlite "DELETE FROM users;"` — danach fragt DiriZ beim nächsten Aufruf wieder nach dem ersten Benutzer. |
 | Ein Lauf dauert ewig | Tab **LLM-Modelle** → gemessenes Tempo vergleichen. Ein 27-B-Modell schreibt leicht 13 Token/s, ein MoE-Modell mit wenigen aktiven Parametern das Zehnfache. Für kleine Korrekturen im Chat **Schnell** wählen. |
+| `Failed to load model … Engine protocol startup was aborted` | Der Server konnte das Modell nicht laden — meist, weil noch ein anderes im Speicher liegt. DiriZ sperrt dieses Modell dann 10 Minuten und weicht auf ein **bereits geladenes** aus. Damit der Wechsel überhaupt gelingt, muss LM Studio das alte Modell räumen dürfen: *Developer → Server Settings → **Auto-evict previously loaded models*** einschalten (bzw. „Max loaded models" auf 1). Sonst versucht LM Studio, beide gleichzeitig zu halten, und beide scheitern. |
 | Modell schreibt endlos Prüfskripte | Es will sie ausführen. Einstellungen → **Befehle ausführen** einschalten, und im Datenblatt des Modells muss `run_command` unter `## Werkzeuge` stehen. |
 | Lauf bleibt stehen | Der **Fortsetzen**-Knopf an der Antwort legt eine neue Task im selben Arbeitsverzeichnis an, mit dem bisherigen Stand als Vorarbeit. |
 

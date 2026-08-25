@@ -22,6 +22,35 @@ export class ProviderHttpError extends Error {
  * Neue. Hier wird Markup zu einer Zeile verdichtet: erst der Titel, sonst der
  * sichtbare Text, hart gekürzt.
  */
+/**
+ * Ein Satz dazu, was der Statuscode in diesem Umfeld meist bedeutet.
+ *
+ * „HTTP 500 — HTML-Antwort: Error" nennt das Symptom und lässt einen damit
+ * allein. Die häufigen Ursachen sind aber bekannt und immer dieselben: ein
+ * Prompt, der dem Server zu gross ist, ein Tunnel, der die Anfrage abweist,
+ * ein Modell, das nicht geladen werden konnte. Wer das liest, weiss, wo er
+ * nachsehen muss.
+ */
+export function statusHint(status: number, body: string): string {
+	const html = /^\s*<(?:!doctype|html|head|body)\b/i.test(body.trim())
+	if (status === 500 && html) {
+		return (
+			" · Der Server hat eine Fehlerseite statt einer Antwort geschickt — meist ist der Prompt zu gross " +
+			"für das Modell, das Modell konnte nicht geladen werden, oder ein Tunnel dazwischen hat abgebrochen."
+		)
+	}
+	if (status === 404) {
+		return " · Pfad unbekannt — bei LM Studio gehört `/v1` an die Base-URL."
+	}
+	if (status === 401 || status === 403) {
+		return " · Kein oder falscher API-Schlüssel (Tab „Provider“)."
+	}
+	if (status === 413) {
+		return " · Der Prompt ist zu gross für diesen Server."
+	}
+	return ""
+}
+
 export function summarizeBody(text: string, max = 160): string {
 	const trimmed = text.trim()
 	if (trimmed.length === 0) {
@@ -82,7 +111,7 @@ export async function fetchJson<T>(url: string, opts: JsonOptions = {}): Promise
 			const text = await res.text().catch(() => "")
 			const detail = summarizeBody(text)
 			throw new ProviderHttpError(
-				`HTTP ${res.status} ${res.statusText}${detail ? ` — ${detail}` : ""}`,
+				`HTTP ${res.status} ${res.statusText}${detail ? ` — ${detail}` : ""}${statusHint(res.status, text)}`,
 				res.status,
 			)
 		}

@@ -234,6 +234,15 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 	 */
 	const gesehen = new Set<string>()
 	/**
+	 * Wurde seit dem letzten Befehl etwas geschrieben?
+	 *
+	 * Erst damit lässt sich „prüft seine Änderung" von „läuft im Kreis"
+	 * unterscheiden: Derselbe `npm test` nach einer Bearbeitung ist der Sinn des
+	 * Werkzeugs; derselbe `npm test` ohne jede Änderung dazwischen ist eine
+	 * Schleife.
+	 */
+	let seitLetztemBefehlGeschrieben = true
+	/**
 	 * Ergebnisse bereits ausgeführter Lese-Aufrufe.
 	 *
 	 * Modelle lesen dieselbe Datei gern mehrfach — jedes Mal wandert ihr voller
@@ -299,7 +308,14 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 		let ohneFortschritt = 0
 		for (const call of calls) {
 			const key = `${call.name}:${JSON.stringify(call.arguments ?? {})}`
-			const wiederholung = call.name !== "write_file" ? gelesen.get(key) : undefined
+			// **Nur Lesevorgänge** werden aus dem Verlauf beantwortet. Ein Befehl
+			// ist eine Handlung, keine Auskunft: `npm test` nach einer Änderung
+			// erneut zu starten ist genau der Sinn der Sache — ihn mit „steht
+			// schon oben" abzuspeisen macht das Werkzeug wertlos. Erkannt wurde
+			// das an einem Lauf, den DiriZ nach drei solchen Antworten selbst
+			// als „ohne Fortschritt" abbrach.
+			const istLesen = call.name === "list_files" || call.name === "read_file"
+			const wiederholung = istLesen ? gelesen.get(key) : undefined
 			// Wortgleicher Schreibvorgang: nicht noch einmal ausführen, sondern
 			// sagen, dass er nichts ändert. Sonst quittiert DiriZ Stillstand mit
 			// „ok" und das Modell hat keinen Grund, damit aufzuhören.
@@ -327,11 +343,22 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 							opts.commandPolicy,
 							opts.signal,
 						)
-			if (nochmalGeschrieben || wiederholung) {
+			// Ein Befehl, der **wortgleich wiederholt** wird, ohne dass seither
+			// etwas geschrieben wurde, bewegt nichts — dann ist es eine Schleife.
+			// Nach einer Änderung ist derselbe Befehl dagegen echte Arbeit.
+			const wirkungsloserBefehl =
+				call.name === "run_command" && gesehen.has(key) && !seitLetztemBefehlGeschrieben
+			if (nochmalGeschrieben || wiederholung || wirkungsloserBefehl) {
 				ohneFortschritt++
 			}
+			if (call.name === "write_file" && !nochmalGeschrieben) {
+				seitLetztemBefehlGeschrieben = true
+			}
+			if (call.name === "run_command") {
+				seitLetztemBefehlGeschrieben = false
+			}
 			gesehen.add(key)
-			if (!wiederholung && result.ok && call.name !== "write_file") {
+			if (istLesen && !wiederholung && result.ok) {
 				gelesen.set(key, result)
 			}
 			toolOps++
@@ -383,10 +410,14 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 
 	if (needsFinal && !opts.signal?.aborted) {
 		if (stepLimitReached) {
+			// Bei unbegrenztem Budget steht hier keine Zahl: Der Loop wurde von
+			// der Reissleine beendet, nicht vom Budget — „Infinity Schritte
+			// aufgebraucht" ist ein durchgereichter Rechenwert, keine Auskunft.
+			const grund = unlimited ? "Die Arbeit wurde beendet" : `Tool-Budget (${maxSteps} Schritte) aufgebraucht`
 			opts.onDelta(
-				`\n\n[Agentik: Tool-Budget (${maxSteps} Schritte) aufgebraucht — die Antwort wird jetzt aus den gesammelten Daten vollständig fertiggestellt.]\n\n`,
+				`\n\n[Agentik: ${grund} — die Antwort wird jetzt aus den gesammelten Daten vollständig fertiggestellt.]\n\n`,
 			)
-			opts.log("warn", "agent", `Tool-Budget (${maxSteps}) erschöpft — Abschluss-Schritt ohne Tools`)
+			opts.log("warn", "agent", `${grund} — Abschluss-Schritt ohne Tools`)
 		} else {
 			opts.log("warn", "agent", "Keine Textantwort im Loop — Abschluss-Schritt ohne Tools")
 		}
@@ -395,7 +426,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 		messages.push({
 			role: "user",
 			content: stepLimitReached
-				? `Dein Tool-Budget von ${maxSteps} Schritten ist aufgebraucht. Beantworte die Aufgabe jetzt ` +
+				? `${unlimited ? "Die Werkzeug-Arbeit ist beendet" : `Dein Tool-Budget von ${maxSteps} Schritten ist aufgebraucht`}. Beantworte die Aufgabe jetzt ` +
 					"vollständig und abschliessend, ausschliesslich auf Basis der bereits gesammelten " +
 					"Informationen. Keine weiteren Tool-Aufrufe — sie werden nicht mehr ausgeführt. " +
 					"Nenne die konkreten Ergebnisse (Dateien, Fundstellen, Diagnose, Lösung). Falls etwas " +

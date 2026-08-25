@@ -14,7 +14,7 @@ import type {
 	LLMProvider,
 	ProviderType,
 } from "@diriz/shared"
-import { errorMessage, fetchJson, ProviderHttpError, sseData, summarizeBody } from "./http.js"
+import { errorMessage, fetchJson, ProviderHttpError, sseData, statusHint, summarizeBody } from "./http.js"
 
 export interface OpenAiCompatOptions {
 	id: string
@@ -199,7 +199,7 @@ export class OpenAiCompatProvider implements LLMProvider {
 			const text = await res.text().catch(() => "")
 			const detail = summarizeBody(text)
 			throw new ProviderHttpError(
-				`HTTP ${res.status} ${res.statusText}${detail ? ` — ${detail}` : ""}`,
+				`HTTP ${res.status} ${res.statusText}${detail ? ` — ${detail}` : ""}${statusHint(res.status, text)}`,
 				res.status,
 			)
 		}

@@ -16,6 +16,7 @@
  */
 
 import {
+	estimateTokens,
 	type FileDiff,
 	findBlueprint,
 	type GitStatus,
@@ -625,6 +626,31 @@ export default function Chat() {
 		return () => clearTimeout(id)
 	}, [input, target])
 
+	/**
+	 * Wie viele Modelle würde dieser Prompt überhaupt noch erreichen?
+	 *
+	 * Das Kontext-Gate schliesst jedes Modell aus, dessen Fenster kleiner ist als
+	 * das 1,2-Fache der geschätzten Token. Ein langer Prompt — eine eingefügte
+	 * Dokumentation, ein mitgesendeter Verlauf — dünnt das Feld also aus, ohne
+	 * dass man es merkt. Bis es niemanden mehr trifft und der Auftrag mit
+	 * „Keine Instanz verfügbar" scheitert. Diese Rechnung steht deshalb **vor**
+	 * dem Absenden.
+	 */
+	const kontextLage = useMemo(() => {
+		const verlauf = turns
+			.filter((t) => t.status === "done")
+			.map((t) => ({ prompt: t.prompt, answer: t.answer }))
+		const text = keepContext ? withHistory(input, verlauf) : input
+		if (text.trim().length === 0) {
+			return null
+		}
+		const estTokens = estimateTokens(text)
+		const nötig = Math.ceil(estTokens * 1.2)
+		const aktiv = instances.filter((i) => i.enabled)
+		const passend = aktiv.filter((i) => i.contextWindow >= nötig)
+		return { estTokens, nötig, aktiv: aktiv.length, passend: passend.length }
+	}, [input, keepContext, turns, instances])
+
 	const runOf = (taskId: string) => Object.values(live).find((r) => r.taskId === taskId)
 	const instanceOf = (id?: string) => instances.find((i) => i.id === id)
 	const providerLabel = (providerId?: string) => providers.find((p) => p.id === providerId)?.label
@@ -1192,6 +1218,25 @@ export default function Chat() {
 										{s.name}
 									</span>
 								))}
+							</div>
+						)}
+						{/* Der Prompt dünnt das Feld aus — sichtbar machen, bevor er weg ist. */}
+						{kontextLage && kontextLage.passend < kontextLage.aktiv && (
+							<div className="chat-nudge">
+								<IconAlert size={14} />
+								<span>
+									Langer Auftrag: ≈{kontextLage.estTokens.toLocaleString("de-CH")} Token — davon erreicht er{" "}
+									<strong>
+										{kontextLage.passend} von {kontextLage.aktiv}
+									</strong>{" "}
+									Modellen. Die übrigen haben ein zu kleines Kontext-Fenster.
+									{kontextLage.passend === 0 && " So kann der Auftrag nicht starten."}
+								</span>
+								{keepContext && (
+									<button type="button" className="btn sm" onClick={() => setKeepContext(false)}>
+										Verlauf nicht mitsenden
+									</button>
+								)}
 							</div>
 						)}
 						{target === "answer" && NEEDS_FILES.test(input) && (

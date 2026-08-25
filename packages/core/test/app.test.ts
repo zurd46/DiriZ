@@ -13,7 +13,7 @@ import { buildApp } from "../src/app.js"
 import type { Db } from "../src/db/connection.js"
 import { openDatabase } from "../src/db/connection.js"
 import { migrate } from "../src/db/migrate.js"
-import { providerApiKeyEnc } from "../src/db/repositories.js"
+import { createProvider, providerApiKeyEnc, upsertInstance } from "../src/db/repositories.js"
 import { EventBus } from "../src/execution/bus.js"
 import { ExecutionEngine } from "../src/execution/engine.js"
 import { ProviderRegistry } from "../src/providers/registry.js"
@@ -548,3 +548,44 @@ describe("api: SSE-Stream", () => {
  * trägt den bisherigen Stand als Vorarbeit **und** arbeitet im selben
  * Verzeichnis — sonst begänne sie wieder bei null.
  */
+
+describe("API: Provider zeigen ihre Maschine", () => {
+	it("nennt bei zwei Zugängen auf dieselbe Maschine den jeweils anderen", async () => {
+		// Der echte Fall: `MacDani` (127.0.0.1) und `lokalai` (Tunnel) sind ein
+		// Rechner — auf dem Mac vermittelt LM Studio per LM Link an den anderen PC.
+		const app = await buildApp(ctx)
+		const direkt = createProvider(ctx.db, {
+			type: "lmstudio",
+			label: "MacDani",
+			baseUrl: "http://127.0.0.1:1234",
+		})
+		const tunnel = createProvider(ctx.db, {
+			type: "lmstudio",
+			label: "lokalai",
+			baseUrl: "https://x.ngrok.dev",
+		})
+		for (const modell of ["a", "b", "c", "d"]) {
+			upsertInstance(
+				ctx.db,
+				direkt.id,
+				{ modelId: modell, displayName: modell, contextWindow: 8192 },
+				"manual",
+			)
+			upsertInstance(
+				ctx.db,
+				tunnel.id,
+				{ modelId: modell, displayName: modell, contextWindow: 8192 },
+				"manual",
+			)
+		}
+		// Der Tunnel führt eine Zweitkopie mehr — genau der Unterschied, an dem
+		// die Erkennung früher scheiterte.
+		upsertInstance(ctx.db, tunnel.id, { modelId: "d:2", displayName: "d:2", contextWindow: 8192 }, "manual")
+
+		const res = await app.inject({ method: "GET", url: "/api/providers" })
+		const liste = res.json() as { label: string; sameMachineAs?: string[] }[]
+		expect(liste.find((p) => p.label === "MacDani")?.sameMachineAs).toContain("lokalai")
+		expect(liste.find((p) => p.label === "lokalai")?.sameMachineAs).toContain("MacDani")
+		await app.close()
+	})
+})

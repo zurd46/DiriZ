@@ -24,6 +24,7 @@ import {
 	listInstances,
 	listProviderDocs,
 	listProviders,
+	sameServerProviders,
 	saveProviderDoc,
 	updateProvider,
 } from "../db/repositories.js"
@@ -62,9 +63,20 @@ interface PatchBody {
 
 export function registerProviders(app: FastifyInstance, ctx: AppContext): void {
 	app.get("/api/providers", () => {
-		return listProviders(ctx.db).map((p) => {
+		const alle = listProviders(ctx.db)
+		return alle.map((p) => {
 			const insts = listInstances(ctx.db, p.id)
-			return { ...p, instanceCount: insts.filter((i) => i.enabled).length }
+			// **Welche Einträge auf dieselbe Maschine zeigen.**
+			//
+			// Nachgewiesen und für den Nutzer sonst unsichtbar: `MacDani`
+			// (127.0.0.1) und `lokalai` (Tunnel) sind derselbe Rechner — auf dem
+			// Mac vermittelt LM Studio per LM Link an den anderen PC. Wer das
+			// nicht weiss, wundert sich, warum zwei „Rechner" sich gegenseitig
+			// die Modelle aus dem Speicher werfen.
+			const gruppe = sameServerProviders(ctx.db, p.id)
+				.filter((id) => id !== p.id)
+				.map((id) => alle.find((q) => q.id === id)?.label ?? id)
+			return { ...p, instanceCount: insts.filter((i) => i.enabled).length, sameMachineAs: gruppe }
 		})
 	})
 

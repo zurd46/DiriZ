@@ -89,6 +89,13 @@ export interface Provider {
 	modelSettings?: ModelSettings | null
 	/** Ob ein API-Key hinterlegt ist — der Key selbst ist nie in der API sichtbar. */
 	hasApiKey: boolean
+	/**
+	 * Andere Einträge, die auf **dieselbe Maschine** zeigen (erkannt an nahezu
+	 * gleicher Modell-Liste). Zwei Zugänge zu einer Grafikkarte sehen wie zwei
+	 * Rechner aus — und wer das nicht weiss, wundert sich, warum sie sich
+	 * gegenseitig die Modelle aus dem Speicher werfen.
+	 */
+	sameMachineAs?: string[]
 }
 
 /**

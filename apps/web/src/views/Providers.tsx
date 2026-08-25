@@ -382,6 +382,14 @@ export default function Providers() {
 												</span>
 											)}
 											{!p.enabled && <span className="badge subtle">inaktiv</span>}
+											{p.sameMachineAs && p.sameMachineAs.length > 0 && (
+												<span
+													className="badge subtle"
+													title={`Dieselbe Maschine wie ${p.sameMachineAs.join(", ")} — erkannt an nahezu gleicher Modell-Liste. Beide Zugänge teilen sich denselben Speicher: Was hier geladen wird, verdrängt dort.`}
+												>
+													<IconServer size={11} />= {p.sameMachineAs.join(", ")}
+												</span>
+											)}
 										</div>
 									</td>
 									<td>

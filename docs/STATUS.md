@@ -73,6 +73,14 @@ Schema    ██████████████████████  Mi
   ausführen wollte. Vier Grenzen wirken zusammen: keine Shell (Argument-Liste, `shell: false`),
   Erlaubnisliste ohne Pfade, Sandbox als Arbeitsverzeichnis samt Argument-Prüfung, Frist + gekappte Ausgabe
   + magere Umgebung. `git` nur lesend. Einstellbar unter „Befehle ausführen"; je Modell abwählbar im `llm.md`.
+- **Vollständiger Dateizugriff** (`execution/tools.ts`): Lesen (`list_files`, `read_file`, `search_files`,
+  `file_info`), Ändern (`write_file`, `edit_file`, `append_file`, `delete_file`, `move_file`, `copy_file`,
+  `make_dir`) und Ausführen (`run_command`). Der Satz ist mit Absicht vollständig: Fehlt ein Handgriff, baut
+  ein Modell ihn sich schlecht nach — ohne `edit_file` schrieb es zum Ändern einer Zeile die ganze Datei neu
+  (51-mal beobachtet), ohne `search_files` las es Datei für Datei, bis der Kontext voll war. Alles bleibt in
+  der Sandbox; `list_files` und `search_files` überspringen `node_modules`, `dist`, `.git` & Co.; `read_file`
+  liest grosse Dateien abschnittsweise. Nach jeder Änderung verwirft der Agent-Loop gemerkte Lese-Ergebnisse —
+  sonst sähe ein Modell nach der eigenen Änderung noch den alten Stand.
 - **Dauerhaftes Feedback** (Migration 0016): Erfolge, Fehlschläge und geglättete Bewertung überleben den Neustart.
 - **Schnellmodus** im Chat (ein Spezialist, Tempo dreifach gewichtet) und **Fortsetzen** abgebrochener Läufe
   (`POST /api/tasks/:id/resume`, neue Task im selben Arbeitsverzeichnis mit dem bisherigen Stand als Vorarbeit).

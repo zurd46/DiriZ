@@ -26,6 +26,7 @@ import {
 	getTask,
 	latestDecision,
 	listExecutionsByTask,
+	listInstances,
 	replayOutput,
 	updateInstance,
 	upsertInstance,
@@ -233,19 +234,41 @@ describe("engine: Failover", () => {
 })
 
 describe("engine: keine Kandidatin", () => {
-	it("wirft NoCandidateError, wenn alle ausgeschlossen sind", async () => {
+	it("weicht aus, wenn die Festlegung ins Leere zeigt", async () => {
+		// Beobachtet: Der Spezialist war auf einen Rechner festgelegt, der das
+		// Modell nicht mehr anbot (am Mac wurde „LM Link" abgeschaltet). Der
+		// Wunsch dahinter war nie „ausschliesslich dieser Rechner" — DiriZ
+		// lockert die Festlegung und sagt es im Protokoll.
 		const task = createTask(db, {
 			prompt: "Hallo",
 			metadata: { privacy: "local-only", mode: "pinned", preferredProviderId: "gibts-nicht" },
 		})
-		await expect(engine.runTask(task)).rejects.toBeInstanceOf(NoCandidateError)
-		expect(getTask(db, task.id)?.status).toBe("failed")
+		const result = await engine.runTask(task)
+		expect(result.status).toBe("done")
+	})
 
-		// Sichtbares Scheitern: eine fehlgeschlagene Execution mit Begründung existiert.
-		const executions = listExecutionsByTask(db, task.id)
-		expect(executions.length).toBe(1)
-		expect(executions[0].status).toBe("failed")
-		expect(executions[0].error).toContain("Keine Instanz verfügbar")
+	it("wirft NoCandidateError, wenn wirklich nichts übrig bleibt", async () => {
+		// Kein Ausweichen ohne Ausweg: Sind alle Modelle abgeschaltet, ist die
+		// Task unmöglich — und das gehört sichtbar gemacht, nicht überspielt.
+		const vorher = listInstances(db).map((i) => ({ id: i.id, enabled: i.enabled }))
+		for (const i of vorher) {
+			db.prepare("UPDATE instances SET enabled = 0 WHERE id = ?").run(i.id)
+		}
+		try {
+			const task = createTask(db, { prompt: "Hallo" })
+			await expect(engine.runTask(task)).rejects.toBeInstanceOf(NoCandidateError)
+			expect(getTask(db, task.id)?.status).toBe("failed")
+
+			// Sichtbares Scheitern: eine fehlgeschlagene Execution mit Begründung existiert.
+			const executions = listExecutionsByTask(db, task.id)
+			expect(executions.length).toBe(1)
+			expect(executions[0].status).toBe("failed")
+			expect(executions[0].error).toContain("Keine Instanz verfügbar")
+		} finally {
+			for (const i of vorher) {
+				db.prepare("UPDATE instances SET enabled = ? WHERE id = ?").run(i.enabled ? 1 : 0, i.id)
+			}
+		}
 	})
 })
 

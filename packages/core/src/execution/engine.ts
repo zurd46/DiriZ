@@ -1235,6 +1235,53 @@ export class ExecutionEngine {
 				policy = gelockert
 			}
 		}
+		// **Ein Pin, der ins Leere zeigt, ist kein Grund zu scheitern.**
+		//
+		// Beobachtet: Der Spezialist war auf `MacDani` + `nvidia-nemotron`
+		// festgelegt. Dann wurde am Mac „LM Link" abgeschaltet — das Modell lag
+		// von einer Minute auf die andere nur noch auf dem anderen Rechner, und
+		// DiriZ meldete „Keine Instanz verfügbar (29 ausgeschlossen)". Der
+		// Wunsch dahinter war aber nie „ausschliesslich dieser Rechner",
+		// sondern „dieses Modell".
+		//
+		// Also in dieser Reihenfolge: erst den Rechner freigeben (das Modell
+		// bleibt), dann als Letztes auch das Modell. Jeder Schritt wird laut
+		// protokolliert — eine stille Abweichung wäre schlimmer als ein Fehler.
+		if (policy.allowed.length === 0 && !policy.onlyBusy && profile.mode === "pinned") {
+			const stufen: { profil: TaskProfile; grund: string }[] = []
+			if (profile.pinnedProviderId && profile.pinnedModelId) {
+				stufen.push({
+					profil: { ...profile, pinnedProviderId: undefined },
+					grund: `${profile.pinnedModelId} gibt es auf ${rechnerName(profile.pinnedProviderId) ?? profile.pinnedProviderId} nicht mehr — anderer Rechner mit demselben Modell`,
+				})
+			}
+			if (profile.pinnedModelId) {
+				stufen.push({
+					profil: { ...profile, mode: "auto", pinnedProviderId: undefined, pinnedModelId: undefined },
+					grund: `${profile.pinnedModelId} ist nirgends verfügbar — Routing entscheidet frei`,
+				})
+			} else if (profile.pinnedProviderId) {
+				stufen.push({
+					profil: { ...profile, mode: "auto", pinnedProviderId: undefined },
+					grund: `${rechnerName(profile.pinnedProviderId) ?? profile.pinnedProviderId} liefert nichts Brauchbares — Routing entscheidet frei`,
+				})
+			}
+			for (const stufe of stufen) {
+				const versuch = applyPolicies(
+					candidates,
+					stufe.profil,
+					gewichte,
+					this.limits(),
+					rechnerName,
+					gleicheMaschine,
+				)
+				if (versuch.allowed.length > 0) {
+					log("warn", "routing", `Task ${task.id}: Festlegung gelockert — ${stufe.grund}`)
+					policy = versuch
+					break
+				}
+			}
+		}
 		if (policy.allowed.length === 0 && policy.onlyBusy) {
 			// Alle Rechner arbeiten gerade. Die Task ist nicht unmöglich, nur zu
 			// früh: Sie wartet und wird gestartet, sobald etwas frei wird.

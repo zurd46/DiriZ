@@ -103,6 +103,11 @@ export interface Provider {
 	 * gegenseitig die Modelle aus dem Speicher werfen.
 	 */
 	sameMachineAs?: string[]
+	/**
+	 * Rechner, auf denen die Modelle dieses Zugangs tatsächlich rechnen — bei
+	 * LM Studio mit „LM Link" nicht zwingend der Rechner des Endpunkts.
+	 */
+	devices?: string[]
 }
 
 /**

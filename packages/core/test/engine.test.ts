@@ -488,3 +488,52 @@ describe("Agent-Loop: vorübergehende Fehler", () => {
 		)
 	})
 })
+
+describe("GPU-Schutz zählt Rechner, nicht Zugänge", () => {
+	it("erkennt durchgereichte Modelle als dasselbe Gerät", () => {
+		// Der Aufbau des Nutzers: `MacDani` ist ein Mac, der über LM Link die
+		// Modelle eines Windows-Rechners durchreicht. Zwei Anfragen an denselben
+		// Endpunkt landen also auf zwei verschiedenen Rechnern — und zwei
+		// Anfragen an verschiedene Endpunkte auf demselben.
+		const db2 = openDatabase(fs.mkdtempSync(path.join(os.tmpdir(), "diriz-geraet-")))
+		migrate(db2)
+		const mac = createProvider(db2, { type: "lmstudio", label: "MacDani", baseUrl: "http://127.0.0.1:1234" })
+		const win = createProvider(db2, { type: "lmstudio", label: "lokalai", baseUrl: "https://x.ngrok.dev" })
+		const eigen = upsertInstance(
+			db2,
+			mac.id,
+			{ modelId: "qwen3.8-27b", displayName: "q", contextWindow: 8192, deviceName: "MacBook-Pro" },
+			"discovered",
+		)
+		const durchgereicht = upsertInstance(
+			db2,
+			mac.id,
+			{ modelId: "nemotron", displayName: "n", contextWindow: 8192, deviceName: "LokalAI_Server1" },
+			"discovered",
+		)
+		const direkt = upsertInstance(
+			db2,
+			win.id,
+			{ modelId: "agentworld", displayName: "a", contextWindow: 8192, deviceName: "LokalAI_Server1" },
+			"discovered",
+		)
+
+		const engine2 = new ExecutionEngine({
+			db: db2,
+			registry,
+			feedback,
+			emit: () => {},
+			log: () => {},
+			workspaceDir,
+		})
+		// Zugriff auf die interne Gerätezuordnung — sie ist der Kern des Schutzes.
+		const schluessel = (i: typeof eigen) =>
+			(engine2 as unknown as { geraetSchluessel: (x: typeof eigen) => string }).geraetSchluessel(i)
+
+		// Verschiedene Endpunkte, gleicher Rechner → derselbe Schlüssel.
+		expect(schluessel(durchgereicht)).toBe(schluessel(direkt))
+		// Gleicher Endpunkt, verschiedene Rechner → verschiedene Schlüssel.
+		expect(schluessel(eigen)).not.toBe(schluessel(durchgereicht))
+		db2.close()
+	})
+})

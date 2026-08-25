@@ -549,43 +549,34 @@ describe("api: SSE-Stream", () => {
  * Verzeichnis — sonst begänne sie wieder bei null.
  */
 
-describe("API: Provider zeigen ihre Maschine", () => {
-	it("nennt bei zwei Zugängen auf dieselbe Maschine den jeweils anderen", async () => {
-		// Der echte Fall: `MacDani` (127.0.0.1) und `lokalai` (Tunnel) sind ein
-		// Rechner — auf dem Mac vermittelt LM Studio per LM Link an den anderen PC.
+describe("API: Provider zeigen ihre Rechner", () => {
+	it("nennt die Geräte, auf denen die Modelle wirklich rechnen", async () => {
+		// `MacDani` ist ein Mac, der über LM Link die Modelle eines
+		// Windows-Rechners durchreicht: Zwei Modelle laufen hier, eines dort.
 		const app = await buildApp(ctx)
-		const direkt = createProvider(ctx.db, {
+		const mac = createProvider(ctx.db, {
 			type: "lmstudio",
 			label: "MacDani",
 			baseUrl: "http://127.0.0.1:1234",
 		})
-		const tunnel = createProvider(ctx.db, {
-			type: "lmstudio",
-			label: "lokalai",
-			baseUrl: "https://x.ngrok.dev",
-		})
-		for (const modell of ["a", "b", "c", "d"]) {
-			upsertInstance(
-				ctx.db,
-				direkt.id,
-				{ modelId: modell, displayName: modell, contextWindow: 8192 },
-				"manual",
-			)
-			upsertInstance(
-				ctx.db,
-				tunnel.id,
-				{ modelId: modell, displayName: modell, contextWindow: 8192 },
-				"manual",
-			)
-		}
-		// Der Tunnel führt eine Zweitkopie mehr — genau der Unterschied, an dem
-		// die Erkennung früher scheiterte.
-		upsertInstance(ctx.db, tunnel.id, { modelId: "d:2", displayName: "d:2", contextWindow: 8192 }, "manual")
+		upsertInstance(
+			ctx.db,
+			mac.id,
+			{ modelId: "eigen", displayName: "eigen", contextWindow: 8192, deviceName: "MacBook-Pro" },
+			"discovered",
+		)
+		upsertInstance(
+			ctx.db,
+			mac.id,
+			{ modelId: "fremd", displayName: "fremd", contextWindow: 8192, deviceName: "LokalAI_Server1" },
+			"discovered",
+		)
 
 		const res = await app.inject({ method: "GET", url: "/api/providers" })
-		const liste = res.json() as { label: string; sameMachineAs?: string[] }[]
-		expect(liste.find((p) => p.label === "MacDani")?.sameMachineAs).toContain("lokalai")
-		expect(liste.find((p) => p.label === "lokalai")?.sameMachineAs).toContain("MacDani")
+		const liste = res.json() as { label: string; devices?: string[] }[]
+		const eintrag = liste.find((p) => p.label === "MacDani")
+		expect(eintrag?.devices).toContain("MacBook-Pro")
+		expect(eintrag?.devices).toContain("LokalAI_Server1")
 		await app.close()
 	})
 })

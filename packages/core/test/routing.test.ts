@@ -1,6 +1,7 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import type { TaskProfile } from "@diriz/shared"
 import { type Capability, DEFAULT_WEIGHTS, type InstanceModel } from "@diriz/shared"
 import { describe, expect, it } from "vitest"
 import { openDatabase } from "../src/db/connection.js"
@@ -398,5 +399,64 @@ describe("routing: derselbe Server hinter zwei Einträgen", () => {
 		expect(sameServerProviders(db, a.id)).toEqual([a.id])
 		expect(sameServerProviders(db, b.id)).toEqual([b.id])
 		db.close()
+	})
+})
+
+describe("Pin: der Rechner zählt, nicht die Tür", () => {
+	function kandidat(providerId: string, modelId: string, online: boolean): PolicyCandidate {
+		return {
+			instance: {
+				id: `${providerId}-${modelId}`,
+				providerId,
+				modelId,
+				displayName: modelId,
+				contextWindow: 32_000,
+				capabilities: ["code"],
+				languages: [],
+				source: "manual",
+				status: "online",
+				enabled: true,
+			},
+			loadFactor: 0,
+			providerLatencyMs: 10,
+			basisPrior: 0.5,
+			local: true,
+			providerType: "lmstudio",
+			providerOnline: online,
+		} as unknown as PolicyCandidate
+	}
+
+	it("nimmt den zweiten Zugang, wenn der gepinnte Weg tot ist", () => {
+		// Der echte Fall: Spezialist auf `MacDani` gepinnt, dort war LM Studio
+		// aus — und DiriZ meldete „Keine Instanz verfügbar (29 ausgeschlossen)",
+		// obwohl `lokalai` online ist und auf dieselbe Grafikkarte zeigt.
+		const kandidaten = [kandidat("macdani", "qwen3-coder", false), kandidat("lokalai", "qwen3-coder", true)]
+		const profil = {
+			mode: "pinned",
+			pinnedProviderId: "macdani",
+			requiredCapabilities: [],
+			preferredCapabilities: [],
+		} as unknown as TaskProfile
+
+		const ohneWissen = applyPolicies(kandidaten, profil, DEFAULT_WEIGHTS)
+		expect(ohneWissen.allowed).toHaveLength(0)
+
+		const mitWissen = applyPolicies(kandidaten, profil, DEFAULT_WEIGHTS, undefined, undefined, (id) =>
+			id === "macdani" || id === "lokalai" ? ["macdani", "lokalai"] : [id],
+		)
+		expect(mitWissen.allowed.map((c) => c.instance.providerId)).toEqual(["lokalai"])
+	})
+
+	it("öffnet den Pin nicht für fremde Rechner", () => {
+		const kandidaten = [kandidat("macdani", "qwen3-coder", false), kandidat("cloud", "qwen3-coder", true)]
+		const profil = {
+			mode: "pinned",
+			pinnedProviderId: "macdani",
+			requiredCapabilities: [],
+			preferredCapabilities: [],
+		} as unknown as TaskProfile
+		const r = applyPolicies(kandidaten, profil, DEFAULT_WEIGHTS, undefined, undefined, () => ["macdani"])
+		expect(r.allowed).toHaveLength(0)
+		expect(r.excluded.some((e) => e.reason.includes("Pinned auf Rechner"))).toBe(true)
 	})
 })

@@ -53,6 +53,15 @@ export function applyPolicies(
 	limits?: ConcurrencySettings,
 	/** Kennung → Anzeigename, damit Ausschlussgründe lesbar sind. */
 	labelOf?: (providerId: string) => string | undefined,
+	/**
+	 * Andere Zugänge zu **demselben Bestand** (identische Modell-Liste).
+	 *
+	 * Ein Pin meint den Rechner, nicht die Tür: Steht der gepinnte Zugang
+	 * still, darf ein deckungsgleicher zweiter einspringen. Deckungsgleich
+	 * heisst hier wirklich gleich — ein Rechner, der zufällig ähnliche Modelle
+	 * führt, ist ein anderer Rechner.
+	 */
+	sameMachine?: (providerId: string) => string[],
 ): PolicyResult {
 	const weights =
 		profile.mode === "cost-aware"
@@ -115,15 +124,16 @@ export function applyPolicies(
 			continue
 		}
 		if (profile.mode === "pinned") {
-			if (profile.pinnedProviderId && c.instance.providerId !== profile.pinnedProviderId) {
-				// Der Name, nicht die Kennung: „Pinned auf Provider
-				// c7e00965-8eea-…" zwingt zum Nachschlagen in der Datenbank, um
-				// eine Meldung zu verstehen, die eine Antwort geben sollte.
-				pushExcluded(
-					c,
-					`Pinned auf Rechner ${labelOf?.(profile.pinnedProviderId) ?? profile.pinnedProviderId}`,
-				)
-				continue
+			const pin = profile.pinnedProviderId
+			if (pin) {
+				const erlaubteWege = new Set([pin, ...(sameMachine?.(pin) ?? [])])
+				if (!erlaubteWege.has(c.instance.providerId)) {
+					// Der Name, nicht die Kennung: „Pinned auf Provider
+					// c7e00965-8eea-…" zwingt zum Nachschlagen in der Datenbank, um
+					// eine Meldung zu verstehen, die eine Antwort geben sollte.
+					pushExcluded(c, `Pinned auf Rechner ${labelOf?.(pin) ?? pin}`)
+					continue
+				}
 			}
 			if (profile.pinnedModelId && c.instance.modelId !== profile.pinnedModelId) {
 				pushExcluded(c, `Pinned auf Modell ${profile.pinnedModelId}`)

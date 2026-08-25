@@ -300,15 +300,21 @@ export function upsertInstance(
 		const id = randomUUID()
 		db.prepare(
 			`INSERT INTO instances (id, provider_id, model_id, display_name, context_window,
+				loaded_context_window, device_name,
 				capabilities_json, languages_json, quantization, price_in_per_mtok, price_out_per_mtok,
 				source, status, model_settings, locked_until, last_seen_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline', ?, NULL, ?)`,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline', ?, NULL, ?)`,
 		).run(
 			id,
 			providerId,
 			model.modelId,
 			model.displayName,
 			model.contextWindow ?? 8192,
+			// Beim ersten Erkennen mitschreiben, nicht erst beim zweiten Rundgang:
+			// Sonst stünde beim frisch entdeckten Modell zehn Sekunden lang das
+			// falsche Fenster und der falsche Rechner.
+			model.loadedContextWindow ?? null,
+			model.deviceName ?? null,
 			JSON.stringify(model.capabilities ?? []),
 			JSON.stringify(model.languages ?? []),
 			model.quantization ?? null,
@@ -2222,32 +2228,22 @@ export function sameServerProviders(db: Db, providerId: string): string[] {
 }
 
 /**
- * Zwei Modell-Listen — derselbe Rechner?
+ * Zwei Modell-Listen — derselbe Zugang zu **derselben** LM-Studio-Instanz?
  *
- * **Nicht** über Gleichheit. Genau daran ist es gescheitert: `lokalai` (Tunnel)
- * und `MacDani` (127.0.0.1) zeigen auf dieselbe LM-Studio-Instanz, aber die
- * eine Liste hatte einen Eintrag mehr — `…-uncensored:2`, LM Studios Zweitkopie
- * desselben Modells. Ein einziger Unterschied, und DiriZ sah zwei Rechner: Der
- * Schutz „ein Modell pro Rechner" liess zwei Modelle auf dieselbe Grafikkarte,
- * LM Studio warf das laufende aus dem Speicher, und die Antwort starb mitten im
- * Satz mit einer HTTP-500-Fehlerseite. Genau das stand in den Protokollen.
+ * Bewusst streng: nur bei deckungsgleichen Listen. Eine weichere Regel
+ * („neun Zehntel Überschneidung genügen") war hier im Einsatz und lag falsch —
+ * zwei Rechner können dieselbe Modell-Sammlung führen, ohne dieselbe
+ * Grafikkarte zu sein. Genau so ist es beim Nutzer: Ein Mac mit eigenen
+ * Modellen reicht zusätzlich fremde von einem zweiten Rechner durch.
  *
- * Deshalb: **weitgehende Überschneidung** genügt. Zwei zufällig verschiedene
- * Rechner teilen sich nicht neun Zehntel ihrer Modelle; zwei Sichten auf
- * denselben Rechner schon.
+ * Wer wirklich wo rechnet, beantwortet nicht diese Funktion, sondern der
+ * **Gerätename je Modell** (`instances.device_name`, siehe `lmlink.ts`). Der
+ * ist die Grundlage des GPU-Schutzes; diese hier erkennt nur zwei Türen zu
+ * einem identischen Bestand.
  */
 export function istDieselbeMaschine(a: Set<string>, b: Set<string>): boolean {
-	if (a.size === 0 || b.size === 0) {
+	if (a.size === 0 || b.size === 0 || a.size !== b.size) {
 		return false
 	}
-	const gemeinsam = [...a].filter((m) => b.has(m)).length
-	const kleinere = Math.min(a.size, b.size)
-	// Deckungsgleich zählt immer — auch bei einem einzigen Modell. Das ist der
-	// alte, engere Massstab, und er bleibt gültig.
-	if (a.size === b.size && gemeinsam === a.size) {
-		return true
-	}
-	// Sonst braucht es Substanz: Bei drei gemeinsamen Modellen ist eine
-	// Überschneidung von neun Zehnteln kein Zufall mehr, bei zweien schon.
-	return gemeinsam >= 3 && gemeinsam / kleinere >= 0.9
+	return [...a].every((m) => b.has(m))
 }

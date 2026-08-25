@@ -64,6 +64,7 @@ import {
 	getTask,
 	listAgents,
 	listExecutionsByTask,
+	listInstances,
 	listTasks,
 	listTasksByChain,
 	listToolCallsByTask,
@@ -137,6 +138,8 @@ interface ActiveRun {
 	/** Rechner und Modell — Grundlage des GPU-Schutzes im Routing. */
 	providerId?: string
 	modelId?: string
+	/** Das Gerät, auf dem wirklich gerechnet wird (siehe `geraetSchluessel`). */
+	device?: string
 }
 
 /** Ergebnis der Agenten-Auswahl — rein, ohne Seiteneffekte (runTask & Preview). */
@@ -692,25 +695,36 @@ export class ExecutionEngine {
 	/** Was läuft gerade auf einem Rechner? (Anzahl + belegte Modell-Plätze) */
 	/** Arbeitet dieser Rechner gerade? Das Warmhalten hält sich davon fern. */
 	isProviderBusy(providerId: string): boolean {
-		return this.activityOf(providerId).count > 0
+		// Ein Rechner gilt als beschäftigt, wenn **irgendeines** seiner Geräte
+		// arbeitet — das Warmhalten soll keiner laufenden Antwort in die Quere
+		// kommen, auch nicht über einen durchgereichten Weg.
+		return listInstances(this.deps.db, providerId).some((i) => this.activityOf(i).count > 0)
 	}
 
-	private activityOf(providerId: string): { count: number; models: string[] } {
-		// **Alle Einträge, die auf denselben Server zeigen**, zählen zusammen.
-		//
-		// Zwei Provider können dieselbe Maschine sein — etwa `http://127.0.0.1:1234`
-		// und ein Tunnel darauf. Für DiriZ sahen das zwei Rechner aus, jeder
-		// bekam sein „ein Modell gleichzeitig", und die Grafikkarte hielt
-		// plötzlich zwei. Beim Laden des zweiten wirft LM Studio das erste
-		// mitten im Stream aus dem Speicher — die Antwort stirbt mit einer
-		// HTTP-500-Fehlerseite. Genau so ist es passiert, nachweislich: Ein über
-		// den einen Endpunkt geladenes Modell erschien im selben Moment am
-		// anderen als geladen.
-		const gruppe = new Set(sameServerProviders(this.deps.db, providerId))
+	/**
+	 * Was gerade auf **einem Gerät** läuft — Grundlage des GPU-Schutzes.
+	 *
+	 * Die Einheit ist die Grafikkarte, nicht der Endpunkt. Der Unterschied ist
+	 * bei diesem Aufbau entscheidend: Auf dem Mac läuft LM Studio, das über
+	 * „LM Link" die Modelle eines Windows-Rechners **durchreicht**. Zwei
+	 * Anfragen an denselben Mac-Endpunkt können also auf zwei verschiedenen
+	 * Rechnern landen — und zwei Anfragen an verschiedene Endpunkte auf
+	 * demselben. Wer nach Endpunkt zählt, schützt das Falsche und bremst das
+	 * Falsche.
+	 *
+	 * Nachgewiesen: Ein zweites Modell auf derselben Karte wirft das laufende
+	 * mitten im Stream aus dem Speicher — die Antwort stirbt mit einer
+	 * HTTP-500-Fehlerseite.
+	 */
+	private activityOf(instance: { providerId: string; deviceName?: string }): {
+		count: number
+		models: string[]
+	} {
+		const ziel = this.geraetSchluessel(instance)
 		const models = new Set<string>()
 		let count = 0
 		for (const run of this.active.values()) {
-			if (!run.providerId || !gruppe.has(run.providerId)) {
+			if (!run.providerId || (run.device ?? "") !== ziel) {
 				continue
 			}
 			count++
@@ -719,6 +733,22 @@ export class ExecutionEngine {
 			}
 		}
 		return { count, models: [...models] }
+	}
+
+	/**
+	 * Der Schlüssel des Geräts, auf dem ein Modell rechnet.
+	 *
+	 * Erste Wahl ist der Gerätename aus LM Studio (`instances.device_name`) —
+	 * er ist gemessen, nicht geraten. Fehlt er (Tunnel, Ollama, Cloud), zählt
+	 * die Gruppe deckungsgleicher Provider: besser als nichts und nie falsch
+	 * zusammenfassend.
+	 */
+	private geraetSchluessel(instance: { providerId: string; deviceName?: string }): string {
+		if (instance.deviceName) {
+			return `geraet:${instance.deviceName}`
+		}
+		const gruppe = sameServerProviders(this.deps.db, instance.providerId).sort()
+		return `zugang:${gruppe.join("+")}`
 	}
 
 	/**
@@ -845,7 +875,7 @@ export class ExecutionEngine {
 				local: ExecutionEngine.LOCAL_TYPES.includes(type),
 				hostRamUsagePct: host?.ramUsagePct,
 			}
-			const activity = this.activityOf(inst.providerId)
+			const activity = this.activityOf(inst)
 			result.push({
 				...info,
 				providerType: type,
@@ -1032,6 +1062,7 @@ export class ExecutionEngine {
 			task.metadata.speed === "fast" ? fastWeights(this.baseWeights()) : this.baseWeights(),
 			this.limits(),
 			(id) => this.deps.registry.labelOf(id),
+			(id) => sameServerProviders(this.deps.db, id),
 		)
 		const scored = allowed
 			.map((c) => scoreCandidate(c, profile, weights, this.deps.feedback, task.prompt))
@@ -1135,7 +1166,8 @@ export class ExecutionEngine {
 		// Schnellmodus: Tempo zählt dreifach (siehe `fastWeights`).
 		const gewichte = task.metadata.speed === "fast" ? fastWeights(this.baseWeights()) : this.baseWeights()
 		const rechnerName = (id: string) => this.deps.registry.labelOf(id)
-		let policy = applyPolicies(candidates, profile, gewichte, this.limits(), rechnerName)
+		const gleicheMaschine = (id: string) => sameServerProviders(this.deps.db, id)
+		let policy = applyPolicies(candidates, profile, gewichte, this.limits(), rechnerName, gleicheMaschine)
 
 		// Kein Kandidat? Erst prüfen, **warum** — scheitern ist die letzte
 		// Antwort, nicht die erste.
@@ -1156,6 +1188,7 @@ export class ExecutionEngine {
 				gewichte,
 				this.limits(),
 				rechnerName,
+				gleicheMaschine,
 			)
 			if (gelockert.allowed.length > 0) {
 				log(
@@ -1419,6 +1452,9 @@ export class ExecutionEngine {
 			cancelled: false,
 			providerId: choice.instance.providerId,
 			modelId: choice.instance.modelId,
+			// Welche Grafikkarte dieser Lauf belegt — nicht, über welchen
+			// Endpunkt er dorthin kam.
+			device: this.geraetSchluessel(choice.instance),
 		})
 
 		// Gesamt-Timeout + Chunk-Timeout (keine Aktivität → Failover).

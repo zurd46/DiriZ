@@ -348,27 +348,48 @@ describe("Ladefehler-Zähler", () => {
 	})
 })
 
-describe("Derselbe Rechner, zwei Zugänge", () => {
-	it("erkennt Tunnel und Direktzugang trotz einer abweichenden Modellkopie", () => {
-		// Der echte Fall: `lokalai` (ngrok) führte `…-uncensored:2` zusätzlich —
-		// LM Studios Zweitkopie desselben Modells. Ein Eintrag Unterschied, und
-		// DiriZ sah zwei Grafikkarten, wo eine steht.
-		const direkt = new Set(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n"])
-		const tunnel = new Set([...direkt, "n:2"])
-		expect(istDieselbeMaschine(direkt, tunnel)).toBe(true)
-		expect(istDieselbeMaschine(tunnel, direkt)).toBe(true)
+describe("Zwei Zugänge zu demselben Bestand", () => {
+	it("erkennt nur deckungsgleiche Listen als denselben Zugang", () => {
+		// Streng mit Absicht: `lokalai` ist ein Windows-Rechner, `MacDani` ein
+		// Mac. Dass beide fast dieselben Modelle führen, macht sie nicht zu
+		// einer Maschine — der Mac reicht die fremden nur durch. Wer wirklich
+		// wo rechnet, sagt `device_name` je Modell, nicht diese Funktion.
+		const a = new Set(["a", "b", "c", "d"])
+		expect(istDieselbeMaschine(a, new Set(["a", "b", "c", "d"]))).toBe(true)
+		expect(istDieselbeMaschine(a, new Set(["a", "b", "c", "d", "d:2"]))).toBe(false)
+		expect(istDieselbeMaschine(a, new Set(["a", "b", "c"]))).toBe(false)
 	})
+})
 
-	it("hält wirklich verschiedene Rechner auseinander", () => {
-		const macbook = new Set(["qwen3", "llama3", "mistral", "phi4", "gemma"])
-		const server = new Set(["deepseek-v4", "kimi", "glm", "minimax", "qwen3"])
-		expect(istDieselbeMaschine(macbook, server)).toBe(false)
-	})
+describe("Wo rechnet das Modell?", () => {
+	it("merkt sich den Gerätenamen und vergisst ihn nicht beim nächsten Rundgang", () => {
+		// LM Studio reicht per LM Link fremde Modelle durch: Der Endpunkt heisst
+		// `MacDani`, gerechnet wird auf `LokalAI_Server1`.
+		const p = createProvider(db, { type: "lmstudio", label: "MacDani", baseUrl: "http://127.0.0.1:1234" })
+		const inst = upsertInstance(
+			db,
+			p.id,
+			{
+				modelId: "nvidia-nemotron-3.5-lightning-30b-a3b",
+				displayName: "Nemotron",
+				contextWindow: 262_144,
+				loadedContextWindow: 60_160,
+				deviceName: "LokalAI_Server1",
+			},
+			"discovered",
+		)
+		expect(inst.deviceName).toBe("LokalAI_Server1")
+		expect(inst.loadedContextWindow).toBe(60_160)
 
-	it("erklärt zwei kleine, ungleiche Listen nicht vorschnell für denselben Rechner", () => {
-		// Deckungsgleich zählt immer — das ist der alte, enge Massstab.
-		expect(istDieselbeMaschine(new Set(["a", "b"]), new Set(["a", "b"]))).toBe(true)
-		// Aber bei zwei Modellen reicht „fast gleich" nicht: zu wenig Substanz.
-		expect(istDieselbeMaschine(new Set(["a", "b"]), new Set(["a", "b", "c"]))).toBe(false)
+		// Nächster Rundgang ohne Geräteauskunft (etwa weil `lms` fehlt): Der
+		// zuletzt bekannte Stand bleibt — eine leere Anzeige wäre ein Rückschritt.
+		const erneut = upsertInstance(
+			db,
+			p.id,
+			{ modelId: "nvidia-nemotron-3.5-lightning-30b-a3b", displayName: "Nemotron", contextWindow: 262_144 },
+			"discovered",
+		)
+		expect(erneut.deviceName).toBe("LokalAI_Server1")
+		expect(erneut.loadedContextWindow).toBe(60_160)
 	})
 })

@@ -76,7 +76,18 @@ export function registerProviders(app: FastifyInstance, ctx: AppContext): void {
 			const gruppe = sameServerProviders(ctx.db, p.id)
 				.filter((id) => id !== p.id)
 				.map((id) => alle.find((q) => q.id === id)?.label ?? id)
-			return { ...p, instanceCount: insts.filter((i) => i.enabled).length, sameMachineAs: gruppe }
+			// **Auf welchen Rechnern die Modelle dieses Zugangs wirklich rechnen.**
+			//
+			// Bei LM Studio mit „LM Link" ist das nicht zwingend der Rechner des
+			// Endpunkts: Der Mac reicht die Modelle eines Windows-Rechners durch.
+			// Wer das nicht sieht, sucht Engpässe am falschen Ort.
+			const devices = [...new Set(insts.map((i) => i.deviceName).filter(Boolean))] as string[]
+			return {
+				...p,
+				instanceCount: insts.filter((i) => i.enabled).length,
+				sameMachineAs: gruppe,
+				devices,
+			}
 		})
 	})
 

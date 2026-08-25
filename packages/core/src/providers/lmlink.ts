@@ -95,7 +95,11 @@ export async function readDeviceMap(): Promise<Map<string, string>> {
 			run(lms, ["ls", "--json"], { timeout: TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 }),
 			run(lms, ["link", "status"], { timeout: TIMEOUT_MS, maxBuffer: 256 * 1024 }),
 		])
-		const { eigener, namen } = parseLinkStatus(status.stdout)
+		// `lms link status` schreibt seine Auskunft auf **stderr**, nicht auf
+		// stdout — jedenfalls ohne Terminal. Gemessen, nicht vermutet: Über
+		// `execFile` kam stdout leer zurück und der ganze Text auf stderr.
+		// Deshalb beide lesen; welcher Kanal es ist, darf uns egal sein.
+		const { eigener, namen } = parseLinkStatus(`${status.stdout}\n${status.stderr}`)
 		for (const m of JSON.parse(liste.stdout) as LmsModel[]) {
 			if (!m.modelKey) {
 				continue

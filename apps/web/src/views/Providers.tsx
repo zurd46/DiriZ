@@ -382,12 +382,25 @@ export default function Providers() {
 												</span>
 											)}
 											{!p.enabled && <span className="badge subtle">inaktiv</span>}
+											{/* Wo die Modelle dieses Zugangs wirklich rechnen. Bei LM Studio
+											    mit „LM Link" ist das nicht zwingend der Rechner des Endpunkts:
+											    Ein Mac kann die Modelle eines Windows-Rechners durchreichen. */}
+											{p.devices?.map((d) => (
+												<span
+													key={d}
+													className="badge subtle"
+													title={`Modelle dieses Zugangs rechnen auf „${d}". Der GPU-Schutz zählt pro Rechner, nicht pro Zugang.`}
+												>
+													<IconServer size={11} />
+													{d}
+												</span>
+											))}
 											{p.sameMachineAs && p.sameMachineAs.length > 0 && (
 												<span
 													className="badge subtle"
-													title={`Dieselbe Maschine wie ${p.sameMachineAs.join(", ")} — erkannt an nahezu gleicher Modell-Liste. Beide Zugänge teilen sich denselben Speicher: Was hier geladen wird, verdrängt dort.`}
+													title={`Führt exakt dieselben Modelle wie ${p.sameMachineAs.join(", ")} — vermutlich ein zweiter Zugang zum selben LM Studio.`}
 												>
-													<IconServer size={11} />= {p.sameMachineAs.join(", ")}
+													= {p.sameMachineAs.join(", ")}
 												</span>
 											)}
 										</div>

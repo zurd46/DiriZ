@@ -56,6 +56,59 @@ export const CIRCUIT_BREAKER = {
 
 export const HEALTH_POLL_MS = 10_000
 
+/**
+ * Die Adresse, unter der ein Provider-Typ normalerweise erreichbar ist.
+ *
+ * Eine Quelle für Maske, API und Bestandspflege. Vorher stand die Vorgabe nur
+ * in der Eingabemaske — fest auf dem Ollama-Standard, unabhängig vom Typ. Bei
+ * einem OpenRouter-Zugang wurde der Wert trotzdem gespeichert, und in der
+ * Datenbank stand `OpenRouter | openrouter | http://localhost:11434`. Der
+ * Eintrag sah gültig aus; jede Anfrage wäre ins lokale Ollama gelaufen.
+ *
+ * Leer bei `openai-compat`: Dort gibt es keine übliche Adresse — die kennt nur,
+ * wer den Dienst betreibt.
+ */
+export const DEFAULT_BASE_URL: Record<string, string> = {
+	ollama: "http://localhost:11434",
+	lmstudio: "http://localhost:1234",
+	"openai-compat": "",
+	openrouter: "https://openrouter.ai/api/v1",
+	openai: "https://api.openai.com/v1",
+}
+
+/** Provider-Typen, die einen Schlüssel brauchen — und eine feste Adresse haben. */
+export const CLOUD_PROVIDER_TYPES = ["openrouter", "openai"]
+
+/**
+ * Zeigt diese Adresse auf den Rechner, auf dem DiriZ läuft?
+ *
+ * Für einen Cloud-Dienst ist das nie richtig; für einen lokalen Server immer.
+ */
+export function isLoopbackUrl(url: string): boolean {
+	try {
+		const host = new URL(url).hostname
+		return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]"
+	} catch {
+		return false
+	}
+}
+
+/**
+ * Die Adresse, mit der ein Provider gespeichert werden soll.
+ *
+ * Für Cloud-Dienste wird eine fehlende oder lokale Angabe durch die offizielle
+ * ersetzt — wer einen Schlüssel hinterlegt, meint den Dienst, nicht den eigenen
+ * Rechner. Ein eigener Proxy davor (`https://proxy.firma.example/v1`) bleibt
+ * unangetastet.
+ */
+export function normalizeBaseUrl(type: string, baseUrl?: string): string {
+	const roh = (baseUrl ?? "").trim()
+	if (CLOUD_PROVIDER_TYPES.includes(type) && (roh === "" || isLoopbackUrl(roh))) {
+		return DEFAULT_BASE_URL[type] ?? roh
+	}
+	return roh || (DEFAULT_BASE_URL[type] ?? "")
+}
+
 export const DEFAULT_WORKSPACE_DIR = "~/DiriZ/workspace"
 export const DEFAULT_DATA_DIR = "~/.diriz"
 

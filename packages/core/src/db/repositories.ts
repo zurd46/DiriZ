@@ -37,6 +37,7 @@ import {
 	docKindsFor,
 	instanceDocs,
 	type ModelSpec,
+	normalizeBaseUrl,
 	parseInitDoc,
 	parseLlmDoc,
 	renderInitDoc,
@@ -2165,6 +2166,33 @@ export function recentlyUsedInstances(db: Db, providerId: string, limit = 3): st
  */
 export function lockInstance(db: Db, instanceId: string, until: string): void {
 	db.prepare("UPDATE instances SET locked_until = ? WHERE id = ?").run(until, instanceId)
+}
+
+/**
+ * Korrigiert gespeicherte Adressen von Cloud-Providern.
+ *
+ * Beim Anlegen stand in der Maske fest der Ollama-Standard; bei einem
+ * OpenRouter-Zugang wurde er mitgespeichert. In der Datenbank steht dann
+ * `OpenRouter | openrouter | http://localhost:11434` — ein Eintrag, der gültig
+ * aussieht und nie funktionieren kann. Beim Start einmal geradegerückt, statt
+ * den Menschen suchen zu lassen.
+ */
+export function repairCloudBaseUrls(db: Db): { label: string; von: string; nach: string }[] {
+	const rows = db.prepare("SELECT id, label, type, base_url FROM providers").all() as {
+		id: string
+		label: string
+		type: string
+		base_url: string
+	}[]
+	const korrigiert: { label: string; von: string; nach: string }[] = []
+	for (const r of rows) {
+		const richtig = normalizeBaseUrl(r.type, r.base_url)
+		if (richtig && richtig !== r.base_url) {
+			db.prepare("UPDATE providers SET base_url = ? WHERE id = ?").run(richtig, r.id)
+			korrigiert.push({ label: r.label, von: r.base_url, nach: richtig })
+		}
+	}
+	return korrigiert
 }
 
 /** Hebt eine Sperre wieder auf — etwa, wenn das Modell wieder läuft. */

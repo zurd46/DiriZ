@@ -368,3 +368,23 @@ describe("HTTP-Fehler mit Hinweis", () => {
 		expect(msg).toContain("API-Schlüssel")
 	})
 })
+
+describe("Cloud-Provider mit lokaler Adresse", () => {
+	it("verwirft eine Adresse, die auf den eigenen Rechner zeigt", () => {
+		// Der echte Fall: Die Maske füllte „Base URL" mit dem Ollama-Standard
+		// vor und schickte ihn auch bei OpenRouter mit. In der Datenbank stand
+		// `OpenRouter | openrouter | http://localhost:11434` — jede Anfrage wäre
+		// ins lokale Ollama gelaufen.
+		const p = createProvider("x", "openrouter", "http://localhost:11434", "sk-test", "OpenRouter")
+		expect((p as unknown as { baseUrl: string }).baseUrl).toContain("openrouter.ai")
+
+		const o = createProvider("y", "openai", "http://127.0.0.1:11434", "sk-test", "OpenAI")
+		expect((o as unknown as { baseUrl: string }).baseUrl).toContain("api.openai.com")
+	})
+
+	it("lässt eine echte Gegenstelle unangetastet", () => {
+		// Ein Firmen-Proxy vor OpenRouter ist zulässig — nur „dieser Rechner“ nicht.
+		const p = createProvider("z", "openrouter", "https://proxy.firma.example/v1", "sk-test")
+		expect((p as unknown as { baseUrl: string }).baseUrl).toBe("https://proxy.firma.example/v1")
+	})
+})

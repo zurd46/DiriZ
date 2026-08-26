@@ -10,6 +10,7 @@ import {
 	appendChangelogEntry,
 	isAgentDocKind,
 	type ModelSettings,
+	normalizeBaseUrl,
 	type ProviderType,
 	parseInitDoc,
 	renderInitDoc,
@@ -107,14 +108,20 @@ export function registerProviders(app: FastifyInstance, ctx: AppContext): void {
 		if (!type || !PROVIDER_TYPES.includes(type as ProviderType)) {
 			return reply.code(400).send({ error: `type muss einer von ${PROVIDER_TYPES.join(", ")} sein` })
 		}
-		if (!baseUrl || !/^https?:\/\//.test(baseUrl)) {
+		// **Was gespeichert wird, muss stimmen.**
+		//
+		// Wer einen Schlüssel hinterlegt, meint den Dienst — nicht den eigenen
+		// Rechner. Genau das ging schief: Die Maske gab `http://localhost:11434`
+		// vor, und der Wert wurde auch für einen OpenRouter-Zugang gespeichert.
+		const adresse = normalizeBaseUrl(type, baseUrl)
+		if (!adresse || !/^https?:\/\//.test(adresse)) {
 			return reply.code(400).send({ error: "baseUrl muss eine http(s)-URL sein" })
 		}
 		const { modelSettings } = req.body ?? {}
 		const provider = createProvider(ctx.db, {
 			type: type as ProviderType,
 			label: label || type,
-			baseUrl,
+			baseUrl: adresse,
 			config,
 			modelSettings: modelSettings ?? null,
 			apiKeyEnc: apiKey ? encryptString(apiKey, ctx.secret) : undefined,
@@ -167,6 +174,9 @@ export function registerProviders(app: FastifyInstance, ctx: AppContext): void {
 		}
 		// Model-Settings sind aus `init.md` abgeleitet — also dort hineinschreiben.
 		const { modelSettings, deviceName, ...rest } = body
+		if (rest.baseUrl !== undefined) {
+			rest.baseUrl = normalizeBaseUrl(before.type, rest.baseUrl)
+		}
 		if (deviceName !== undefined) {
 			const config = { ...(before.config ?? {}) }
 			if (deviceName === null || deviceName.trim() === "") {

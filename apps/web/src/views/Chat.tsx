@@ -494,6 +494,16 @@ export default function Chat() {
 	 * Aufgabe wert ist.
 	 */
 	const [fastMode, setFastMode] = useState(false)
+	/**
+	 * Dürfen Cloud-Modelle mitspielen?
+	 *
+	 * Vorher stand `privacy: "local-only"` fest im Code — jede Aufgabe schloss
+	 * Cloud-Anbieter aus, auch wenn ein OpenRouter-Zugang mit 417 Modellen
+	 * eingerichtet war. Die Entscheidung gehört dem Menschen, nicht dem
+	 * Quelltext; die Vorgabe bleibt aber „nur lokal", denn das Gegenteil
+	 * schickt Code aus dem Haus.
+	 */
+	const [cloudErlaubt, setCloudErlaubt] = useState(() => localStorage.getItem("diriz.cloudErlaubt") === "1")
 	const [plan, setPlan] = useState<SwarmStep[]>([])
 	/**
 	 * Verlauf standardmässig zugeklappt — die Unterhaltung bekommt die Breite.
@@ -758,7 +768,7 @@ export default function Chat() {
 				title: titleFrom(text),
 				prompt: keepContext ? withHistory(text, history) : text,
 				metadata: {
-					privacy: "local-only",
+					privacy: cloudErlaubt ? "any" : "local-only",
 					mode: "auto",
 					// Agentik-Modus: nur wenn der Spezialist Dateien anfassen soll.
 					agentMode: target !== "answer",
@@ -1276,6 +1286,20 @@ export default function Chat() {
 							>
 								<input type="checkbox" checked={fastMode} onChange={(e) => setFastMode(e.target.checked)} />
 								Schnell
+							</label>
+							<label
+								className="chat-context"
+								title="Erlaubt Cloud-Anbieter (OpenRouter, OpenAI) für diese Unterhaltung. Aus = ausschliesslich deine eigenen Rechner; dein Code verlässt das Haus nicht."
+							>
+								<input
+									type="checkbox"
+									checked={cloudErlaubt}
+									onChange={(e) => {
+										setCloudErlaubt(e.target.checked)
+										localStorage.setItem("diriz.cloudErlaubt", e.target.checked ? "1" : "0")
+									}}
+								/>
+								Cloud
 							</label>
 							<label className="chat-context">
 								<input

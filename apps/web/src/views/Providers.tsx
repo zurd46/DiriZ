@@ -22,6 +22,20 @@ const TYPES: ProviderType[] = ["ollama", "lmstudio", "openai-compat", "openroute
 const CAPABILITIES: Capability[] = ["code", "reasoning", "longform", "vision", "tools", "json"]
 
 /** Entwurf beim Bearbeiten eines Providers (Rechner). */
+/**
+ * Standard-Adresse je Provider-Typ.
+ *
+ * Steht hier, damit die Maske beim Typwechsel mitzieht: Ein OpenRouter-Eintrag
+ * mit `http://localhost:11434` sieht gültig aus und ist es nie.
+ */
+const STANDARD_URL: Record<ProviderType, string> = {
+	ollama: "http://localhost:11434",
+	lmstudio: "http://localhost:1234",
+	"openai-compat": "",
+	openrouter: "https://openrouter.ai/api/v1",
+	openai: "https://api.openai.com/v1",
+}
+
 interface ProviderDraft {
 	label: string
 	baseUrl: string
@@ -61,7 +75,7 @@ export default function Providers() {
 	const [showForm, setShowForm] = useState(false)
 	const [type, setType] = useState<ProviderType>("ollama")
 	const [label, setLabel] = useState("")
-	const [baseUrl, setBaseUrl] = useState("http://localhost:11434")
+	const [baseUrl, setBaseUrl] = useState(STANDARD_URL.ollama)
 	const [apiKey, setApiKey] = useState("")
 	const [busy, setBusy] = useState(false)
 
@@ -322,7 +336,23 @@ export default function Providers() {
 					<div className="row" style={{ marginTop: 14, alignItems: "flex-end" }}>
 						<label className="field">
 							Typ
-							<select value={type} onChange={(e) => setType(e.target.value as ProviderType)}>
+							<select
+								value={type}
+								onChange={(e) => {
+									// **Die Adresse gehört zum Typ.**
+									//
+									// Vorher stand hier unverändert `http://localhost:11434` — auch
+									// bei OpenRouter, und der Wert wurde mitgeschickt: Der Provider
+									// wurde mit einer Adresse angelegt, die auf das lokale Ollama
+									// zeigt. Beim Wechsel des Typs zieht die Vorgabe deshalb mit,
+									// solange der Mensch nichts Eigenes eingetragen hat.
+									const neuerTyp = e.target.value as ProviderType
+									if (baseUrl === STANDARD_URL[type] || baseUrl === "") {
+										setBaseUrl(STANDARD_URL[neuerTyp])
+									}
+									setType(neuerTyp)
+								}}
+							>
 								{TYPES.map((t) => (
 									<option key={t} value={t}>
 										{t}
@@ -339,8 +369,10 @@ export default function Providers() {
 							<input
 								value={baseUrl}
 								onChange={(e) => setBaseUrl(e.target.value)}
-								placeholder={type === "ollama" ? "http://localhost:11434" : "https://…/v1"}
-								disabled={requiresKey}
+								placeholder={STANDARD_URL[type] || "https://…/v1"}
+								// Cloud-Dienste haben eine feste Adresse — sie hier zu zeigen ist
+								// ehrlicher, als das Feld mit einem fremden Wert zu sperren.
+								readOnly={requiresKey}
 							/>
 						</label>
 						<label className="field">

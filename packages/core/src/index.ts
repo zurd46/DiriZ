@@ -18,6 +18,7 @@ import {
 	getSetting,
 	persistLog,
 	providerApiKeyEnc,
+	repairCloudBaseUrls,
 	setTaskRepo,
 } from "./db/repositories.js"
 import { DEFAULT_RETENTION, failOrphanedRuns, purgeOldData, type RetentionSettings } from "./db/retention.js"
@@ -177,6 +178,11 @@ async function main(): Promise<void> {
 
 	// Läufe, die ein früherer Prozess hielt, sind mit ihm gestorben — sie als
 	// „läuft" stehen zu lassen, wäre eine Lüge im Dashboard.
+	// Cloud-Zugänge mit lokaler Adresse geradeziehen — siehe `repairCloudBaseUrls`.
+	for (const k of repairCloudBaseUrls(db)) {
+		log("warn", "core", `${k.label}: Adresse korrigiert — „${k.von}" → „${k.nach}"`)
+	}
+
 	const verwaist = failOrphanedRuns(db)
 	if (verwaist > 0) {
 		log("warn", "core", `${verwaist} Lauf/Läufe aus einem früheren Prozess als abgebrochen markiert`)

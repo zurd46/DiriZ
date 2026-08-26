@@ -1137,6 +1137,17 @@ export class ExecutionEngine {
 			next = { ...next, estTokens: next.estTokens + overhead }
 		}
 		if (agent.privacy === "local-only") {
+			// Der Spezialist ist strenger als die Aufgabe — das ist so gewollt,
+			// muss aber sichtbar sein: Wer im Chat „Cloud" einschaltet und dann
+			// trotzdem nur lokale Modelle sieht, sucht den Fehler sonst überall,
+			// nur nicht beim Spezialisten.
+			if (next.privacy !== "local-only") {
+				this.deps.log(
+					"info",
+					"routing",
+					`Spezialist „${agent.name}" ist auf lokale Rechner beschränkt — Cloud-Modelle bleiben aussen vor (änderbar unter Agenten → Privatsphäre)`,
+				)
+			}
 			next = { ...next, privacy: "local-only" }
 		}
 		if (agent.requiredCapabilities.length > 0 || agent.preferredCapabilities.length > 0) {

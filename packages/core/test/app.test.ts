@@ -614,3 +614,36 @@ describe("API: Rechner eines Zugangs erklären", () => {
 		await app.close()
 	})
 })
+
+describe("API: Adresse eines Cloud-Providers", () => {
+	it("speichert die offizielle Adresse, wenn eine lokale angegeben wurde", async () => {
+		// Der echte Fall: Die Maske gab `http://localhost:11434` vor und schickte
+		// den Wert auch für OpenRouter mit — in der Datenbank stand ein Eintrag,
+		// der gültig aussah und nie funktionieren konnte.
+		const app = await buildApp(ctx)
+		const res = await app.inject({
+			method: "POST",
+			url: "/api/providers",
+			payload: { type: "openrouter", label: "OR", baseUrl: "http://localhost:11434", apiKey: "sk-test" },
+		})
+		expect(res.statusCode).toBe(201)
+		expect(res.json().baseUrl).toBe("https://openrouter.ai/api/v1")
+		await app.close()
+	})
+
+	it("lässt einen eigenen Proxy stehen", async () => {
+		const app = await buildApp(ctx)
+		const res = await app.inject({
+			method: "POST",
+			url: "/api/providers",
+			payload: {
+				type: "openrouter",
+				label: "OR-Proxy",
+				baseUrl: "https://proxy.firma.example/v1",
+				apiKey: "sk-test",
+			},
+		})
+		expect(res.json().baseUrl).toBe("https://proxy.firma.example/v1")
+		await app.close()
+	})
+})

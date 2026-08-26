@@ -20,8 +20,10 @@ import {
 	latestAgentSelection,
 	latestDecision,
 	listChatTasks,
+	listCompareTasks,
 	listExecutionsByTask,
 	listFilesByTask,
+	listRecentCompares,
 	listTasks,
 	listToolCallsByTask,
 	replayOutput,
@@ -157,6 +159,8 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 						}
 					: null,
 				repoId: task.repoId ?? null,
+				// A/B-Vergleich: bindet die Spalten eines Duells zusammen (T1-1).
+				compareId: task.metadata.compareId ?? null,
 				// Welches Projekt, welcher Branch — „GitHub“ allein sagt nichts.
 				repoFullName: task.repoId ? (getRepo(ctx.db, task.repoId)?.fullName ?? null) : null,
 				workBranch: task.workBranch ?? null,
@@ -397,12 +401,108 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 		return { cancelled: true }
 	})
 
-	app.post<{ Params: { id: string } }>("/api/tasks/:id/preview", async (req, reply) => {
+	app.post<{ Params: { id: string } }>(`/api/tasks/:id/preview`, async (req, reply) => {
 		const preview = await ctx.engine.preview(req.params.id)
 		if (!preview) {
 			return reply.code(404).send({ error: "Task nicht gefunden" })
 		}
 		return preview
+	})
+
+	/* ----------------------- A/B-Vergleich (T1-1, Modell-Duell) ----------------------- */
+
+	/**
+	 * Gleicher Auftrag, mehrere Modelle parallel — jedes Mitglied ist eine
+	 * normale Task auf ihrer Pinned-Instanz, verbunden durch `compareId`.
+	 * So bleibt alles nachvollziehbar: Jede Spalte hat Routing-Entscheid,
+	 * Dateien und Bewertung wie jeder andere Lauf.
+	 */
+	app.post<{ Body: { prompt: string; title?: string; instanceIds: string[]; chatId?: string } }>(
+		`/api/compare`,
+		(req, reply) => {
+			const { prompt, title, instanceIds, chatId } = req.body ?? {}
+			if (!prompt || prompt.trim().length === 0) {
+				return reply.code(400).send({ error: "prompt fehlt" })
+			}
+			if (!Array.isArray(instanceIds) || instanceIds.length < 2) {
+				return reply.code(400).send({ error: "mindestens 2 Instanzen wählen" })
+			}
+			if (instanceIds.length > 4) {
+				return reply.code(400).send({ error: "maximal 4 Modelle pro Vergleich" })
+			}
+			const unique = [...new Set(instanceIds)]
+			if (unique.length < 2) {
+				return reply.code(400).send({ error: "Instanzen müssen unterschiedlich sein" })
+			}
+			const compareId = crypto.randomUUID()
+			// `chatId` bindet das Duell an ein Gespräch (optional) — beide Kennungen
+			// koexistieren: `compareId` fasst die Spalten, `chatId` den Verlauf.
+			const baseMeta: Partial<TaskMetadata> = { privacy: "local-only", mode: "pinned", compareId }
+			if (chatId) {
+				baseMeta.chatId = chatId
+			}
+			const tasks: { taskId: string; instanceId: string; started: boolean; reason?: string }[] = []
+			for (const instanceId of unique) {
+				const inst = getInstance(ctx.db, instanceId)
+				if (!inst) {
+					return reply.code(400).send({ error: `Instanz ${instanceId} existiert nicht` })
+				}
+				const task = createTask(ctx.db, {
+					title: (title ?? "").trim()
+						? `${(title ?? "").trim()} · ${inst.displayName}`
+						: `Vergleich · ${inst.displayName}`,
+					prompt: prompt.trim(),
+					metadata: { ...baseMeta, preferredProviderId: inst.providerId, preferredModelId: inst.modelId },
+				})
+				ctx.bus.emit({ event: "task.created", data: { taskId: task.id } })
+				const result = ctx.engine.start(task.id)
+				tasks.push({ taskId: task.id, instanceId, started: result.accepted, reason: result.reason })
+			}
+			return reply.code(201).send({ compareId, tasks })
+		},
+	)
+
+	app.get<{ Querystring: { limit?: string } }>(`/api/compare/recent`, (req) => {
+		const limit = req.query.limit ? Number(req.query.limit) : 20
+		return listRecentCompares(ctx.db, Number.isFinite(limit) && limit > 0 ? Math.min(limit, 100) : 20)
+	})
+
+	app.get<{ Params: { compareId: string } }>(`/api/compare/:compareId`, (req, reply) => {
+		const members = listCompareTasks(ctx.db, req.params.compareId)
+		if (members.length === 0) {
+			return reply.code(404).send({ error: "Vergleich nicht gefunden" })
+		}
+		const finished = new Set(["done", "failed", "cancelled"])
+		const view = members.map((task) => {
+			const executions = listExecutionsByTask(ctx.db, task.id)
+			const last = executions.at(-1)
+			const inst = last?.instanceId ? getInstance(ctx.db, last.instanceId) : undefined
+			const provider = inst ? getProvider(ctx.db, inst.providerId) : undefined
+			const started = last?.startedAt ? Date.parse(last.startedAt) : undefined
+			const end = last?.finishedAt ? Date.parse(last.finishedAt) : undefined
+			return {
+				taskId: task.id,
+				instanceId: last?.instanceId,
+				providerId: last?.providerId,
+				modelName: inst?.displayName ?? "—",
+				providerLabel: provider?.label ?? null,
+				status: task.status,
+				output: last?.output ?? "",
+				error: last?.error ?? null,
+				tokensIn: last?.tokensIn,
+				tokensOut: last?.tokensOut,
+				tpsAvg: last?.tpsAvg,
+				costUsd: last?.costUsd,
+				durationMs: started !== undefined && end !== undefined ? end - started : undefined,
+			}
+		})
+		return {
+			compareId: req.params.compareId,
+			prompt: members[0].prompt,
+			createdAt: members[0].createdAt,
+			members: view,
+			allFinished: members.every((t) => finished.has(t.status)),
+		}
 	})
 
 	app.get<{ Params: { id: string } }>("/api/tasks/:id/replay", (req, reply) => {

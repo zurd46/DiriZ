@@ -12,6 +12,7 @@ import type {
 	LLMProvider,
 	LoadInfo,
 } from "@diriz/shared"
+import { contentText } from "@diriz/shared"
 import { errorMessage, fetchJson, jsonLines, ProviderHttpError, statusHint, summarizeBody } from "./http.js"
 
 interface OllamaChatChunk {
@@ -24,21 +25,47 @@ interface OllamaChatChunk {
 	eval_count?: number
 }
 
-/** Gemeinsame ChatMessage → Ollama-`messages` (inkl. Tool-Rollen, M8). */
+/**
+ * Gemeinsame ChatMessage → Ollama-`messages` (inkl. Tool-Rollen, M8).
+ * Vision (T1-2): Ollama nimmt Bilder nicht in die Nachricht, sondern ins
+ * `images`-Feld der letzten User-Nachricht — `extractOllamaImages` sammelt
+ * sie, hier bleibt nur der Text.
+ */
 function toOllamaMessages(messages: ChatRequest["messages"]): unknown[] {
 	return messages.map((m) => {
+		const text = contentText(m.content)
 		if (m.role === "tool") {
-			return { role: "tool", content: m.content }
+			return { role: "tool", content: text }
 		}
 		if (m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0) {
 			return {
 				role: "assistant",
-				content: m.content || "",
+				content: text || "",
 				tools: m.toolCalls.map((c) => ({ function: { name: c.name, arguments: c.arguments ?? {} } })),
 			}
 		}
-		return { role: m.role, content: m.content }
+		return { role: m.role, content: text }
 	})
+}
+
+/**
+ * Sammelt alle Bild-URLs aus `ContentPart[]` (T1-2). Ollama erwartet
+ * Base64-Strings im `images`-Feld — `data:`-URIs werden entpackt.
+ */
+export function extractOllamaImages(messages: ChatRequest["messages"]): string[] {
+	const images: string[] = []
+	for (const m of messages) {
+		if (typeof m.content === "string") {
+			continue
+		}
+		for (const part of m.content) {
+			if (part.type === "image_url") {
+				const url = part.image_url.url
+				images.push(url.startsWith("data:") ? url.slice(url.indexOf(";base64,") + 8) : url)
+			}
+		}
+	}
+	return images
 }
 
 export class OllamaProvider implements LLMProvider {
@@ -113,6 +140,15 @@ export class OllamaProvider implements LLMProvider {
 		}
 		if (req.tools && req.tools.length > 0) {
 			body.tools = req.tools.map((t) => ({ type: "function", function: t }))
+		}
+		// T1-2 Vision: Bilder gehören ans `images`-Feld der User-Nachricht.
+		const images = extractOllamaImages(req.messages)
+		if (images.length > 0) {
+			body.images = images
+		}
+		// T3-12: JSON-Modus (Ollama kennt `format: "json"`).
+		if (req.jsonMode) {
+			body.format = "json"
 		}
 		const res = await fetch(`${this.baseUrl}/api/chat`, {
 			method: "POST",

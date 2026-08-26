@@ -71,6 +71,8 @@ interface Turn {
 	agentMode: boolean
 	/** Gesetzt, wenn diese Nachricht die Übergabe eines Kettenschritts ist. */
 	chain: { step: number; total: number } | null
+	/** A/B-Vergleich (T1-1): gemeinsame Kennung aller Spalten eines Duells. */
+	compareId?: string | null
 	/** Gepinntes Repository — dann gibt es Diff, Commit und Push direkt hier. */
 	repoId: string | null
 	agentName: string | null
@@ -462,6 +464,220 @@ function duration(ms: number): string {
 	return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")} min`
 }
 
+/**
+ * A/B-Vergleich (T1-1): derselbe Auftrag auf 2–4 Modellen nebeneinander.
+ *
+ * Pro Spalte: Modell, Rechner, Status, Dauer, Tempo (Token/s) und die Antwort
+ * live. Die Metriken kommen aus dem SSE-Stream (`live`); nach dem Neuladen
+ * bleiben die persistierten Antworten im Verlauf — die Metriken dann nicht,
+ * das ist akzeptabel, weil die Spalten sich per `compareId` wiederfinden.
+ *
+ * Diff: Wort-Felder über einen gemeinsamen Längsten-Gemeinsamen-Untersatz —
+ * klein genug für eine Antwort, ohne ein zweites Diff-Modul zu brauchen.
+ */
+function diffWords(a: string, b: string): { text: string; kind: "same" | "add" | "del" }[] {
+	const wa = a.split(/\s+/).filter(Boolean)
+	const wb = b.split(/\s+/).filter(Boolean)
+	const n = wa.length
+	const m = wb.length
+	// DP-Tabelle für die LCS-Länge — für Antwortgrößen (Worte) kein Problem.
+	const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0))
+	for (let i = n - 1; i >= 0; i--) {
+		for (let j = m - 1; j >= 0; j--) {
+			dp[i][j] = wa[i] === wb[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
+		}
+	}
+	const out: { text: string; kind: "same" | "add" | "del" }[] = []
+	let i = 0
+	let j = 0
+	while (i < n && j < m) {
+		if (wa[i] === wb[j]) {
+			out.push({ text: wa[i], kind: "same" })
+			i++
+			j++
+		} else if (dp[i + 1][j] >= dp[i][j + 1]) {
+			out.push({ text: wa[i], kind: "del" })
+			i++
+		} else {
+			out.push({ text: wb[j], kind: "add" })
+			j++
+		}
+	}
+	while (i < n) {
+		out.push({ text: wa[i], kind: "del" })
+		i++
+	}
+	while (j < m) {
+		out.push({ text: wb[j], kind: "add" })
+		j++
+	}
+	return out
+}
+
+function ComparePanel({
+	turns,
+	runOf,
+	workerOf,
+	onCancel,
+}: {
+	turns: Turn[]
+	runOf: (taskId: string) =>
+		| {
+				status?: string
+				startedAt?: number
+				firstActivityAt?: number
+				text?: string
+				usage?: { tokensIn?: number; tokensOut?: number; tps?: number; costUsd?: number }
+		  }
+		| undefined
+	workerOf: (t: Turn) => { model?: string; host?: string }
+	onCancel: (taskId: string) => void
+}) {
+	const [showDiff, setShowDiff] = useState(false)
+	const [baseIdx, setBaseIdx] = useState(0)
+	const answers = turns.map((t) => runOf(t.taskId)?.text ?? t.answer ?? "")
+	const finished = turns.every((t) => {
+		const st = runOf(t.taskId)?.status ?? t.status
+		return st === "done" || st === "failed" || st === "cancelled"
+	})
+	const base = answers[baseIdx] ?? ""
+	const cols = turns.map((t) => {
+		const run = runOf(t.taskId)
+		const started = run?.startedAt ?? new Date(t.createdAt).getTime()
+		const now = Date.now()
+		const durMs = run?.status === "done" && run.firstActivityAt !== undefined ? now - started : now - started
+		const outTok = run?.usage?.tokensOut
+		const tps = outTok !== undefined && durMs > 0 ? (outTok / durMs) * 1000 : run?.usage?.tps
+		const cost = run?.usage?.costUsd
+		const tokIn = run?.usage?.tokensIn
+		return {
+			turn: t,
+			worker: workerOf(t),
+			status: run?.status ?? t.status,
+			running: (run?.status ?? t.status) === "running",
+			answer: answers[turns.indexOf(t)] ?? "",
+			seconds: Math.round(durMs / 1000),
+			tps,
+			cost,
+			tokIn,
+		}
+	})
+	return (
+		<div className="compare-panel">
+			<div className="compare-head">
+				<span className="chat-tools-label" role="status" aria-label="A/B-Vergleich">
+					Vergleich · {turns.length} Modelle ·{" "}
+					{finished ? "fertig" : `${cols.filter((c) => c.running).length} läuft`}
+				</span>
+				{finished && turns.length > 1 && (
+					<button type="button" className="btn sm" onClick={() => setShowDiff((v) => !v)}>
+						{showDiff ? "Diff ausblenden" : "Ergebnisse vergleichen (Diff)"}
+					</button>
+				)}
+			</div>
+			{showDiff && finished && turns.length > 1 && (
+				<div className="compare-diff">
+					<div className="compare-diff-bar">
+						<span className="faint">Referenz:</span>
+						<select
+							value={baseIdx}
+							onChange={(e) => setBaseIdx(Number(e.target.value))}
+							aria-label="Referenz-Spalte"
+						>
+							{cols.map((c, i) => (
+								<option key={c.turn.taskId} value={i}>
+									{c.worker.model ?? `Spalte ${i + 1}`}
+								</option>
+							))}
+						</select>
+						<span className="faint">
+							<span className="diff-add"> grün = nur anders </span>
+							<span className="diff-del"> rot = fehlt </span>
+						</span>
+					</div>
+					{cols.slice(1).map((c, k) => {
+						const idx = k + 1
+						const parts = base ? diffWords(base, c.answer) : []
+						const added = parts.filter((p) => p.kind === "add").length
+						const removed = parts.filter((p) => p.kind === "del").length
+						return (
+							<details key={c.turn.taskId} className="compare-diff-row" open={k === 0}>
+								<summary>
+									<span className="mono">{c.worker.model ?? `Spalte ${idx + 1}`}</span>
+									<span className="faint">
+										+{added} · −{removed} Wörter
+									</span>
+								</summary>
+								<div className="compare-diff-body mono">
+									{(() => {
+										const seen = new Map<string, number>()
+										return parts.map((p) => {
+											const base = `${p.kind}-${p.text}`
+											const n = (seen.get(base) ?? 0) + 1
+											seen.set(base, n)
+											return (
+												<span key={`${base}-${n}`} className={`diff-${p.kind}`}>
+													{p.text}{" "}
+												</span>
+											)
+										})
+									})()}
+								</div>
+							</details>
+						)
+					})}
+				</div>
+			)}
+			<div className="compare-cols">
+				{cols.map((c) => (
+					<div
+						key={c.turn.taskId}
+						className={`compare-col ${c.running ? "live" : ""}`}
+						data-status={c.status}
+					>
+						<div className="compare-col-head">
+							<span className="mono compare-model">{c.worker.model ?? "…"}</span>
+							<span className={`pill ${c.status === "done" ? "ok" : c.status === "failed" ? "err" : "info"}`}>
+								{c.status}
+							</span>
+							{c.running && (
+								<button
+									type="button"
+									className="btn ghost sm icon-only"
+									title="Diese Spalte abbrechen"
+									aria-label="Abbrechen"
+									onClick={() => onCancel(c.turn.taskId)}
+								>
+									<IconStop size={12} />
+								</button>
+							)}
+						</div>
+						{c.worker.host && (
+							<div className="compare-col-host">
+								<IconServer size={10} />
+								<span className="mono">{c.worker.host}</span>
+							</div>
+						)}
+						<div className="compare-metrics">
+							<span title="Dauer seit Start">{c.seconds.toLocaleString("de-CH")} s</span>
+							{c.tps !== undefined && <span title="Token pro Sekunde">{c.tps.toFixed(0)} Tok/s</span>}
+							{c.tokIn !== undefined && <span title="Input-Token">{c.tokIn.toLocaleString("de-CH")} In</span>}
+							{c.cost !== undefined && c.cost > 0 && (
+								<span title="Kosten dieser Antwort">
+									{c.cost < 0.01 ? `< $0.01` : `$${c.cost.toFixed(2)}`}
+								</span>
+							)}
+						</div>
+						<div className="compare-answer">
+							{c.answer ? <Markdown source={c.answer} /> : c.running ? "…" : (c.turn.error ?? "")}
+						</div>
+					</div>
+				))}
+			</div>
+		</div>
+	)
+}
+
 export default function Chat() {
 	const connected = useStore((s) => s.connected)
 	const live = useStore((s) => s.live)
@@ -488,6 +704,14 @@ export default function Chat() {
 	 * Rückfragen, bei denen eine Kette nur Zeit kostet.
 	 */
 	const [swarmMode, setSwarmMode] = useState(true)
+	/**
+	 * A/B-Vergleich (T1-1): derselbe Auftrag parallel auf 2–4 gewählten
+	 * Modellen — die Spalten erscheinen nebeneinander mit Tempo, Kosten
+	 * und Ergebnis-Diff. Stellt Swarm & Schnellmodus still, denn hier
+	 * entscheidet nicht das Routing, sondern die Auswahl.
+	 */
+	const [compareMode, setCompareMode] = useState(false)
+	const [compareIds, setCompareIds] = useState<string[]>([])
 	/**
 	 * Schnellmodus: ein Spezialist, das nachweislich schnellste Modell. Für die
 	 * kleine Korrektur, bei der eine gründliche Kette mehr Zeit kostet als die
@@ -549,6 +773,34 @@ export default function Chat() {
 		const known = new Set(serverTurns.map((t) => t.taskId))
 		return [...serverTurns, ...pending.filter((t) => !known.has(t.taskId))]
 	}, [serverTurns, pending])
+
+	/**
+	 * A/B-Vergleich: jede Spalte eines Duells zeigt dasselbe Panel — aber nur
+	 * die erste Spalte rendert es, die übrigen verschwinden. `compareGroupOf`
+	 * mappt Task-ID auf die Spalten-Gruppe; ohne `compareId` bleibt die
+	 * normale Einzel-Renderung.
+	 */
+	const compareGroupOf = useMemo(() => {
+		const map = new Map<string, Turn[]>()
+		for (const t of turns) {
+			if (!t.compareId) {
+				continue
+			}
+			const existing = map.get(t.compareId)
+			if (existing) {
+				existing.push(t)
+			} else {
+				map.set(t.compareId, [t])
+			}
+		}
+		const out = new Map<string, Turn[]>()
+		for (const group of map.values()) {
+			for (const member of group) {
+				out.set(member.taskId, group)
+			}
+		}
+		return out
+	}, [turns])
 
 	const running = turns.some((t) => t.status === "running" || t.status === "queued" || t.status === "routing")
 
@@ -703,7 +955,6 @@ export default function Chat() {
 	const runOf = (taskId: string) => Object.values(live).find((r) => r.taskId === taskId)
 	const instanceOf = (id?: string) => instances.find((i) => i.id === id)
 	const providerLabel = (providerId?: string) => providers.find((p) => p.id === providerId)?.label
-
 	/**
 	 * Wer rechnet gerade woran? Live aus dem Stream, sonst aus dem Verlauf.
 	 *
@@ -730,6 +981,10 @@ export default function Chat() {
 	const send = async () => {
 		const text = input.trim()
 		if (!text || busy) {
+			return
+		}
+		if (compareMode) {
+			await sendCompare(text)
 			return
 		}
 		if (target === "repo" && !repoId) {
@@ -831,6 +1086,58 @@ export default function Chat() {
 			await loadChats()
 		} catch (e) {
 			setLastError(e instanceof Error ? e.message : String(e))
+		}
+	}
+
+	/**
+	 * A/B-Vergleich starten (T1-1): derselbe Auftrag, 2–4 gewählte Modelle.
+	 *
+	 * Der Core legt eine Task pro Instanz an, gepinnt an die jeweilige Spalte,
+	 * verbunden durch `compareId` — und startet sie alle. Die Spalten erscheinen
+	 * im Verlauf nebeneinander, live über den SSE-Stream.
+	 */
+	const sendCompare = async (text: string) => {
+		if (compareIds.length < 2) {
+			setLastError("Vergleich: mindestens zwei Modelle wählen — sonst fehlt die Vergleichsseite")
+			return
+		}
+		if (compareIds.length > 4) {
+			setLastError("Vergleich: höchstens vier Modelle — mehr Spalten passen nicht in die Ansicht")
+			return
+		}
+		setInput("")
+		setBusy(true)
+		scrollToEnd(true)
+		try {
+			const res = await api.post<{
+				compareId: string
+				tasks: { taskId: string; instanceId: string; started: boolean; reason?: string }[]
+			}>("/api/compare", {
+				prompt: text,
+				title: titleFrom(text),
+				instanceIds: compareIds,
+				chatId,
+			})
+			const started = res.tasks.filter((t) => t.started).length
+			const failed = res.tasks.filter((t) => !t.started)
+			if (started === 0) {
+				const why = failed
+					.map((f) => f.reason)
+					.filter(Boolean)
+					.join(" · ")
+				setLastError(`Keine Spalte konnte starten${why ? ` — ${why}` : ""}`)
+				return
+			}
+			if (failed.length > 0) {
+				setLastError(`${started} von ${res.tasks.length} Spalten gestartet — ${failed.length} fehlgeschlagen`)
+			}
+			// Der Verlauf lädt die Spalten aus dem Core (über `chatId`); ein
+			// optimistischer Eintrag würde nur doppelte Zeilen erzeugen.
+			await loadChats()
+		} catch (e) {
+			setLastError(e instanceof Error ? e.message : String(e))
+		} finally {
+			setBusy(false)
 		}
 	}
 
@@ -978,8 +1285,38 @@ export default function Chat() {
 							</div>
 						)}
 
+						{/* A/B-Vergleich (T1-1): Die erste Spalte eines Duells rendert das
+				    Panel, die übrigen Spalten mit derselben `compareId`
+				    verschwinden — sonst stünde jede Antwort doppelt. */}
 						{turns.map((turn) => {
 							const run = runOf(turn.taskId)
+							const compareGroup = compareGroupOf.get(turn.taskId)
+							if (compareGroup) {
+								if (turn.taskId !== compareGroup[0]?.taskId) {
+									return null
+								}
+								return (
+									<div key={turn.taskId} className="chat-turn">
+										<ComparePanel
+											turns={compareGroup}
+											runOf={(id) => {
+												const r = runOf(id)
+												return r
+													? {
+															status: r.status,
+															startedAt: r.startedAt,
+															firstActivityAt: r.firstActivityAt,
+															text: r.text,
+															usage: r.usage,
+														}
+													: undefined
+											}}
+											workerOf={workerOf}
+											onCancel={(taskId) => void cancel(taskId)}
+										/>
+									</div>
+								)
+							}
 							const answer = run?.text || turn.answer
 							const worker = workerOf(turn)
 							const isRunning = run?.status === "running" || turn.status === "running"
@@ -1309,6 +1646,62 @@ export default function Chat() {
 								/>
 								Verlauf mitsenden
 							</label>
+							{/* A/B-Vergleich (T1-1): derselbe Auftrag parallel auf 2–4 gewählten
+							    Modellen — die Spalten erscheinen nebeneinander, live. */}
+							<label
+								className="chat-context"
+								title="Vergleich: derselbe Auftrag parallel auf 2–4 Modellen — Antwort, Tempo, Kosten und Diff nebeneinander"
+							>
+								<input
+									type="checkbox"
+									checked={compareMode}
+									onChange={(e) => {
+										setCompareMode(e.target.checked)
+										if (!e.target.checked) {
+											setCompareIds([])
+										}
+									}}
+								/>
+								Vergleich
+							</label>
+							{compareMode && (
+								<div className="compare-picker">
+									{instances
+										.filter((i) => i.enabled)
+										.slice(0, 12)
+										.map((i) => {
+											const on = compareIds.includes(i.id)
+											const atLimit = !on && compareIds.length >= 4
+											return (
+												<button
+													key={i.id}
+													type="button"
+													className={`chip ${on ? "on" : ""}`}
+													aria-pressed={on}
+													disabled={atLimit}
+													title={
+														i.displayName +
+														(i.deviceName ? ` · ${i.deviceName}` : "") +
+														(i.contextWindow ? ` · ${Math.round(i.contextWindow / 1000)}k Kontext` : "")
+													}
+													onClick={() => {
+														if (on) {
+															setCompareIds((ids) => ids.filter((x) => x !== i.id))
+														} else if (compareIds.length < 4) {
+															setCompareIds((ids) => [...ids, i.id])
+														}
+													}}
+												>
+													{on ? "✓ " : ""}
+													{i.displayName}
+												</button>
+											)
+										})}
+									<span className="faint compare-picker-hint">
+										{compareIds.length} / 4 gewählt — mindestens 2, höchstens 4
+									</span>
+								</div>
+							)}
 						</div>
 						{plan.length > 0 && (
 							<div className="chat-plan">
@@ -1381,10 +1774,10 @@ export default function Chat() {
 								className="btn primary chat-send"
 								onClick={() => void send()}
 								disabled={busy || !connected || input.trim().length === 0}
-								title="Senden (Enter)"
+								title={compareMode ? "Vergleich starten (Enter)" : "Senden (Enter)"}
 							>
 								<IconPlay size={14} />
-								Senden
+								{compareMode ? "Vergleich starten" : "Senden"}
 							</button>
 						</div>
 					</div>

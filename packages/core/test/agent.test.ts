@@ -17,6 +17,7 @@ import type {
 	LLMProvider,
 	ProviderType,
 } from "@diriz/shared"
+import { contentText } from "@diriz/shared"
 import { describe, expect, it } from "vitest"
 import { flattenToolHistory, runAgentLoop, trimContext } from "../src/execution/agent.js"
 
@@ -215,7 +216,7 @@ describe("agent: Tool-Loop", () => {
 		const toolMsg = secondRequest.messages.find((m) => m.role === "tool")
 		expect(toolMsg).toBeTruthy()
 		if (toolMsg) {
-			expect(JSON.parse(toolMsg.content)).toMatchObject({ ok: true })
+			expect(JSON.parse(contentText(toolMsg.content))).toMatchObject({ ok: true })
 		}
 
 		// Tool-Specs wurden mitgeschickt.

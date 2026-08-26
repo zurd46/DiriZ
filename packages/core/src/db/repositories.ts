@@ -973,6 +973,7 @@ export function createTask(db: Db, input: TaskInput): Task {
 		preferredModelId: input.metadata?.preferredModelId,
 		agentMode: input.metadata?.agentMode,
 		chatId: input.metadata?.chatId,
+		compareId: input.metadata?.compareId,
 		chain: input.metadata?.chain,
 	}
 	const title = (input.title ?? "").trim() || input.prompt.slice(0, 60)
@@ -1045,6 +1046,27 @@ export function listChatTasks(db: Db, chatId?: string, limit = 500): Task[] {
 				.prepare("SELECT * FROM tasks WHERE metadata_json LIKE '%\"chatId\":%' ORDER BY created_at LIMIT ?")
 				.all(limit) as unknown as TaskRow[])
 	return rows.map(mapTask)
+}
+
+/** Alle Tasks eines A/B-Vergleichs (T1-1), in Erzeugungsreihenfolge. */
+export function listCompareTasks(db: Db, compareId: string): Task[] {
+	const rows = db
+		.prepare("SELECT * FROM tasks WHERE metadata_json LIKE ? ORDER BY created_at, id")
+		.all(`%"compareId":"${compareId}"%`) as unknown as TaskRow[]
+	return rows.map(mapTask)
+}
+
+/** Die jüngsten A/B-Vergleiche (T1-1) — distinct IDs, neueste zuerst. */
+export function listRecentCompares(db: Db, limit = 20): { compareId: string; createdAt: string }[] {
+	const rows = db
+		.prepare(
+			`SELECT json_extract(metadata_json, '$.compareId') AS cid, MIN(created_at) AS first
+			 FROM tasks
+			 WHERE json_extract(metadata_json, '$.compareId') IS NOT NULL
+			 GROUP BY cid ORDER BY first DESC LIMIT ?`,
+		)
+		.all(limit) as unknown as { cid: string; first: string }[]
+	return rows.map((r) => ({ compareId: r.cid, createdAt: r.first }))
 }
 
 /**

@@ -140,11 +140,37 @@ export interface ModelSettings {
 
 export interface ChatMessage {
 	role: "system" | "user" | "assistant" | "tool"
-	content: string
+	/**
+	 * Text oder multimodale Inhaltsteile (Vision, T1-2).
+	 * `string` bleibt der Standard-Pfad; `ContentPart[]` erlaubt Bilder.
+	 */
+	content: string | ContentPart[]
 	/** `assistant`: vom Modell angeforderte Tool-Calls (M8 Agentik). */
 	toolCalls?: ToolCallRequest[]
 	/** `tool`: ID des Calls, auf den diese Antwort reagiert. */
 	toolCallId?: string
+}
+
+/**
+ * Multimodaler Inhaltsteil (Vision, T1-2).
+ * `text` ist der Standardfall; `image_url` überträgt ein Bild (base64-data-URI
+ * oder http-URL) an den Provider.
+ */
+export type ContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }
+
+/**
+ * Extrahiert den reinen Text aus `string | ContentPart[]`.
+ * Adapter, die Bilder nicht als Teil der Nachricht mitschicken können
+ * (Ollama), brauchen den Text — die Bilder wandern ins `images`-Feld.
+ */
+export function contentText(content: string | ContentPart[]): string {
+	if (typeof content === "string") {
+		return content
+	}
+	return content
+		.filter((p): p is { type: "text"; text: string } => p.type === "text")
+		.map((p) => p.text)
+		.join("\n")
 }
 
 export interface ChatRequest {
@@ -157,6 +183,8 @@ export interface ChatRequest {
 	signal?: AbortSignal
 	/** Tool-Specs (M8 Agentik) — nur von Adaptern mit `supportsTools` genutzt. */
 	tools?: ToolSpec[]
+	/** T3-12: Strukturierte JSON-Ausgabe erzwingen. */
+	jsonMode?: boolean
 }
 
 /** Stream-Chunks eines Adapter-Calls. */

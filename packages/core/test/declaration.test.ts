@@ -22,7 +22,7 @@ import type {
 	ProviderDoc,
 	ProviderType,
 } from "@diriz/shared"
-import { parseLlmDoc } from "@diriz/shared"
+import { contentText, parseLlmDoc } from "@diriz/shared"
 import type { FastifyInstance } from "fastify"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { AppContext } from "../src/app.js"
@@ -147,7 +147,8 @@ async function runAndCaptureSystemPrompt(agentId?: string): Promise<string | und
 	})
 	const result = await engine.runTask(task)
 	expect(result.status).toBe("done")
-	return adapter.last?.messages.find((m) => m.role === "system")?.content
+	const sys = adapter.last?.messages.find((m) => m.role === "system")
+	return sys ? contentText(sys.content) : undefined
 }
 
 describe("Dokumente je LLM-Instanz", () => {

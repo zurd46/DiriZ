@@ -14,6 +14,7 @@ import type {
 	LLMProvider,
 	ProviderType,
 } from "@diriz/shared"
+import { contentText } from "@diriz/shared"
 import { errorMessage, fetchJson, ProviderHttpError, sseData, statusHint, summarizeBody } from "./http.js"
 
 export interface OpenAiCompatOptions {
@@ -85,16 +86,24 @@ interface CompatChunk {
 	usage?: { prompt_tokens?: number; completion_tokens?: number }
 }
 
-/** Gemeinsame ChatMessage → OpenAI-`messages` (inkl. Tool-Rollen, M8). */
+/**
+ * Gemeinsame ChatMessage → OpenAI-`messages` (inkl. Tool-Rollen, M8).
+ * `ContentPart[]` (Vision, T1-2) wird direkt durchgereicht — das Format ist
+ * identisch mit OpenAI. Tool- und System-Nachrichten bleiben Text.
+ */
 function toOpenAiMessages(messages: ChatRequest["messages"]): unknown[] {
 	return messages.map((m) => {
 		if (m.role === "tool") {
-			return { role: "tool", tool_call_id: m.toolCallId ?? "", content: m.content }
+			return {
+				role: "tool",
+				tool_call_id: m.toolCallId ?? "",
+				content: typeof m.content === "string" ? m.content : contentText(m.content),
+			}
 		}
 		if (m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0) {
 			return {
 				role: "assistant",
-				content: m.content || null,
+				content: typeof m.content === "string" ? m.content || null : m.content,
 				tool_calls: m.toolCalls.map((c) => ({
 					id: c.id,
 					type: "function",
@@ -188,6 +197,10 @@ export class OpenAiCompatProvider implements LLMProvider {
 		}
 		if (req.tools && req.tools.length > 0) {
 			body.tools = req.tools.map((t) => ({ type: "function", function: t }))
+		}
+		// T3-12: Strukturierte JSON-Ausgabe (Router-Modell, Extraktionen).
+		if (req.jsonMode) {
+			body.response_format = { type: "json_object" }
 		}
 		const res = await fetch(`${this.baseUrl}/chat/completions`, {
 			method: "POST",

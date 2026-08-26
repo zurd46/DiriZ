@@ -31,6 +31,13 @@ export interface TaskMetadata {
 	 */
 	chatId?: string
 	/**
+	 * A/B-Vergleich (T1-1): Gemeinsame Kennung aller Mitglieder eines
+	 * Modell-Duells. Jede Task ist eine normale Task mit eigener
+	 * Pinned-Instanz; diese ID bindet sie zusammen, damit die Oberfläche
+	 * die Spalten nebeneinander zeigen kann.
+	 */
+	compareId?: string
+	/**
 	 * Kette von Spezialisten für **einen** Auftrag.
 	 *
 	 * Manche Aufträge brauchen mehrere Rollen nacheinander — klären, bauen,
@@ -117,6 +124,32 @@ export interface Execution {
 	/** Vollständiger Output (für Replay; große Executions werden verdichtet). */
 	output?: string
 	files?: { relPath: string; size: number }[]
+}
+
+/** Ein Mitglied eines A/B-Vergleichs (T1-1) — eine Task samt ihrem Lauf. */
+export interface CompareMember {
+	taskId: string
+	instanceId?: string
+	providerId?: string
+	modelName: string
+	providerLabel?: string
+	status: TaskStatus
+	output: string
+	error?: string
+	tokensIn?: number
+	tokensOut?: number
+	tpsAvg?: number
+	costUsd?: number
+	durationMs?: number
+}
+
+/** Ergebnisansicht eines A/B-Vergleichs (T1-1). */
+export interface CompareResult {
+	compareId: string
+	prompt: string
+	createdAt: string
+	members: CompareMember[]
+	allFinished: boolean
 }
 
 export interface TaskWithExecutions extends Task {

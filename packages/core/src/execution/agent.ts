@@ -16,6 +16,7 @@
  */
 
 import type { ChatChunk, ChatMessage, LLMProvider, ModelSettings, ToolCallRequest } from "@diriz/shared"
+import { contentText } from "@diriz/shared"
 import {
 	type CommandPolicy,
 	executeTool,
@@ -95,7 +96,7 @@ export function trimContext(
 	if (!contextWindow || contextWindow <= 0) {
 		return { messages, trimmed: 0 }
 	}
-	const used = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0) / CHARS_PER_TOKEN
+	const used = messages.reduce((sum, m) => sum + contentText(m.content).length, 0) / CHARS_PER_TOKEN
 	if (used < contextWindow * CONTEXT_TRIM_RATIO) {
 		return { messages, trimmed: 0 }
 	}
@@ -106,7 +107,8 @@ export function trimContext(
 		.slice(0, -KEEP_RECENT_TOOL_RESULTS)
 	let trimmed = 0
 	const out = messages.map((m, i) => {
-		if (!toolIndexes.includes(i) || m.content.length < 400) {
+		const text = contentText(m.content)
+		if (!toolIndexes.includes(i) || text.length < 400) {
 			return m
 		}
 		trimmed++
@@ -115,7 +117,7 @@ export function trimContext(
 			content: JSON.stringify({
 				ok: true,
 				detail:
-					`[Gekürzt, um Platz zu schaffen — ${m.content.length} Zeichen. Der Inhalt wurde bereits ` +
+					`[Gekürzt, um Platz zu schaffen — ${text.length} Zeichen. Der Inhalt wurde bereits ` +
 					"ausgewertet; lies die Datei erneut, falls du eine konkrete Stelle brauchst.]",
 			}),
 		}
@@ -586,23 +588,27 @@ export function flattenToolHistory(messages: ChatMessage[]): ChatMessage[] {
 	for (const m of messages) {
 		if (m.role === "assistant" && m.toolCalls?.length) {
 			const zeilen = m.toolCalls.map((c) => `[Werkzeug: ${c.name}(${summarizeArgs(c)})]`)
-			out.push({ role: "assistant", content: [m.content?.trim(), ...zeilen].filter(Boolean).join("\n") })
+			out.push({
+				role: "assistant",
+				content: [contentText(m.content).trim(), ...zeilen].filter(Boolean).join("\n"),
+			})
 			continue
 		}
 		if (m.role === "tool") {
 			// Das Ergebnis gehört zum Verlauf — aber als Text, nicht als Rolle.
+			const text = contentText(m.content)
 			const detail = ((): string => {
 				try {
-					const parsed = JSON.parse(m.content) as { ok?: boolean; detail?: string }
-					return `${parsed.ok === false ? "Fehler" : "Ergebnis"}: ${parsed.detail ?? m.content}`
+					const parsed = JSON.parse(text) as { ok?: boolean; detail?: string }
+					return `${parsed.ok === false ? "Fehler" : "Ergebnis"}: ${parsed.detail ?? text}`
 				} catch {
-					return m.content
+					return text
 				}
 			})()
 			out.push({ role: "assistant", content: `[${detail.slice(0, 2000)}]` })
 			continue
 		}
-		if (m.role === "assistant" && !m.content?.trim()) {
+		if (m.role === "assistant" && !contentText(m.content).trim()) {
 			continue
 		}
 		out.push(m)

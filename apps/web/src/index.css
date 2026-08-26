@@ -4003,3 +4003,187 @@ pre.code {
 	font-size: 10px;
 	font-variant-numeric: tabular-nums;
 }
+
+/* ------------------------------------------------------------------ */
+/* A/B-Vergleich (T1-1) — Modell-Duell                                 */
+/* ------------------------------------------------------------------ */
+
+/* Chip-Picker im Composer: ausgewählte Modelle leuchten. */
+.chip.on {
+	background: rgba(62, 207, 142, 0.14);
+	border-color: var(--ok);
+	color: var(--ok);
+}
+
+.chip:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+
+.compare-picker {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	align-items: center;
+	padding: 8px 10px;
+	background: var(--bg-soft);
+	border: 1px dashed var(--border);
+	border-radius: var(--r-md);
+}
+
+.compare-picker-hint {
+	margin-left: auto;
+	font-size: 11px;
+}
+
+/* Das Duell selbst: eine Kopfzeile, dann die Spalten nebeneinander. */
+.compare-panel {
+	border: 1px solid var(--border);
+	border-radius: var(--r-md);
+	background: var(--surface);
+	padding: 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.compare-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.compare-cols {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+	gap: 10px;
+	align-items: stretch;
+}
+
+.compare-col {
+	border: 1px solid var(--border);
+	border-radius: var(--r-md);
+	background: var(--bg-soft);
+	padding: 10px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-height: 120px;
+}
+
+.compare-col.live {
+	border-color: var(--accent);
+}
+
+.compare-col[data-status="failed"] {
+	border-color: var(--err);
+}
+
+.compare-col[data-status="done"] {
+	border-color: var(--ok);
+}
+
+.compare-col-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.compare-model {
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.compare-col-host {
+	display: inline-flex;
+	gap: 6px;
+	align-items: center;
+	font-size: 11px;
+	color: var(--faint);
+}
+
+.compare-metrics {
+	display: flex;
+	gap: 10px;
+	font-size: 11px;
+	color: var(--faint);
+	font-variant-numeric: tabular-nums;
+}
+
+.compare-metrics span {
+	background: var(--surface-2);
+	border: 1px solid var(--border);
+	border-radius: var(--r-xs);
+	padding: 1px 6px;
+}
+
+.compare-answer {
+	font-size: 13px;
+	line-height: 1.5;
+	overflow: auto;
+	max-height: 40vh;
+}
+
+/* Ergebnis-Diff: Wörter inline, grün = nur in dieser Spalte,
+   rot = in der Referenz. */
+.compare-diff {
+	border: 1px solid var(--border);
+	border-radius: var(--r-md);
+	background: var(--bg-soft);
+	padding: 8px 10px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.compare-diff-bar {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	flex-wrap: wrap;
+	font-size: 12px;
+}
+
+.compare-diff-row summary {
+	cursor: pointer;
+	display: flex;
+	gap: 10px;
+	align-items: center;
+	font-size: 12px;
+}
+
+.compare-diff-body {
+	font-size: 12px;
+	line-height: 1.8;
+	padding: 8px;
+	overflow-x: auto;
+}
+
+/* Inline-Wörter im Diff — die .diff-add/.diff-del-Grundlagen (Grenzen)
+   bleiben, aber im Fliesstext sollen sie wie Hervorhebungen wirken. */
+.compare-diff-body .diff-add,
+.compare-diff-body .diff-del,
+.compare-diff-body .diff-same {
+	display: inline;
+	border-left: none;
+	border-radius: 3px;
+	padding: 0 2px;
+}
+
+.compare-diff-body .diff-add {
+	background: rgba(62, 207, 142, 0.22);
+	color: var(--ok);
+}
+
+.compare-diff-body .diff-del {
+	background: rgba(240, 98, 91, 0.22);
+	color: var(--err);
+	text-decoration: line-through;
+}
+
+.compare-diff-body .diff-same {
+	opacity: 0.55;
+}

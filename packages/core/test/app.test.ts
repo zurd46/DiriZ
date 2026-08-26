@@ -13,7 +13,13 @@ import { buildApp } from "../src/app.js"
 import type { Db } from "../src/db/connection.js"
 import { openDatabase } from "../src/db/connection.js"
 import { migrate } from "../src/db/migrate.js"
-import { createProvider, listInstances, providerApiKeyEnc, upsertInstance } from "../src/db/repositories.js"
+import {
+	createProvider,
+	listCompareTasks,
+	listInstances,
+	providerApiKeyEnc,
+	upsertInstance,
+} from "../src/db/repositories.js"
 import { EventBus } from "../src/execution/bus.js"
 import { ExecutionEngine } from "../src/execution/engine.js"
 import { ProviderRegistry } from "../src/providers/registry.js"
@@ -184,6 +190,129 @@ describe("api: Tasks", () => {
 
 	it("GET für unbekannte Task → 404", async () => {
 		const res = await app.inject({ method: "GET", url: "/api/tasks/does-not-exist" })
+		expect(res.statusCode).toBe(404)
+	})
+})
+
+describe("api: A/B-Vergleich (T1-1)", () => {
+	/** Provider + zwei Instanzen für das Duell anlegen. */
+	const makeInstances = () => {
+		const provider = createProvider(db, {
+			type: "ollama",
+			label: "Vergleich-Ollama",
+			baseUrl: "http://127.0.0.1:11500",
+		})
+		const a = upsertInstance(
+			db,
+			provider.id,
+			{ modelId: "duell-a", displayName: "Duell A", contextWindow: 32768 },
+			"manual",
+		)
+		const b = upsertInstance(
+			db,
+			provider.id,
+			{ modelId: "duell-b", displayName: "Duell B", contextWindow: 32768 },
+			"manual",
+		)
+		return { provider, a, b }
+	}
+
+	it("weist zu wenige, zu viele und doppelte Instanzen ab", async () => {
+		const { a } = makeInstances()
+		// Nur eine Instanz.
+		const one = await app.inject({
+			method: "POST",
+			url: "/api/compare",
+			payload: { prompt: "Hallo", instanceIds: [a.id] },
+		})
+		expect(one.statusCode).toBe(400)
+		// Fünf Instanzen.
+		const many = await app.inject({
+			method: "POST",
+			url: "/api/compare",
+			payload: { prompt: "Hallo", instanceIds: ["i1", "i2", "i3", "i4", "i5"] },
+		})
+		expect(many.statusCode).toBe(400)
+		// Doppelte Instanz.
+		const dup = await app.inject({
+			method: "POST",
+			url: "/api/compare",
+			payload: { prompt: "Hallo", instanceIds: [a.id, a.id] },
+		})
+		expect(dup.statusCode).toBe(400)
+		// Kein Prompt.
+		const noPrompt = await app.inject({
+			method: "POST",
+			url: "/api/compare",
+			payload: { instanceIds: [a.id, a.id] },
+		})
+		expect(noPrompt.statusCode).toBe(400)
+	})
+
+	it("legt je Instanz eine gepinnte Task an, verbindet sie per compareId und listet das Ergebnis", async () => {
+		const { a, b } = makeInstances()
+		const chatId = crypto.randomUUID()
+		const created = await app.inject({
+			method: "POST",
+			url: "/api/compare",
+			payload: { prompt: "Vergleiche uns", title: "Testduell", instanceIds: [a.id, b.id], chatId },
+		})
+		expect(created.statusCode).toBe(201)
+		const body = created.json() as {
+			compareId: string
+			tasks: { taskId: string; instanceId: string; started: boolean }[]
+		}
+		expect(body.tasks).toHaveLength(2)
+		expect(new Set(body.tasks.map((t) => t.instanceId)).size).toBe(2)
+
+		const members = listCompareTasks(db, body.compareId)
+		expect(members).toHaveLength(2)
+		for (const m of members) {
+			expect(m.metadata.compareId).toBe(body.compareId)
+			expect(m.metadata.mode).toBe("pinned")
+			expect(m.metadata.privacy).toBe("local-only")
+			expect(m.metadata.chatId).toBe(chatId)
+			expect(m.prompt).toBe("Vergleiche uns")
+		}
+
+		// Ergebnis-Endpunkt: Die Executions entstehen asynchron im Engine-Lauf —
+		// der Provider ist offline, also kippen die Tasks rasch auf „failed"
+		// mit einem Execution-Record. Bis dahin darf das Modell noch „—" sein.
+		const deadline = Date.now() + 2000
+		let result = await app.inject({ method: "GET", url: `/api/compare/${body.compareId}` })
+		while (
+			Date.now() < deadline &&
+			(result.json() as { members: { modelName: string }[] }).members.some((m) => m.modelName === "—")
+		) {
+			await new Promise((r) => setTimeout(r, 50))
+			result = await app.inject({ method: "GET", url: `/api/compare/${body.compareId}` })
+		}
+		expect(result.statusCode).toBe(200)
+		const view = result.json() as {
+			compareId: string
+			prompt: string
+			members: { taskId: string; modelName: string; status: string }[]
+			allFinished: boolean
+		}
+		expect(view.compareId).toBe(body.compareId)
+		expect(view.prompt).toBe("Vergleiche uns")
+		expect(view.members).toHaveLength(2)
+		expect(new Set(view.members.map((m) => m.taskId)).size).toBe(2)
+		// Ohne Execution (Provider offline, Routing abgelehnt) bleibt das
+		// Modell „—"; mit Execution steht der DisplayName. Beides ist gültig.
+		expect(
+			view.members.every((m) => m.modelName === "—" || ["Duell A", "Duell B"].includes(m.modelName)),
+		).toBe(true)
+
+		// Recent-Liste enthält das frische Duell.
+		const recent = await app.inject({ method: "GET", url: "/api/compare/recent?limit=5" })
+		expect(recent.statusCode).toBe(200)
+		const rows = recent.json() as { compareId: string }[]
+		expect(rows.some((r) => r.compareId === body.compareId)).toBe(true)
+	})
+
+	it("meldet ein unbekanntes Duell als 404", async () => {
+		const res = await app.inject({ method: "GET", url: "/api/compare/nein-da-nicht" })
 		expect(res.statusCode).toBe(404)
 	})
 })

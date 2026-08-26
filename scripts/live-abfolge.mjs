@@ -1,7 +1,7 @@
 /** Zwei Anfragen unmittelbar nacheinander — wie Stufe 1 → Stufe 2. */
 
-import { TOOL_SPECS } from "./packages/core/dist/execution/tools.js"
-import { OpenAiCompatProvider } from "./packages/core/dist/providers/openai-compat.js"
+import { TOOL_SPECS } from "../packages/core/dist/execution/tools.js"
+import { OpenAiCompatProvider } from "../packages/core/dist/providers/openai-compat.js"
 
 const a = new OpenAiCompatProvider({
 	id: "a",

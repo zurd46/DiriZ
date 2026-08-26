@@ -8,8 +8,8 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { openDatabase } from "./packages/core/dist/db/connection.js"
-import { migrate } from "./packages/core/dist/db/migrate.js"
+import { openDatabase } from "../packages/core/dist/db/connection.js"
+import { migrate } from "../packages/core/dist/db/migrate.js"
 import {
 	createProvider,
 	createTask,
@@ -17,12 +17,12 @@ import {
 	listExecutionsByTask,
 	listTasks,
 	listToolCallsByTask,
-} from "./packages/core/dist/db/repositories.js"
-import { seedTeamCatalog } from "./packages/core/dist/db/seed.js"
-import { EventBus } from "./packages/core/dist/execution/bus.js"
-import { ExecutionEngine } from "./packages/core/dist/execution/engine.js"
-import { ProviderRegistry } from "./packages/core/dist/providers/registry.js"
-import { Feedback } from "./packages/core/dist/routing/feedback.js"
+} from "../packages/core/dist/db/repositories.js"
+import { seedTeamCatalog } from "../packages/core/dist/db/seed.js"
+import { EventBus } from "../packages/core/dist/execution/bus.js"
+import { ExecutionEngine } from "../packages/core/dist/execution/engine.js"
+import { ProviderRegistry } from "../packages/core/dist/providers/registry.js"
+import { Feedback } from "../packages/core/dist/routing/feedback.js"
 
 // Mitschnitt: Bei jedem Fehlschlag die **ganze** Anfrage und Antwort zeigen.
 const echterFetch = globalThis.fetch

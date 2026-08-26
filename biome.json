@@ -15,7 +15,8 @@
       "!**/target",
       "!apps/desktop/src-tauri/gen",
       "!**/*.generated.ts",
-      "!**/*.tsx.snap"
+      "!**/*.tsx.snap",
+      "!scripts"
     ]
   },
   "formatter": {

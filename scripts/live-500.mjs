@@ -6,12 +6,12 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { openDatabase } from "./packages/core/dist/db/connection.js"
-import { migrate } from "./packages/core/dist/db/migrate.js"
-import { getAgent, getAgentDoc } from "./packages/core/dist/db/repositories.js"
-import { seedTeamCatalog } from "./packages/core/dist/db/seed.js"
-import { TOOL_SPECS } from "./packages/core/dist/execution/tools.js"
-import { composeSystemPrompt } from "./packages/shared/dist/index.js"
+import { openDatabase } from "../packages/core/dist/db/connection.js"
+import { migrate } from "../packages/core/dist/db/migrate.js"
+import { getAgent, getAgentDoc } from "../packages/core/dist/db/repositories.js"
+import { seedTeamCatalog } from "../packages/core/dist/db/seed.js"
+import { TOOL_SPECS } from "../packages/core/dist/execution/tools.js"
+import { composeSystemPrompt } from "../packages/shared/dist/index.js"
 
 const db = openDatabase(fs.mkdtempSync(path.join(os.tmpdir(), "diriz-500-")))
 migrate(db)

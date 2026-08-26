@@ -19,6 +19,31 @@ import { api } from "../lib/api.js"
 import { useStore } from "../store.js"
 
 const TYPES: ProviderType[] = ["ollama", "lmstudio", "openai-compat", "openrouter", "openai"]
+
+/**
+ * Lesbare Namen der Provider-Typen.
+ *
+ * In der Auswahlliste stand vorher die interne Kennung — `openai-compat` liest
+ * sich wie ein Tippfehler und beantwortet die naheliegende Frage nicht: Gemeint
+ * ist jeder Endpunkt, der die OpenAI-Schnittstelle spricht (vLLM,
+ * llama.cpp-Server, LocalAI, TGI, Groq …).
+ */
+const TYPE_LABEL: Record<ProviderType, string> = {
+	ollama: "Ollama — lokal",
+	lmstudio: "LM Studio — lokal",
+	"openai-compat": "OpenAI-kompatibel — eigener Endpunkt (vLLM, llama.cpp, LocalAI …)",
+	openrouter: "OpenRouter — Cloud",
+	openai: "OpenAI — Cloud",
+}
+
+/** Kurzform für die Tabelle, wo wenig Platz ist. */
+const TYPE_SHORT: Record<ProviderType, string> = {
+	ollama: "Ollama",
+	lmstudio: "LM Studio",
+	"openai-compat": "OpenAI-kompatibel",
+	openrouter: "OpenRouter",
+	openai: "OpenAI",
+}
 const CAPABILITIES: Capability[] = ["code", "reasoning", "longform", "vision", "tools", "json"]
 
 /** Entwurf beim Bearbeiten eines Providers (Rechner). */
@@ -355,7 +380,7 @@ export default function Providers() {
 							>
 								{TYPES.map((t) => (
 									<option key={t} value={t}>
-										{t}
+										{TYPE_LABEL[t]}
 									</option>
 								))}
 							</select>
@@ -448,7 +473,9 @@ export default function Providers() {
 										</div>
 									</td>
 									<td>
-										<span className="muted">{p.type}</span>
+										<span className="muted" title={p.type}>
+											{TYPE_SHORT[p.type] ?? p.type}
+										</span>
 										<div className="cell-meta mono">{p.baseUrl}</div>
 									</td>
 									<td>

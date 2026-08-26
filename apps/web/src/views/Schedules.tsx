@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { IconCalendar, IconCheck, IconClock, IconTrash, IconRefresh } from "../components/icons.js"
+import { IconCalendar, IconCheck, IconClock, IconRefresh, IconTrash } from "../components/icons.js"
 
 export function SchedulesView(): ReactNode {
 	return (

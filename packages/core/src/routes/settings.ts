@@ -40,6 +40,7 @@ import {
 import { DEFAULT_RETENTION, type RetentionSettings } from "../db/retention.js"
 import type { CommandPolicy } from "../execution/tools.js"
 import { DEFAULT_WARMUP, type WarmupSettings } from "../execution/warmup.js"
+import { DEFAULT_ROUTER_MODEL, type RouterModelSettings } from "../routing/llmRouter.js"
 
 const WEIGHT_KEYS: (keyof ScoringWeights)[] = [
 	"contextFit",
@@ -179,6 +180,11 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 		warmup: { ...DEFAULT_WARMUP, ...getSetting<Partial<WarmupSettings>>(ctx.db, "warmup") },
 		retention: { ...DEFAULT_RETENTION, ...getSetting<Partial<RetentionSettings>>(ctx.db, "retention") },
 		commands: ctx.engine.commandPolicy(),
+		// T1-3: Router-Modell — Default aus, die Heuristik bleibt der Weg.
+		routerModel: {
+			...DEFAULT_ROUTER_MODEL,
+			...getSetting<Partial<RouterModelSettings>>(ctx.db, "routerModel"),
+		},
 	})
 
 	app.get("/api/settings", () => currentSettings())
@@ -194,6 +200,7 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			warmup?: Partial<WarmupSettings>
 			retention?: Partial<RetentionSettings>
 			commands?: Partial<CommandPolicy>
+			routerModel?: Partial<RouterModelSettings>
 		}
 	}>("/api/settings", (req, reply) => {
 		const body = req.body ?? {}
@@ -206,11 +213,45 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			body.agent === undefined &&
 			body.warmup === undefined &&
 			body.retention === undefined &&
-			body.commands === undefined
+			body.commands === undefined &&
+			body.routerModel === undefined
 		) {
 			return reply.code(400).send({
 				error: "routingWeights, docTemplates, concurrency, timeouts, git, agent oder warmup erforderlich",
 			})
+		}
+		if (body.routerModel !== undefined) {
+			const current = {
+				...DEFAULT_ROUTER_MODEL,
+				...getSetting<Partial<RouterModelSettings>>(ctx.db, "routerModel"),
+			}
+			const next: RouterModelSettings = {
+				enabled: body.routerModel.enabled ?? current.enabled,
+				providerId:
+					body.routerModel.providerId === null
+						? undefined
+						: (body.routerModel.providerId ?? current.providerId),
+				modelId:
+					body.routerModel.modelId === null ? undefined : (body.routerModel.modelId ?? current.modelId),
+				timeoutMs: body.routerModel.timeoutMs ?? current.timeoutMs,
+				minConfidence: body.routerModel.minConfidence ?? current.minConfidence,
+			}
+			if (
+				typeof next.enabled !== "boolean" ||
+				(typeof next.providerId !== "undefined" && typeof next.providerId !== "string") ||
+				(typeof next.modelId !== "undefined" && typeof next.modelId !== "string") ||
+				!Number.isInteger(next.timeoutMs) ||
+				next.timeoutMs < 5_000 ||
+				next.timeoutMs > 300_000 ||
+				typeof next.minConfidence !== "number" ||
+				next.minConfidence < 0 ||
+				next.minConfidence > 1
+			) {
+				return reply.code(400).send({
+					error: "routerModel braucht enabled (bool), timeoutMs (5000–300000) und minConfidence (0–1)",
+				})
+			}
+			setSetting(ctx.db, "routerModel", next)
 		}
 		if (body.commands !== undefined) {
 			const current = ctx.engine.commandPolicy()

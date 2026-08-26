@@ -3,14 +3,22 @@
  * Metadaten — deterministisch, ohne LLM-Aufruf, in `shared`-Form
  * (`estTokens`, `requiredCapabilities`, …).
  *
- * T1-3 Erweiterung: Berücksichtigt das opt-in Router-Modell für die Klassifizierung.
+ * T1-3 Kaskade: Heuristik → (opt-in) Router-Modell → manuell.
+ * - Stufe 1: `extractProfile` — deterministisch, immer verfügbar.
+ * - Stufe 2: Ist Stufe 1 unsicher (keine Capability erkannt) und das
+ *   Router-Modell aktiviert, klassifiziert `llmRouter.ts` mit einem kurzen,
+ *   eigenen Provider-Call. Jeder Fehler (Timeout, Offline, schlechtes JSON)
+ *   fällt still auf Stufe 1 zurück — Routing scheitert nie am Router.
+ * - Stufe 3: Manuell — Pinning (`mode: "pinned"`, `preferredProviderId`/
+ *   `preferredModelId`) bleibt über allem, es wird nur das Profil ergänzt.
  */
-
 import type { Capability, Task, TaskProfile } from "@diriz/shared"
 import { estimateTokens } from "@diriz/shared"
-import { analyzePrompt, isRouterEnabled as isRouterEnabledFn } from "./llmRouter.js"
+import type { Db } from "../db/connection.js"
+import { getSetting } from "../db/repositories.js"
+import type { ProviderRegistry } from "../providers/registry.js"
+import { analyzePromptWithModel, DEFAULT_ROUTER_MODEL, type RouterModelSettings } from "./llmRouter.js"
 
- // Router-Klassifikations-Patterns (ähnlich wie in llmRouter.ts)
 const CODE_PATTERNS: RegExp[] = [
 	/```/,
 	/\b(function |def |class |interface |const |import |SELECT |CREATE TABLE |async )\b/i,
@@ -20,7 +28,7 @@ const CODE_PATTERNS: RegExp[] = [
 ]
 
 const REASONING_PATTERNS: RegExp[] = [
-	/\b(analyse|analyse|diagnose|debug|optimisier|optimis|trade-?off|vergleich|compare|architektur|architecture)\b/i,
+	/\b(analyse|diagnose|debug|optimisier|optimis|trade-?off|vergleich|compare|architektur|architecture)\b/i,
 	/\b(warum|why|root cause|ursache)\b/i,
 ]
 
@@ -36,40 +44,15 @@ const TOOLS_PATTERNS: RegExp[] = [
 ]
 
 /**
- * Extrahiert das Task-Profil. `requiredCapabilities` werden harte Gates
- * im Routing (exkludieren), `preferredCapabilities` geben nur einen Bonus.
- *
- * T1-3: Wenn Router-Modell opt-in aktiv ist, wird die Analyse des Prompts
- * durch `llmRouter.analyzePrompt` ergänzt.
- *
- * @param task Die Task mit Prompt und Metadaten
- * @param attachmentCount Anzahl der Bild-Anhänge
- * @returns TaskProfile mit klassifizierten Fähigkeiten
+ * Stufe 1 der Kaskade: heuristisches Task-Profil. `requiredCapabilities`
+ * werden harte Gates im Routing (exkludieren), `preferredCapabilities` geben
+ * nur einen Bonus. Synchron und deterministisch — auch ohne Router-Modell
+ * der zuverlässige Weg.
  */
 export function extractProfile(task: Task, attachmentCount = 0): TaskProfile {
 	const prompt = task.prompt || ""
 	const required: Capability[] = []
 	const preferred: Capability[] = []
-
-	// T1-3 Router-Modell opt-in prüfen
-	const routerEnabled = isRouterEnabledFn(task)
-
-	if (routerEnabled) {
-		// Router-Modell Analyse verwenden
-		const routerResult = analyzePrompt(prompt)
-		;(routerResult.capabilities as string[]).forEach((cap) => {
-			const capStr = cap as keyof Capability
-			if (!required.includes(capStr as any)) {
-				required.push(capStr as Capability)
-			}
-		})
-		if (routerResult.longform) {
-			preferred.push("longform")
-		}
-		if (routerResult.latencySensitive) {
-			preferred.push("lowLatency" as Capability)
-		}
-	}
 
 	// CODE erkennen (harte Gate)
 	if (CODE_PATTERNS.some((re) => re.test(prompt))) {
@@ -103,9 +86,9 @@ export function extractProfile(task: Task, attachmentCount = 0): TaskProfile {
 	}
 
 	return {
-		testTokens: estimateTokens(prompt),
-		requiredCapabilities: required.length > 0 ? required : undefined,
-		preferredCapabilities: preferred.length > 0 ? preferred : undefined,
+		estTokens: estimateTokens(prompt),
+		requiredCapabilities: required,
+		preferredCapabilities: preferred,
 		// T1-2 Vision: Bild-Anhänge machen `vision` zur Pflicht-Fähigkeit.
 		hasAttachments: attachmentCount > 0,
 		privacy: task.metadata?.privacy,
@@ -113,5 +96,110 @@ export function extractProfile(task: Task, attachmentCount = 0): TaskProfile {
 		mode: task.metadata?.mode,
 		pinnedProviderId: task.metadata?.preferredProviderId,
 		pinnedModelId: task.metadata?.preferredModelId,
+	}
+}
+
+/**
+ * Was die Stufe 2 braucht: Provider-Registry für den eigenen Call, Settings
+ * für die Router-Konfiguration und ein Logger, damit ein Fallback sichtbar
+ * bleibt, ohne zu stören.
+ */
+export interface RouterDeps {
+	db: Db
+	registry: ProviderRegistry
+	log: (level: "info" | "warn" | "error", scope: string, msg: string) => void
+}
+
+export interface ProfileResult {
+	profile: TaskProfile
+	/** true = das Router-Modell hat klassifiziert (Stufe 2 der Kaskade). */
+	routerUsed: boolean
+	/** Warum der Router (nicht) gelaufen ist — für Protokoll & Debug. */
+	routerReason: string
+}
+
+/**
+ * Liest die Router-Einstellungen mit Defaults — `enabled` bleibt der
+ * Schalter, der Rest hat sinnvolle Werte.
+ */
+export function readRouterSettings(db: Db): RouterModelSettings {
+	const stored = getSetting<Partial<RouterModelSettings>>(db, "routerModel") ?? {}
+	return { ...DEFAULT_ROUTER_MODEL, ...stored }
+}
+
+/**
+ * Stufe 1 + 2 der Kaskade: heuristisches Profil, und wenn es unsicher ist,
+ * optional die Klassifikation des Router-Modells. Stufe 3 (manuell) braucht
+ * keinen eigenen Pfad — Pinning liegt im Profil und wirkt im Routing über
+ * `mode`/`pinnedProviderId`.
+ */
+export async function extractProfileSmart(
+	task: Task,
+	attachmentCount: number,
+	deps: RouterDeps,
+): Promise<ProfileResult> {
+	const base = extractProfile(task, attachmentCount)
+
+	// Unsicher = die Heuristik hat weder Pflicht- noch Bonus-Fähigkeiten
+	// erkannt. Dann hat das Modell nichts zu korrigieren — und ein Call wäre
+	// nur Kosten und Wartezeit.
+	const unsicher =
+		(base.requiredCapabilities?.length ?? 0) === 0 && (base.preferredCapabilities?.length ?? 0) === 0
+	if (!unsicher) {
+		return { profile: base, routerUsed: false, routerReason: "heuristik sicher" }
+	}
+
+	const settings = readRouterSettings(deps.db)
+	if (!settings.enabled) {
+		return { profile: base, routerUsed: false, routerReason: "router deaktiviert" }
+	}
+	if (!settings.providerId || !settings.modelId) {
+		return { profile: base, routerUsed: false, routerReason: "router unvollständig konfiguriert" }
+	}
+	const provider = deps.registry.adapter(settings.providerId)
+	if (!provider) {
+		deps.log("warn", "router", `Provider ${settings.providerId} nicht verfügbar — Heuristik bleibt`)
+		return { profile: base, routerUsed: false, routerReason: `provider ${settings.providerId} fehlt` }
+	}
+
+	try {
+		const result = await analyzePromptWithModel(
+			provider,
+			{ ...settings, modelId: settings.modelId },
+			task.prompt || "",
+		)
+		// Zu zögernd, als dass es die Heuristik verdrängen dürfte:
+		// Konfidenz unter der Mindestgrenze wird verworfen.
+		if (result.confidence < settings.minConfidence) {
+			deps.log(
+				"info",
+				"router",
+				`Router ${settings.modelId}: Konfidenz ${result.confidence.toFixed(2)} unter ${settings.minConfidence} — Heuristik bleibt`,
+			)
+			return { profile: base, routerUsed: false, routerReason: "konfidenz zu niedrig" }
+		}
+		const preferred: Capability[] = [...result.preferred]
+		if (result.longform && !preferred.includes("longform")) {
+			preferred.push("longform")
+		}
+		const profile: TaskProfile = {
+			...base,
+			requiredCapabilities: result.required,
+			preferredCapabilities: preferred,
+		}
+		deps.log(
+			"info",
+			"router",
+			`Router ${settings.modelId} klassifizierte den Auftrag (Konfidenz ${result.confidence.toFixed(2)}): ` +
+				`${profile.requiredCapabilities?.join(",") || "keine Pflicht"} · ` +
+				`${profile.preferredCapabilities?.join(",") || "keine Bonus"}`,
+		)
+		return { profile, routerUsed: true, routerReason: "router" }
+	} catch (e) {
+		// Fallback ist hier die richtige Antwort: Der Auftrag soll laufen,
+		// nicht am Klassifikator scheitern.
+		const msg = e instanceof Error ? e.message : String(e)
+		deps.log("warn", "router", `Router-Modell fehlgeschlagen (${msg}) — Heuristik bleibt`)
+		return { profile: base, routerUsed: false, routerReason: `fehler: ${msg}` }
 	}
 }

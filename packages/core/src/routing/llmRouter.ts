@@ -1,159 +1,173 @@
-/** 
- * T1-3 Router-Modell (opt-in) 
- * Kleines lokales Modell klassifiziert unsichere Prompts gemäß 01-plan.md §6.1 Kaskade 2. 
+/**
+ * T1-3 Router-Modell (Kaskade 2, `01-plan.md` §6.1).
  *
- * Diese Datei stellt die Kern-Routing-Engine bereit, die einen Prompt analysiert
- * und ein JSON-Output liefert mit:
- * - capabilities: erkannte Fähigkeiten (code, reasoning, longform, json, tools, vision)
- * - longform: ob der Prompt langformatig ist
- * - latencySensitive: ob Latenz-sensitiv
+ * Wenn die Heuristik aus `profile.ts` unsicher ist — und das Router-Modell
+ * ist aktiviert — klassifiziert ein kleines lokales Modell den Auftrag und
+ * liefert strukturiertes JSON. Das ist ein **eigener, kurzer Provider-Call**
+ * (kein Teil der Task, kein Streaming, keine Failover-Kette): wenige hundert
+ * Tokens, harte Frist, und bei jedem Fehler (Timeout, Offline, kaputtes JSON)
+ * fällt die Kaskade schlicht auf die Heuristik zurück. Routing darf nie an
+ * dem Router scheitern.
  *
- * Das Router-Modell ist optional und kann via Settings aktiviert/deaktiviert werden.
- * Standardmäßig fällt das System auf heuristischen Wege (profile.ts) zurück.
- */ 
+ * Einstellungen: `settings.routerModel` — Provider + Modell, Timeout,
+ * Mindest-Konfidenz. Default ist **aus**; die Heuristik bleibt der Weg.
+ */
+import type { Capability, LLMProvider } from "@diriz/shared"
 
-import type { Task } from "@diriz/shared"
-export interface LLMRouterResult {
-	capabilities: string[]
+/** Einstellungen des Router-Modells (`settings.routerModel`). */
+export interface RouterModelSettings {
+	/** Opt-in: ohne aktivierte Auswahl bleibt alles bei der Heuristik. */
+	enabled: boolean
+	providerId?: string
+	modelId?: string
+	/** Harte Frist für den ganzen Call (ms). */
+	timeoutMs: number
+	/**
+	 * Mindest-Konfidenz (0–1): Ein Router-Ergebnis mit geringerer
+	 * Selbstsicherheit wird verworfen, wenn die Heuristik ohnehin
+	 * etwas gefunden hat — sonst würde ein zögerndes Modell ein gutes
+	 * heuristisches Profil verwässern.
+	 */
+	minConfidence: number
+}
+
+/** Default: aus. Die Heuristik ist deterministisch und kostet nichts. */
+export const DEFAULT_ROUTER_MODEL: RouterModelSettings = {
+	enabled: false,
+	timeoutMs: 30_000,
+	minConfidence: 0.5,
+}
+
+/** Das strukturierte Ergebnis des Router-Modells. */
+export interface RouterAnalysis {
+	/** Pflicht-Fähigkeiten — werden harte Gates im Routing. */
+	required: Capability[]
+	/** Bonus-Fähigkeiten — nur Scoring-Bonus. */
+	preferred: Capability[]
+	/** Langformat-Auftrag (Bonus-Ability, nicht Pflicht). */
 	longform: boolean
-	latencySensitive: boolean
+	/** Selbstsicherheit des Modells (0–1). */
+	confidence: number
 }
 
-/** 
- * Analysiert einen Prompt und gibt ein Router-Ergebnis zurück. 
- *
- * Diese Implementierung verwendet heuristische Mustererkennung (RegEx),
- * vergleichbar mit der extractProfile-Funktion in packages/core/src/routing/profile.ts.
- * Bei aktiviertem Router-Modell kann hier später ein kleines lokales Modell
- * (z.B. llama3.2:3b, qwen2.5:3b) für die Klassifizierung eingebunden werden. 
- *
- * @param prompt Der zu analysierende Prompt-Text
- * @returns Objekt mit capability-Klassifizierung
- */ 
-export function analyzePrompt(prompt: string): LLMRouterResult {
-	const capabilities: string[] = []
-	let longform = false
-	let latencySensitive = false
+const KNOWN_CAPABILITIES: readonly Capability[] = ["code", "reasoning", "longform", "vision", "tools", "json"]
 
-	// CODE-Patterns (ähnlich wie in profile.ts)
-	const codePatterns: RegExp[] = [
-		/```/,
-		/\b(function |def |class |interface |const |import |SELECT |CREATE TABLE |async )\b/i,
-		/\b(bug|error|exception|stacktrace|crash|compile|build fail|refactor|optimisier)\b/i,
-		/\b\.(py|ts|tsx|js|jsx|java|go|rs|cpp|cs|sql|sh)\b/i,
-		/\b(django|flask|react|node|vite|express|fastify|postgres|redis|kafka)\b/i,
-	]
-
-	const reasoningPatterns: RegExp[] = [
-		/\b(analyse|analyse|diagnose|debug|optimisier|optimis|trade-?off|vergleich|compare|architektur|architecture)\b/i,
-		/\b(warum|why|root cause|ursache)\b/i,
-	]
-
-	const longformPatterns: RegExp[] = [
-		/\b(article|blog|essay|bericht|dokumentation|documentation|guide|tutorial|handbuch)\b/i,
-		/\b(übersetze|translate|zusammenfasse|summarize|erläutere|erkläre ausführlich)\b/i,
-	]
-
-	const jsonPatterns: RegExp = /\\b(json|schema|api|endpoint|rest|graphql|yaml|config|konfiguration)\\b/i
-
-	const toolsPatterns: RegExp[] = [
-		/\b(aufrufen|call the|execute|ausführen|web-?tool|mcp|function-?calling)\b/i,
-	]
-
-	// CODE erkennen
-	if (codePatterns.some((re) => re.test(prompt))) {
-		capabilities.push("code")
+/**
+ * Parst die Modellantwort: JSON zwischen (möglichen) Text-Randspalten,
+ * nur bekannte Fähigkeiten, Konfidenz geklemmt auf [0, 1].
+ * Gibt `undefined` zurück, wenn die Antwort nicht verwertbar ist.
+ */
+export function parseRouterResponse(text: string): RouterAnalysis | undefined {
+	// JSON-Block rausschneiden — Modelle umhüllen das gern mit Worten oder
+	// Markdown-Zaunen, beides ist uns egal.
+	const match = text.match(/\{[\s\S]*\}/)
+	if (!match) {
+		return undefined
 	}
-
-// Reasoning erkennen
-	if (reasoningPatterns.some((re) => re.test(prompt))) {
-		capabilities.push("reasoning")
-		longform = longformPatterns.some((re) => re.test(prompt))
+	let raw: unknown
+	try {
+		raw = JSON.parse(match[0])
+	} catch {
+		return undefined
 	}
-
-// JSON erkennen
-	if (jsonPatterns.test(prompt)) {
-		capabilities.push("json")
+	if (typeof raw !== "object" || raw === null) {
+		return undefined
 	}
-
-// Tools erkennen
-	if (toolsPatterns.some((re) => re.test(prompt))) {
-		capabilities.push("tools")
+	const obj = raw as Record<string, unknown>
+	const aus = (value: unknown): Capability[] => {
+		if (!Array.isArray(value)) {
+			return []
+		}
+		const result: Capability[] = []
+		for (const v of value) {
+			if (
+				typeof v === "string" &&
+				KNOWN_CAPABILITIES.includes(v as Capability) &&
+				!result.includes(v as Capability)
+			) {
+				result.push(v as Capability)
+			}
+		}
+		return result
 	}
-
-// Langformat erkennen (länge > 2500 Zeichen oder longform-Muster)
-	if (prompt.length > 2500 || longformPatterns.some((re) => re.test(prompt))) {
-		longform = true
-	}
-
-// Latenz-sensitiv: kurze Prompts ohne komplexe Anforderungen
-	const shortPromptRegex = /^\s*(erkläre|say|hello|test)\b/i
-	latencySensitive = shortPromptRegex.test(prompt) || prompt.trim().length < 50
-
+	const confidence =
+		typeof obj.confidence === "number" && Number.isFinite(obj.confidence)
+			? Math.min(1, Math.max(0, obj.confidence))
+			: 0.5
 	return {
-		capabilities,
-		longform,
-		latencySensitive,
+		required: aus(obj.required),
+		preferred: aus(obj.preferred),
+		longform: obj.longform === true,
+		confidence,
 	}
 }
 
-/** 
- * Haupt-Routing-Funktion. 
- * Liefert ein Entscheidung-Objekt basierend auf dem Prompt und den Router-Einstellungen. 
- *
- * @param task Die Task mit Prompt und Metadaten
- * @param useRouter Ob das Router-Modell aktiviert ist (opt-in)
- * @returns Routing-Entscheidung mit ausgewähltem Capability-Profil
- */ 
-export function routeTask(task: Task, useRouter = false): LLMRouterResult {
-	const prompt = task.prompt || ""
+/**
+ * Instruktion fürs Router-Modell. Deutsch, kurz, ein einziges JSON-Objekt.
+ * `vision` ist bewusst dabei, auch wenn die Task selbst keine Bilder hat:
+ * Das Modell darf es nur vorschlagen, wenn der Auftrag ausdrücklich danach
+ * klingt — sonst bleibt es bei der Heuristik.
+ */
+function routerInstruction(prompt: string): string {
+	return [
+		"Du bist der Router einer lokalen LLM-Orchestrierung. Klassifiziere den Auftrag in genau einem JSON-Objekt — kein Markdown, keine Kommentare, kein Text davor oder danach:",
+		'{"required":["code"],"preferred":[],"longform":false,"confidence":0.8}',
+		"",
+		"Felder:",
+		'- "required": Pflicht-Fähigkeiten, nur Werte aus: code, reasoning, longform, vision, tools, json. Nur wirklich Pflicht — alles andere gehört nicht hinein.',
+		'- "preferred": Bonus-Fähigkeiten, dieselben Werte, leer erlaubt.',
+		'- "longform": true, wenn die Antwort ein längeres Dokument sein soll (Bericht, Anleitung, Übersetzung eines Textes).',
+		'- "confidence": deine Selbstsicherheit von 0 bis 1.',
+		"",
+		"Der Auftrag:",
+		"<<<",
+		prompt,
+		">>>",
+	].join("\n")
+}
 
-	// Wenn Router deaktiviert oder nicht verfügbar, falle auf Standard-Heuristik zurück
-	if (!useRouter) {
-		return analyzePrompt(prompt)
+export class RouterTimeoutError extends Error {
+	constructor(ms: number) {
+		super(`Router-Modell-Timeout nach ${ms} ms`)
+		this.name = "RouterTimeoutError"
 	}
-
-// Bei aktiviertem Router-Modell können hier erweiterte Logik eingefügt werden:
-// - Kleines lokales Modell konsultieren
-// - Erweiterte Pattern-Erkennung
-// - Integration mit Profil-Einstellungen
-
-	return analyzePrompt(prompt)
 }
 
-/** 
- * Prüft, ob das Router-Modell basierend auf den Task-Metadaten aktiviert ist. *
- * @param task Die Task mit Metadaten
- * @returns Wahr, wenn Router opt-in aktiviert ist
- */ 
-export function isRouterEnabled(task: Task): boolean {
-	const metadata = task.metadata || ""
-
-	// Router kann via metadata.preferredProviderId oder explicitem Flag gesteuert werden
-	// Das bevorzugte Provider-Id-Präsenz zeigt an, dass der Nutzer eine bewusste Wahl trifft
-	return !!(metadata.routerEnabled === true ||
-		(metadata.preferredProviderId && typeof metadata.goal === "string" && metadata.goal.includes("router")))
-}
-
-/** 
- * Gibt ein menschenlesbares Label für das Router-Ergebnis zurück. *
- * @param result Das LLMRouterResult
- * @returns Beschriftung für UI-Anzeige
- */ 
-export function getRouterLabel(result: LLMRouterResult): string {
-	const caps = result.capabilities.join(", ") || "keine"
-	const lf = result.longform ? "langformat" : ""
-	const ls = result.latencySensitive ? "latenz-sensitiv" : ""
-
-	if (caps) {
-		return `${caps}${lf ?", "` + lf : ""}${ls ?", "` + ls : ""}`
+/**
+ * Führt den Router-Call aus und liefert das geparste Ergebnis.
+ * Wirft bei Timeout (`RouterTimeoutError`) oder Provider-Fehler —
+ * die Kaskade in `profile.ts` fängt beides und fällt auf die Heuristik zurück.
+ */
+export async function analyzePromptWithModel(
+	provider: LLMProvider,
+	settings: RouterModelSettings,
+	prompt: string,
+): Promise<RouterAnalysis> {
+	const controller = new AbortController()
+	const stop = setTimeout(() => controller.abort(), settings.timeoutMs)
+	try {
+		const stream = provider.chat({
+			messages: [{ role: "user", content: routerInstruction(prompt) }],
+			model: settings.modelId,
+			// Das Ergebnis ist ein kurzes JSON-Objekt — 160 Tokens reichen mit
+			// grosser Marge, und es zwingt das Modell, sich nicht auszubreiten.
+			settings: { maxTokens: 160, temperature: 0 },
+			signal: controller.signal,
+		})
+		let text = ""
+		for await (const chunk of stream) {
+			if (chunk.type === "delta") {
+				text += chunk.text
+			} else if (chunk.type === "done") {
+				break
+			}
+		}
+		const parsed = parseRouterResponse(text)
+		if (!parsed) {
+			throw new Error("Router-Modell lieferte kein verwertbares JSON")
+		}
+		return parsed
+	} finally {
+		clearTimeout(stop)
 	}
-	return lf ? langform : ls ? latencySensitive : "standard"
-}
-
-export default {
-	analyzePrompt,
-	routeTask,
-	isRouterEnabled,
-	getRouterLabel,
 }

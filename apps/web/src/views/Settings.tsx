@@ -92,6 +92,19 @@ interface WarmupView {
 	perProvider: number
 }
 
+/**
+ * T1-3 Router-Modell, wie die Oberfläche es bearbeitet. `providerId`/`modelId`
+ * sind leer, wenn noch kein Modell gewählt ist — dann bleibt alles bei der
+ * Heuristik.
+ */
+interface RouterModelView {
+	enabled: boolean
+	providerId: string
+	modelId: string
+	timeoutMs: number
+	minConfidence: number
+}
+
 const OWNERS: { id: DocOwnerKind; label: string; hint: string }[] = [
 	{ id: "provider", label: "Rechner", hint: "Gilt für jeden neu angebundenen Rechner (Provider)." },
 	{ id: "instance", label: "LLM-Modelle", hint: "Gilt für jedes neu entdeckte Modell auf einem Rechner." },

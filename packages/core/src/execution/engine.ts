@@ -91,7 +91,7 @@ import type { ProviderRegistry } from "../providers/registry.js"
 import type { Feedback } from "../routing/feedback.js"
 import type { PolicyCandidate } from "../routing/policies.js"
 import { applyPolicies } from "../routing/policies.js"
-import { extractProfile } from "../routing/profile.js"
+import { extractProfileSmart, type RouterDeps } from "../routing/profile.js"
 import type { CandidateInfo } from "../routing/scorer.js"
 import { scoreCandidate } from "../routing/scorer.js"
 import { MAX_AGENT_STEPS, runAgentLoop } from "./agent.js"
@@ -933,9 +933,15 @@ export class ExecutionEngine {
 	 * - `swarm`: best bewertetes Mitglied des Swarms
 	 * - `auto`: best bewerteter Agent, wenn er MIN_AGENT_SCORE erreicht — sonst keins
 	 */
-	private selectAgent(task: Task): AgentSelection {
+	private async selectAgent(task: Task): Promise<AgentSelection> {
 		const mode = task.assignmentMode ?? "auto"
-		const profile = extractProfile(task, listAttachmentsByTask(this.deps.db, task.id).length)
+		// T1-3: Kaskade — Heuristik zuerst, bei Unsicherheit das Router-Modell.
+		// `extractProfileSmart` fällt bei jedem Fehler still auf Stufe 1 zurück.
+		const { profile } = await extractProfileSmart(
+			task,
+			listAttachmentsByTask(this.deps.db, task.id).length,
+			this.routerDeps(),
+		)
 		const agentProfile: AgentProfile = {
 			privacy: profile.privacy,
 			requiredCapabilities: profile.requiredCapabilities,
@@ -1027,14 +1033,23 @@ export class ExecutionEngine {
 	}
 
 	/**
+	 * T1-3: Was die Stufe 2 der Kaskade braucht — `extractProfileSmart`
+	 * entscheidet selbst, ob der Router-Call überhaupt läuft (nur bei
+	 * Unsicherheit **und** aktiver Router-Konfiguration).
+	 */
+	private routerDeps(): RouterDeps {
+		return { db: this.deps.db, registry: this.deps.registry, log: this.deps.log }
+	}
+
+	/**
 	 * Agenten-Auswahl mit Seiteneffekten: persistiert die Entscheidung und
 	 * emittiert `task.agent_selected` (Explainability). Ungültige Konfiguration
 	 * schlägt die Task fehl.
 	 */
-	private resolveAgent(task: Task): Agent | undefined {
+	private async resolveAgent(task: Task): Promise<Agent | undefined> {
 		const { db, emit, log } = this.deps
 		const mode = task.assignmentMode ?? "auto"
-		const sel = this.selectAgent(task)
+		const sel = await this.selectAgent(task)
 		if (!sel.ok) {
 			setTaskStatus(db, task.id, "failed", new Date().toISOString())
 			throw new Error(sel.reason)
@@ -1087,12 +1102,16 @@ export class ExecutionEngine {
 		if (!task) {
 			return undefined
 		}
-		const sel = this.selectAgent(task)
+		const sel = await this.selectAgent(task)
 		const agent = sel.ok ? sel.agent : undefined
-		const profile = this.applyAgentConstraints(
-			extractProfile(task, listAttachmentsByTask(this.deps.db, task.id).length),
-			agent,
+		// Dieselbe Kaskade wie der echte Lauf (T1-3) — sonst zeigt die
+		// Vorschau ein anderes Profil als die Ausführung.
+		const { profile: baseProfile } = await extractProfileSmart(
+			task,
+			listAttachmentsByTask(this.deps.db, task.id).length,
+			this.routerDeps(),
 		)
+		const profile = this.applyAgentConstraints(baseProfile, agent)
 		const candidates = await this.buildCandidates()
 		// Dieselben Gewichte wie im echten Lauf — eine Vorschau, die anders
 		// rechnet als die Ausführung, ist keine Vorschau.
@@ -1211,11 +1230,15 @@ export class ExecutionEngine {
 		setTaskStatus(db, task.id, "routing")
 
 		// M1: Spezialisten-Zuordnung (auto/agent/swarm) vor dem Routing.
-		const agent = this.resolveAgent(task)
-		const profile = this.applyAgentConstraints(
-			extractProfile(task, listAttachmentsByTask(this.deps.db, task.id).length),
-			agent,
+		const agent = await this.resolveAgent(task)
+		// T1-3: dieselbe Kaskade wie `selectAgent` — das Profil darf nicht
+		// zwischen Auswahl und Routing umkippen.
+		const { profile: baseProfile } = await extractProfileSmart(
+			task,
+			listAttachmentsByTask(this.deps.db, task.id).length,
+			this.routerDeps(),
 		)
+		const profile = this.applyAgentConstraints(baseProfile, agent)
 		const candidates = await this.buildCandidates()
 		// Schnellmodus: Tempo zählt dreifach (siehe `fastWeights`).
 		const gewichte = task.metadata.speed === "fast" ? fastWeights(this.baseWeights()) : this.baseWeights()

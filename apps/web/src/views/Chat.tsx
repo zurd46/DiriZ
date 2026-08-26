@@ -1419,9 +1419,9 @@ export default function Chat() {
 											über dem Text, damit klar ist, was das Modell sah. */}
 										{turn.attachments && turn.attachments.length > 0 && (
 											<div className="chat-images">
-												{turn.attachments.map((a, i) => (
+												{turn.attachments.map((a) => (
 													<img
-														key={i}
+														key={a.filename || a.dataUri.slice(0, 40)}
 														src={a.dataUri}
 														alt={a.filename || "Anhang"}
 														className="chat-image"
@@ -1929,25 +1929,35 @@ export default function Chat() {
 							dem X, sonst geht das Bild mit der nächsten Nachricht mit. */}
 						{bilder.length > 0 && (
 							<div className="chat-image-previews">
-								{bilder.map((b, i) => (
-									<figure key={i} className="chat-image-preview">
-										<img src={b.dataUri} alt={b.filename || "Bild"} />
-										<figcaption>
-											{b.filename} · {(b.sizeBytes / 1024).toFixed(0)} kB
-										</figcaption>
-										<button
-											type="button"
-											className="chat-image-remove"
-											onClick={() => setBilder((all) => all.filter((_, j) => j !== i))}
-											title="Bild entfernen"
-										>
-											×
-										</button>
-									</figure>
-								))}
+								{(() => {
+									// Namen können doppelt vorkommen (zwei Mal "Bild.png") —
+									// ein Läufer zählt Vorkommen, damit die Keys eindeutig bleiben.
+									const zähler = new Map<string, number>()
+									return bilder.map((b, i) => {
+										const name = b.filename || "bild"
+										const n = (zähler.get(name) ?? 0) + 1
+										zähler.set(name, n)
+										return (
+											<figure key={`${name}#${n}`} className="chat-image-preview">
+												<img src={b.dataUri} alt={b.filename || "Bild"} />
+												<figcaption>
+													{b.filename} · {(b.sizeBytes / 1024).toFixed(0)} kB
+												</figcaption>
+												<button
+													type="button"
+													className="chat-image-remove"
+													onClick={() => setBilder((all) => all.filter((_, j) => j !== i))}
+													title="Bild entfernen"
+												>
+													×
+												</button>
+											</figure>
+										)
+									})
+								})()}
 							</div>
 						)}
-					</div>
+					</form>
 				</div>
 			</div>
 		</div>

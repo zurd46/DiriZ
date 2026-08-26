@@ -1641,8 +1641,14 @@ export default function Chat() {
 						<div ref={endRef} />
 					</div>
 
-					<div
+					<form
 						className="chat-composer card"
+						onSubmit={(e) => {
+							// Enter im Textfeld sendet selbst (`onKeyDown`) — der
+							// Form-Submit bleibt ein No-Op, sonst würde der Browser
+							// die Seite neu laden.
+							e.preventDefault()
+						}}
 						onDragOver={(e) => {
 							// T1-2 Vision: Drop-Ziel kennzeichnen — ohne preventDefault
 							// würde der Browser die Datei ausserhalb des Browsers öffnen.

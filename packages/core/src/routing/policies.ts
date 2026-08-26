@@ -191,6 +191,13 @@ export function applyPolicies(
 			pushExcluded(c, `Fehlende Pflicht-Fähigkeiten: ${missing.join(", ")}`, "capabilities")
 			continue
 		}
+		// T1-2 Vision: Ein Bild-Anhang macht die Capability `vision` zur
+		// Pflicht — sonst würde ein Textmodell den Auftrag bekommen und blind
+		// darauf antworten, als sähe es das Bild.
+		if (profile.hasAttachments && !c.instance.capabilities.includes("vision")) {
+			pushExcluded(c, "Fehlende Pflicht-Fähigkeiten: vision (Auftrag mit Bild-Anhang)", "capabilities")
+			continue
+		}
 		allowed.push(c)
 	}
 

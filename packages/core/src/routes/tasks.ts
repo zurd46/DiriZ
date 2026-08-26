@@ -29,6 +29,8 @@ import {
 	replayOutput,
 	setTaskRepo,
 	updateExecution,
+	deleteAttachmentsByTask,
+	listAttachmentsByTask,
 } from "../db/repositories.js"
 
 interface CreateBody {
@@ -39,6 +41,11 @@ interface CreateBody {
 	agentId?: string
 	swarmId?: string
 	overrides?: ModelSettings
+	/**
+	 * T1-2 Vision-Anhänge: Bilder als Base64. Max. 5 Bilder, je 8 MB —
+	 * darüber wird abgelehnt, statt den Prozess mit Payloaden zu erdrücken.
+	 */
+	attachments?: { filename: string; mime: string; dataB64: string }[]
 }
 
 type AssignmentModeValue = "auto" | "agent" | "swarm"
@@ -95,7 +102,7 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 	})
 
 	app.post<{ Body: CreateBody }>("/api/tasks", (req, reply) => {
-		const { title, prompt, metadata, assignmentMode, agentId, swarmId, overrides } = req.body ?? {}
+		const { title, prompt, metadata, assignmentMode, agentId, swarmId, overrides, attachments } = req.body ?? {}
 		if (!prompt || prompt.trim().length === 0) {
 			return reply.code(400).send({ error: "prompt fehlt" })
 		}
@@ -103,7 +110,22 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 		if (assignmentErr) {
 			return reply.code(400).send({ error: assignmentErr })
 		}
-		const task = createTask(ctx.db, { title, prompt, metadata, assignmentMode, agentId, swarmId, overrides })
+		if (attachments && attachments.length > 5) {
+			return reply.code(400).send({ error: "maximal 5 Bilder pro Auftrag" })
+		}
+		if (attachments && attachments.some((a) => !a.dataB64 || a.dataB64.length > 8_000_000)) {
+			return reply.code(400).send({ error: "maximal 8 MB pro Bild" })
+		}
+		const task = createTask(ctx.db, {
+			title,
+			prompt,
+			metadata,
+			assignmentMode,
+			agentId,
+			swarmId,
+			overrides,
+			attachments,
+		})
 		ctx.bus.emit({ event: "task.created", data: { taskId: task.id } })
 		return reply.code(201).send(task)
 	})
@@ -173,6 +195,14 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 				answer: last?.output ?? "",
 				error: last?.error ?? null,
 				files: listFilesByTask(ctx.db, task.id).map((f) => ({ relPath: f.relPath, size: f.size })),
+			// T1-2 Vision: die gesendeten Bilder — die Oberfläche zeigt sie als
+			// Thumbnails über der Nachricht, auch nach dem Neuladen.
+			attachments: listAttachmentsByTask(ctx.db, task.id).map((a) => ({
+				filename: a.filename,
+				mime: a.mime,
+				sizeBytes: a.sizeBytes,
+				dataUri: `data:${a.mime};base64,${a.dataB64}`,
+			})),
 				toolCalls: listToolCallsByTask(ctx.db, task.id).map((t) => ({
 					id: `${t.executionId}-${t.seq}`,
 					name: t.name,
@@ -211,6 +241,9 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 		if (tasks.length === 0) {
 			return reply.code(404).send({ error: "Gespräch nicht gefunden" })
 		}
+		for (const t of tasks) {
+			deleteAttachmentsByTask(ctx.db, t.id)
+		}
 		const laufend = tasks.find((t) => ctx.engine.isRunning(t.id))
 		if (laufend) {
 			return reply.code(409).send({ error: "Im Gespräch läuft noch eine Aufgabe — bitte erst abbrechen" })
@@ -230,6 +263,13 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 			executions,
 			toolCalls: listToolCallsByTask(ctx.db, task.id),
 			files: listFilesByTask(ctx.db, task.id),
+			attachments: listAttachmentsByTask(ctx.db, task.id).map((a) => ({
+				id: a.id,
+				filename: a.filename,
+				mime: a.mime,
+				sizeBytes: a.sizeBytes,
+				dataUri: `data:${a.mime};base64,${a.dataB64}`,
+			})),
 			decisions: executions.map((e) => latestDecision(ctx.db, e.id)).filter((d) => d !== undefined),
 			agentSelection: latestAgentSelection(ctx.db, task.id),
 			agent: task.agentId ? getAgent(ctx.db, task.agentId) : undefined,
@@ -298,6 +338,7 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 		if (ctx.engine.isRunning(task.id)) {
 			return reply.code(409).send({ error: "Task läuft — bitte erst abbrechen" })
 		}
+		deleteAttachmentsByTask(ctx.db, task.id)
 		ctx.db.prepare("DELETE FROM tasks WHERE id = ?").run(task.id)
 		return reply.code(204).send()
 	})

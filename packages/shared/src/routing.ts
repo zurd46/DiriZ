@@ -15,6 +15,8 @@ export interface TaskProfile {
 	requiredCapabilities: Capability[]
 	/** Bonus-Capabilities = Score-Bonus. */
 	preferredCapabilities: Capability[]
+	/** T1-2 Vision: Task hat Bild-Anhänge → Capability `vision` wird Pflicht. */
+	hasAttachments?: boolean
 	privacy: PrivacyMode
 	budgetUsd?: number
 	mode: RoutingMode

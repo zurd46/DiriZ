@@ -957,6 +957,11 @@ export interface TaskInput {
 	/** GitHub-Anbindung: Repo und Basis-Branch direkt beim Anlegen setzen. */
 	repoId?: string | null
 	baseBranch?: string | null
+	/**
+	 * T1-2 Vision-Anhänge: Bilder, die zum Auftrag gehören. Base64 wird direkt
+	 * gespeichert — local-first, nichts verlässt den Rechner ausser im Modell-Call.
+	 */
+	attachments?: { filename: string; mime: string; dataB64: string }[]
 }
 
 export function createTask(db: Db, input: TaskInput): Task {
@@ -999,6 +1004,15 @@ export function createTask(db: Db, input: TaskInput): Task {
 	const created = getTask(db, id)
 	if (!created) {
 		throw new Error("task create failed")
+	}
+	if (input.attachments && input.attachments.length > 0) {
+		const ins = db.prepare(
+			`INSERT INTO attachments (id, task_id, filename, mime, size_bytes, data_b64, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		)
+		for (const att of input.attachments) {
+			ins.run(randomUUID(), id, att.filename, att.mime, att.dataB64.length, att.dataB64, now)
+		}
 	}
 	return created
 }
@@ -2308,4 +2322,41 @@ export function istDieselbeMaschine(a: Set<string>, b: Set<string>): boolean {
 		return false
 	}
 	return [...a].every((m) => b.has(m))
+}
+
+/**
+ * T1-2 Vision-Anhänge: die Bilder einer Task, chronologisch. Der Engine
+ * reicht das für `ContentPart[]`; die Chat-Ansicht zeigt die Thumbnails.
+ */
+export function listAttachmentsByTask(
+	db: Db,
+	taskId: string,
+): { id: string; filename: string; mime: string; sizeBytes: number; dataB64: string; createdAt: string }[] {
+	return (
+		(db
+			.prepare(
+				`SELECT id, filename, mime, size_bytes, data_b64, created_at
+				 FROM attachments WHERE task_id = ? ORDER BY created_at, id`,
+			)
+			.all(taskId) as {
+			id: string
+			filename: string
+			mime: string
+			size_bytes: number
+			data_b64: string
+			created_at: string
+		}[])
+	).map((r) => ({
+		id: r.id,
+		filename: r.filename,
+		mime: r.mime,
+		sizeBytes: r.size_bytes,
+		dataB64: r.data_b64,
+		createdAt: r.created_at,
+	}))
+}
+
+/** Anhänge einer Task löschen (Task- oder Gesprächslöschung). */
+export function deleteAttachmentsByTask(db: Db, taskId: string): void {
+	db.prepare("DELETE FROM attachments WHERE task_id = ?").run(taskId)
 }

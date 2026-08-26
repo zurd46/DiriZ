@@ -121,6 +121,8 @@ export class OpenAiCompatProvider implements LLMProvider {
 	readonly label: string
 	/** M8 Agentik: OpenAI-`tools` wird von allen kompatiblen Servern verstanden. */
 	readonly supportsTools = true
+	/** T1-2 Vision: `ContentPart[]` ist das native OpenAI-Format. */
+	readonly supportsVision = true
 	private baseUrl: string
 	private apiKey?: string
 	private extraHeaders: Record<string, string>

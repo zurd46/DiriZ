@@ -147,7 +147,8 @@ export interface AgentLoopOptions {
 	model: string
 	settings?: ModelSettings
 	systemPrompt?: string
-	userPrompt: string
+	/** T1-2 Vision: Text oder Text + Bild-Anhänge (`ContentPart[]`). */
+	userPrompt: string | ContentPart[]
 	/** Absoluter Pfad der Task-Sandbox (Workspace-Unterverzeichnis). */
 	baseDir: string
 	executionId: string

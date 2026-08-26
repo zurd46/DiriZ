@@ -17,6 +17,7 @@ import {
 	type CandidateScore,
 	type ChatMessage,
 	type ConcurrencySettings,
+	type ContentPart,
 	type CoreEvent,
 	composeSystemPrompt,
 	DEFAULT_CONCURRENCY,
@@ -68,6 +69,7 @@ import {
 	listTasks,
 	listTasksByChain,
 	listToolCallsByTask,
+	listAttachmentsByTask,
 	lockInstance,
 	recordLoadFailure,
 	replayOutput,
@@ -1627,13 +1629,28 @@ export class ExecutionEngine {
 					systemPrompt: (agent?.systemPrompt ?? "").trim() || agent?.modelSettings?.systemPrompt,
 				},
 				{ label: "Task", systemPrompt: task.overrides?.systemPrompt },
-			]).trim()
-			const messages: ChatMessage[] = systemPrompt
+				]).trim()
+				// T1-2 Vision: Bild-Anhänge werden `ContentPart[]` — Text bleibt der
+				// Auftrag, die Bilder folgen als `image_url`-Teile. Ohne Anhänge:
+				// der gewohnte String-Pfad, alles bleibt bytegleich.
+				const anhaenge = listAttachmentsByTask(this.deps.db, task.id)
+				const userContent =
+				anhaenge.length > 0
+					? ([
+							{ type: "text", text: task.prompt },
+							...anhaenge.map((a): ContentPart => ({
+								type: "image_url",
+								image_url: { url: `data:${a.mime};base64,${a.dataB64}` },
+							})),
+						] satisfies ContentPart[])
+					: task.prompt
+
+				const messages: ChatMessage[] = systemPrompt
 				? [
 						{ role: "system", content: systemPrompt },
-						{ role: "user", content: task.prompt },
+						{ role: "user", content: userContent },
 					]
-				: [{ role: "user", content: task.prompt }]
+				: [{ role: "user", content: userContent }]
 
 			if (task.metadata.agentMode === true && adapter.supportsTools) {
 				// M8 Agentik: Tool-Loop statt Einzelstream — das Modell arbeitet
@@ -1660,7 +1677,7 @@ export class ExecutionEngine {
 					model: choice.instance.modelId,
 					settings: effective,
 					systemPrompt: systemPrompt || undefined,
-					userPrompt: task.prompt,
+					userPrompt: userContent,
 					baseDir,
 					executionId: execution.id,
 					signal: controller.signal,

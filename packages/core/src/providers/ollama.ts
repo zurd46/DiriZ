@@ -74,6 +74,8 @@ export class OllamaProvider implements LLMProvider {
 	readonly label: string
 	/** M8 Agentik: Ollama ≥ 0.6 unterstützt `tools` im Chat-Request. */
 	readonly supportsTools = true
+	/** T1-2 Vision: Ollama nimmt Bilder ins `images`-Feld der User-Nachricht. */
+	readonly supportsVision = true
 	private baseUrl: string
 	private apiKey?: string
 

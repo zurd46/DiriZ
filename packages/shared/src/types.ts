@@ -260,6 +260,8 @@ export interface LLMProvider {
 	readonly label: string
 	/** true = Adapter versteht Tool-Calls (M8 Agentik). */
 	readonly supportsTools?: boolean
+	/** true = Adapter liefert Bilder aus `ContentPart[]` an das Modell (T1-2 Vision). */
+	readonly supportsVision?: boolean
 	healthCheck(): Promise<HealthStatus>
 	listModels(): Promise<DiscoveredModel[]>
 	chat(req: ChatRequest): AsyncGenerator<ChatChunk>

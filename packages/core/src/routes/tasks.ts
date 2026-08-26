@@ -114,7 +114,7 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 		if (attachments && attachments.length > 5) {
 			return reply.code(400).send({ error: "maximal 5 Bilder pro Auftrag" })
 		}
-		if (attachments && attachments.some((a) => !a.dataB64 || a.dataB64.length > 8_000_000)) {
+		if (attachments?.some((a) => !a.dataB64 || a.dataB64.length > 8_000_000)) {
 			return reply.code(400).send({ error: "maximal 8 MB pro Bild" })
 		}
 		const task = createTask(ctx.db, {

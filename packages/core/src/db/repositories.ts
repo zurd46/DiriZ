@@ -2333,7 +2333,7 @@ export function listAttachmentsByTask(
 	taskId: string,
 ): { id: string; filename: string; mime: string; sizeBytes: number; dataB64: string; createdAt: string }[] {
 	return (
-		(db
+		db
 			.prepare(
 				`SELECT id, filename, mime, size_bytes, data_b64, created_at
 				 FROM attachments WHERE task_id = ? ORDER BY created_at, id`,
@@ -2345,7 +2345,7 @@ export function listAttachmentsByTask(
 			size_bytes: number
 			data_b64: string
 			created_at: string
-		}[])
+		}[]
 	).map((r) => ({
 		id: r.id,
 		filename: r.filename,

@@ -64,12 +64,12 @@ import {
 	getSwarm,
 	getTask,
 	listAgents,
+	listAttachmentsByTask,
 	listExecutionsByTask,
 	listInstances,
 	listTasks,
 	listTasksByChain,
 	listToolCallsByTask,
-	listAttachmentsByTask,
 	lockInstance,
 	recordLoadFailure,
 	replayOutput,
@@ -935,7 +935,7 @@ export class ExecutionEngine {
 	 */
 	private selectAgent(task: Task): AgentSelection {
 		const mode = task.assignmentMode ?? "auto"
-		const profile = extractProfile(task)
+		const profile = extractProfile(task, listAttachmentsByTask(this.deps.db, task.id).length)
 		const agentProfile: AgentProfile = {
 			privacy: profile.privacy,
 			requiredCapabilities: profile.requiredCapabilities,
@@ -1089,7 +1089,10 @@ export class ExecutionEngine {
 		}
 		const sel = this.selectAgent(task)
 		const agent = sel.ok ? sel.agent : undefined
-		const profile = this.applyAgentConstraints(extractProfile(task), agent)
+		const profile = this.applyAgentConstraints(
+			extractProfile(task, listAttachmentsByTask(this.deps.db, task.id).length),
+			agent,
+		)
 		const candidates = await this.buildCandidates()
 		// Dieselben Gewichte wie im echten Lauf — eine Vorschau, die anders
 		// rechnet als die Ausführung, ist keine Vorschau.
@@ -1209,7 +1212,10 @@ export class ExecutionEngine {
 
 		// M1: Spezialisten-Zuordnung (auto/agent/swarm) vor dem Routing.
 		const agent = this.resolveAgent(task)
-		const profile = this.applyAgentConstraints(extractProfile(task), agent)
+		const profile = this.applyAgentConstraints(
+			extractProfile(task, listAttachmentsByTask(this.deps.db, task.id).length),
+			agent,
+		)
 		const candidates = await this.buildCandidates()
 		// Schnellmodus: Tempo zählt dreifach (siehe `fastWeights`).
 		const gewichte = task.metadata.speed === "fast" ? fastWeights(this.baseWeights()) : this.baseWeights()
@@ -1629,23 +1635,25 @@ export class ExecutionEngine {
 					systemPrompt: (agent?.systemPrompt ?? "").trim() || agent?.modelSettings?.systemPrompt,
 				},
 				{ label: "Task", systemPrompt: task.overrides?.systemPrompt },
-				]).trim()
-				// T1-2 Vision: Bild-Anhänge werden `ContentPart[]` — Text bleibt der
-				// Auftrag, die Bilder folgen als `image_url`-Teile. Ohne Anhänge:
-				// der gewohnte String-Pfad, alles bleibt bytegleich.
-				const anhaenge = listAttachmentsByTask(this.deps.db, task.id)
-				const userContent =
+			]).trim()
+			// T1-2 Vision: Bild-Anhänge werden `ContentPart[]` — Text bleibt der
+			// Auftrag, die Bilder folgen als `image_url`-Teile. Ohne Anhänge:
+			// der gewohnte String-Pfad, alles bleibt bytegleich.
+			const anhaenge = listAttachmentsByTask(this.deps.db, task.id)
+			const userContent =
 				anhaenge.length > 0
 					? ([
 							{ type: "text", text: task.prompt },
-							...anhaenge.map((a): ContentPart => ({
-								type: "image_url",
-								image_url: { url: `data:${a.mime};base64,${a.dataB64}` },
-							})),
+							...anhaenge.map(
+								(a): ContentPart => ({
+									type: "image_url",
+									image_url: { url: `data:${a.mime};base64,${a.dataB64}` },
+								}),
+							),
 						] satisfies ContentPart[])
 					: task.prompt
 
-				const messages: ChatMessage[] = systemPrompt
+			const messages: ChatMessage[] = systemPrompt
 				? [
 						{ role: "system", content: systemPrompt },
 						{ role: "user", content: userContent },

@@ -16,6 +16,8 @@ import { OpenAiCompatProvider, readContextWindow } from "../src/providers/openai
 let lastAuth: string | undefined
 let server: http.Server
 let baseUrl: string
+/** Letzter eingelesener Chat-Body (Vision-Tests). */
+let lastChatBody: string | undefined
 
 beforeAll(async () => {
 	server = http.createServer((req, res) => {
@@ -37,10 +39,15 @@ beforeAll(async () => {
 			return
 		}
 		if (req.method === "POST" && url === "/api/chat") {
-			res.writeHead(200, { "content-type": "application/x-ndjson" })
-			res.write(`${JSON.stringify({ message: { content: "Hel" } })}\n`)
-			res.write(`${JSON.stringify({ message: { content: "lo!" } })}\n`)
-			res.end(`${JSON.stringify({ done: true, prompt_eval_count: 3, eval_count: 7 })}\n`)
+			let body = ""
+			req.on("data", (c) => (body += c))
+			req.on("end", () => {
+				lastChatBody = body
+				res.writeHead(200, { "content-type": "application/x-ndjson" })
+				res.write(`${JSON.stringify({ message: { content: "Hel" } })}\n`)
+				res.write(`${JSON.stringify({ message: { content: "lo!" } })}\n`)
+				res.end(`${JSON.stringify({ done: true, prompt_eval_count: 3, eval_count: 7 })}\n`)
+			})
 			return
 		}
 		// Native LM-Studio-API: nur sie kennt Kontextgröße und Quantisierung.
@@ -95,13 +102,18 @@ beforeAll(async () => {
 			return
 		}
 		if (req.method === "POST" && url === "/v1/chat/completions") {
-			res.writeHead(200, { "content-type": "text/event-stream" })
-			res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "Hi " } }] })}\n\n`)
-			res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "there" } }] })}\n\n`)
-			res.write(
-				`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 9 } })}\n\n`,
-			)
-			res.end("data: [DONE]\n\n")
+			let body = ""
+			req.on("data", (c) => (body += c))
+			req.on("end", () => {
+				lastChatBody = body
+				res.writeHead(200, { "content-type": "text/event-stream" })
+				res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "Hi " } }] })}\n\n`)
+				res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "there" } }] })}\n\n`)
+				res.write(
+					`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 9 } })}\n\n`,
+				)
+				res.end("data: [DONE]\n\n")
+			})
 			return
 		}
 		res.writeHead(404)
@@ -164,6 +176,34 @@ describe("adapter: Ollama", () => {
 		await provider.listModels()
 		expect(lastAuth).toBeUndefined()
 	})
+
+	it("Vision: Bilder aus ContentPart[] landen im images-Feld (T1-2)", async () => {
+		lastChatBody = undefined
+		const provider = makeProvider()
+		const b64 = Buffer.from("png-bytes").toString("base64")
+		await collect(
+			provider.chat({
+				model: "llama3",
+				messages: [
+					{
+						role: "user",
+						content: [
+							{ type: "text", text: "Was steht auf dem Bild?" },
+							{ type: "image_url", image_url: { url: `data:image/png;base64,${b64}` } },
+						],
+					},
+				],
+			}),
+		)
+		const body = JSON.parse(lastChatBody ?? "{}") as {
+			messages: { role: string; content: unknown }[]
+			images?: string[]
+		}
+		// Text bleibt in der Nachricht — als String, ohne `data:`-URI.
+		expect(body.messages.at(-1)?.content).toBe("Was steht auf dem Bild?")
+		// Das Bild wandert in `images` — Base64 ohne data:-Präfix.
+		expect(body.images).toEqual([b64])
+	})
 })
 
 describe("adapter: OpenAI-kompatibel (LM Studio)", () => {
@@ -195,6 +235,31 @@ describe("adapter: OpenAI-kompatibel (LM Studio)", () => {
 		expect(text).toBe("Hi there")
 		const usage = chunks.find((c) => c.type === "usage")
 		expect(usage && usage.type === "usage" && usage.tokensOut).toBe(9)
+	})
+
+	it("Vision: ContentPart[] wird als OpenAI-image_url durchgereicht (T1-2)", async () => {
+		lastChatBody = undefined
+		const provider = makeProvider()
+		const dataUri = "data:image/png;base64,cHlnLWJ5dGVz"
+		await collect(
+			provider.chat({
+				model: "gpt-x",
+				messages: [
+					{
+						role: "user",
+						content: [
+							{ type: "text", text: "Was steht auf dem Bild?" },
+							{ type: "image_url", image_url: { url: dataUri } },
+						],
+					},
+				],
+			}),
+		)
+		const body = JSON.parse(lastChatBody ?? "{}") as { messages: { content: unknown }[] }
+		// OpenAI-Format bleibt 1:1 — Text + image_url-Teil in derselben Nachricht.
+		const content = body.messages.at(-1)?.content
+		expect(Array.isArray(content)).toBe(true)
+		expect((content as { type: string }[]).map((p) => p.type)).toEqual(["text", "image_url"])
 	})
 
 	it("sendet API-Key als Bearer-Token", async () => {

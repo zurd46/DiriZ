@@ -18,12 +18,13 @@ Gleichen Auftrag parallel auf 2–4 Modellen, Ergebnis + Tempo + Kosten nebenein
 - [x] Test: 3 Unit-Tests (Validierung, Persistenz + compareId-Gruppierung + Ergebnis-View + Recent, 404)
 - [x] `npm run check` grün (26 Dateien, 433 Tests) + Build grün
 
-### ☐ T1-2 Vision-Anhänge
+### ▶ T1-2 Vision-Anhänge — in Arbeit 26.08.2026
 Bilder in Prompts senden (Capability `vision` wird real).
-- [ ] shared: `ChatMessage.content` wird `string | ContentPart[]` (text + image_url/base64), `ChatRequest` angepasst
-- [ ] Core: Ollama-Adapter (Ollama `images`-Feld), OpenAI-Compat-Adapter (`image_url`), Capability-Check bei vision-Task
-- [ ] Core: Routing-Gate "vision" schon vorhanden → nur Adapter-Fähigkeit `supportsVision` im Provider-Kontrakt
-- [ ] UI: Bild-Upload/Paste im Composer (File-Input + Drag&Drop), Thumbnail-Vorschau, Grössen-Limit (z.B. 8 MB)
+- [x] shared: `ChatMessage.content` wird `string | ContentPart[]` (text + image_url/base64), `contentText()`-Helper, `LLMProvider.supportsVision` im Provider-Kontrakt
+- [x] Core: Ollama-Adapter (`extractOllamaImages` → `images`-Feld), OpenAI-Compat-Adapter (`ContentPart[]` direkt) — beide `supportsVision=true`
+- [x] Core: Routing-Gate `vision` — `extractProfile(task, attachmentCount)` setzt `hasAttachments`, `applyPolicies` exkludiert Modelle ohne `vision`
+- [x] Core: `attachments`-Tabelle (0021), `createTask`-Persistenz, `listAttachmentsByTask`, Engine baut `ContentPart[]` für User-Nachricht (inkl. Agent-Loop)
+- [ ] UI: Bild-Upload/Paste im Composer (File-Input + Drag&Drop), Thumbnail-Vorschau, Grössen-Limit (8 MB)
 - [ ] Test: Adapter-Unit mit Mock (Vision-Request korrekt formatiert)
 - [ ] `npm run check` grün
 

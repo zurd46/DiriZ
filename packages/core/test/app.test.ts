@@ -194,6 +194,78 @@ describe("api: Tasks", () => {
 	})
 })
 
+describe("api: Vision-Anhänge (T1-2)", () => {
+	/** Kleinstes gültiges PNG (1×1, transparent) als Base64. */
+	const tinyPngB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+
+	it("POST mit Anhang → 201, Detail zeigt dataUri, Chat-Turn trägt Thumbnails", async () => {
+		const res = await app.inject({
+			method: "POST",
+			url: "/api/tasks",
+			payload: {
+				prompt: "Was steht auf dem Bild?",
+				attachments: [{ filename: "pixel.png", mime: "image/png", dataB64: tinyPngB64 }],
+			},
+		})
+		expect(res.statusCode).toBe(201)
+		const task = res.json()
+
+		const detail = await app.inject({ method: "GET", url: `/api/tasks/${task.id}` })
+		expect(detail.statusCode).toBe(200)
+		const atts = detail.json().attachments as { filename: string; dataUri: string }[]
+		expect(atts).toHaveLength(1)
+		expect(atts[0].filename).toBe("pixel.png")
+		expect(atts[0].dataUri).toBe(`data:image/png;base64,${tinyPngB64}`)
+
+		// Chat-Turn: dieselben Thumbnails, damit die Oberfläche nach dem
+		// Neuladen die Bilder über der Nachricht zeigt.
+		const chatRes = await app.inject({
+			method: "POST",
+			url: "/api/tasks",
+			payload: { prompt: "Bild-Chat", metadata: { chatId: "vision-chat-1" } },
+		})
+		expect(chatRes.statusCode).toBe(201)
+		const chatTask = chatRes.json()
+		// Anhang nachträglich verknüpfen (so wie die UI ihn beim Anlegen schickt).
+		db.prepare(
+			"INSERT INTO attachments (id, task_id, filename, mime, size_bytes, data_b64, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		).run(
+			crypto.randomUUID(),
+			chatTask.id,
+			"pixel.png",
+			"image/png",
+			tinyPngB64.length,
+			tinyPngB64,
+			new Date().toISOString(),
+		)
+		const chats = await app.inject({ method: "GET", url: "/api/chats?chatId=vision-chat-1" })
+		expect(chats.statusCode).toBe(200)
+		const turn = chats.json()[0].turns.at(-1) as { attachments: { dataUri: string }[] }
+		expect(turn.attachments).toHaveLength(1)
+		expect(turn.attachments[0].dataUri).toBe(`data:image/png;base64,${tinyPngB64}`)
+	})
+
+	it("POST ohne Anhang → leere attachments-Liste im Detail", async () => {
+		const res = await app.inject({ method: "POST", url: "/api/tasks", payload: { prompt: "nur Text" } })
+		expect(res.statusCode).toBe(201)
+		const detail = await app.inject({ method: "GET", url: `/api/tasks/${res.json().id}` })
+		expect(detail.json().attachments).toEqual([])
+	})
+
+	it("POST mit 6 Anhängen → 400", async () => {
+		const payload = {
+			prompt: "zu viele Bilder",
+			attachments: Array.from({ length: 6 }, (_, i) => ({
+				filename: `b${i}.png`,
+				mime: "image/png",
+				dataB64: tinyPngB64,
+			})),
+		}
+		const res = await app.inject({ method: "POST", url: "/api/tasks", payload })
+		expect(res.statusCode).toBe(400)
+	})
+})
+
 describe("api: A/B-Vergleich (T1-1)", () => {
 	/** Provider + zwei Instanzen für das Duell anlegen. */
 	const makeInstances = () => {

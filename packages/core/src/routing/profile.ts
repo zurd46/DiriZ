@@ -36,7 +36,7 @@ const TOOLS_PATTERNS: RegExp[] = [
  * Extrahiert das Task-Profil. `requiredCapabilities` werden harte Gates
  * im Routing (exkludieren), `preferredCapabilities` geben nur einen Bonus.
  */
-export function extractProfile(task: Task): TaskProfile {
+export function extractProfile(task: Task, attachmentCount = 0): TaskProfile {
 	const prompt = task.prompt
 	const required: Capability[] = []
 	const preferred: Capability[] = []
@@ -74,6 +74,8 @@ export function extractProfile(task: Task): TaskProfile {
 		estTokens: estimateTokens(task.prompt),
 		requiredCapabilities: required,
 		preferredCapabilities: preferred,
+		// T1-2 Vision: Bild-Anhänge machen `vision` zur Pflicht-Fähigkeit.
+		hasAttachments: attachmentCount > 0,
 		privacy: task.metadata.privacy,
 		budgetUsd: task.metadata.budgetUsd,
 		mode: task.metadata.mode,

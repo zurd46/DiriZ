@@ -9,6 +9,7 @@ import type { AppContext } from "../app.js"
 import type { Db } from "../db/connection.js"
 import {
 	createTask,
+	deleteAttachmentsByTask,
 	deleteChat,
 	getAgent,
 	getExecution,
@@ -19,6 +20,7 @@ import {
 	getTask,
 	latestAgentSelection,
 	latestDecision,
+	listAttachmentsByTask,
 	listChatTasks,
 	listCompareTasks,
 	listExecutionsByTask,
@@ -29,8 +31,6 @@ import {
 	replayOutput,
 	setTaskRepo,
 	updateExecution,
-	deleteAttachmentsByTask,
-	listAttachmentsByTask,
 } from "../db/repositories.js"
 
 interface CreateBody {
@@ -102,7 +102,8 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 	})
 
 	app.post<{ Body: CreateBody }>("/api/tasks", (req, reply) => {
-		const { title, prompt, metadata, assignmentMode, agentId, swarmId, overrides, attachments } = req.body ?? {}
+		const { title, prompt, metadata, assignmentMode, agentId, swarmId, overrides, attachments } =
+			req.body ?? {}
 		if (!prompt || prompt.trim().length === 0) {
 			return reply.code(400).send({ error: "prompt fehlt" })
 		}
@@ -195,14 +196,14 @@ export function registerTasks(app: FastifyInstance, ctx: AppContext): void {
 				answer: last?.output ?? "",
 				error: last?.error ?? null,
 				files: listFilesByTask(ctx.db, task.id).map((f) => ({ relPath: f.relPath, size: f.size })),
-			// T1-2 Vision: die gesendeten Bilder — die Oberfläche zeigt sie als
-			// Thumbnails über der Nachricht, auch nach dem Neuladen.
-			attachments: listAttachmentsByTask(ctx.db, task.id).map((a) => ({
-				filename: a.filename,
-				mime: a.mime,
-				sizeBytes: a.sizeBytes,
-				dataUri: `data:${a.mime};base64,${a.dataB64}`,
-			})),
+				// T1-2 Vision: die gesendeten Bilder — die Oberfläche zeigt sie als
+				// Thumbnails über der Nachricht, auch nach dem Neuladen.
+				attachments: listAttachmentsByTask(ctx.db, task.id).map((a) => ({
+					filename: a.filename,
+					mime: a.mime,
+					sizeBytes: a.sizeBytes,
+					dataUri: `data:${a.mime};base64,${a.dataB64}`,
+				})),
 				toolCalls: listToolCallsByTask(ctx.db, task.id).map((t) => ({
 					id: `${t.executionId}-${t.seq}`,
 					name: t.name,

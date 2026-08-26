@@ -167,6 +167,14 @@ export async function analyzePromptWithModel(
 			throw new Error("Router-Modell lieferte kein verwertbares JSON")
 		}
 		return parsed
+	} catch (e) {
+		// Das Timeout ist ein eigener, benennbarer Fall: Wer den Fallback
+		// liest, soll wissen, dass der Call an der Frist zerbrochen ist und
+		// nicht an einem Provider-Fehler.
+		if (controller.signal.aborted) {
+			throw new RouterTimeoutError(settings.timeoutMs)
+		}
+		throw e
 	} finally {
 		clearTimeout(stop)
 	}

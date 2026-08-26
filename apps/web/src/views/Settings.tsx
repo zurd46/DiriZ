@@ -99,10 +99,22 @@ interface WarmupView {
  */
 interface RouterModelView {
 	enabled: boolean
-	providerId: string
-	modelId: string
+	providerId?: string
+	modelId?: string
 	timeoutMs: number
 	minConfidence: number
+}
+
+/** Provider + Modell-Dropdowns für den Router-Abschnitt. */
+interface RouterProviderOption {
+	id: string
+	label: string
+}
+interface RouterInstanceOption {
+	id: string
+	providerId: string
+	modelId: string
+	displayName: string
 }
 
 const OWNERS: { id: DocOwnerKind; label: string; hint: string }[] = [
@@ -158,6 +170,14 @@ export default function Settings() {
 	const [warmBusy, setWarmBusy] = useState(false)
 	const [warmSaved, setWarmSaved] = useState(false)
 
+	// Router-Modell (T1-3): kleines Modell klassifiziert unsichere Prompts,
+	// falls die Heuristik nichts findet. Aus = alles bleibt deterministisch.
+	const [router, setRouter] = useState<RouterModelView | null>(null)
+	const [routerBusy, setRouterBusy] = useState(false)
+	const [routerSaved, setRouterSaved] = useState(false)
+	const [routerProviders, setRouterProviders] = useState<RouterProviderOption[]>([])
+	const [routerModels, setRouterModels] = useState<RouterInstanceOption[]>([])
+
 	// Dokument-Vorlagen (M9): je Besitzer-Art und Dokumenttyp.
 	const [tplOwner, setTplOwner] = useState<DocOwnerKind>("agent")
 	const [tplKind, setTplKind] = useState<AgentDocKind>("plan")
@@ -210,6 +230,26 @@ export default function Settings() {
 			setWarm(settings.warmup)
 		}
 	}, [settings, warm])
+
+	useEffect(() => {
+		if (settings?.routerModel && router === null) {
+			setRouter(settings.routerModel)
+			void (async () => {
+				// Dropdown-Daten: Provider plus deren Modelle — einmal, nicht
+				// pro Render. Fehler sind unkritisch, die Felder bleiben leer.
+				try {
+					const [provs, insts] = await Promise.all([
+						api.get<RouterProviderOption[]>("/api/providers"),
+						api.get<RouterInstanceOption[]>("/api/instances"),
+					])
+					setRouterProviders(provs)
+					setRouterModels(insts)
+				} catch {
+					/* Dropdowns bleiben leer — Heuristik bleibt der Weg. */
+				}
+			})()
+		}
+	}, [settings, router])
 
 	useEffect(() => {
 		if (settings?.agent && steps === null) {
@@ -362,6 +402,24 @@ export default function Settings() {
 			setImportMsg(e instanceof Error ? e.message : String(e))
 		} finally {
 			setWarmBusy(false)
+		}
+	}
+
+	const routerDirty =
+		router !== null && JSON.stringify(router) !== JSON.stringify(settings?.routerModel ?? null)
+
+	const saveRouter = async () => {
+		if (!router) return
+		setRouterBusy(true)
+		try {
+			await api.put("/api/settings", { routerModel: router })
+			await useStore.getState().refreshSettings()
+			setRouterSaved(true)
+			setTimeout(() => setRouterSaved(false), 2500)
+		} catch (e) {
+			setImportMsg(e instanceof Error ? e.message : String(e))
+		} finally {
+			setRouterBusy(false)
 		}
 	}
 
@@ -747,6 +805,132 @@ export default function Settings() {
 						disabled={!warmDirty || warmBusy}
 					>
 						Warmhalten speichern
+					</button>
+				</div>
+			</div>
+
+			<div className="card">
+				<div className="card-head">
+					<div>
+						<div className="card-title">
+							<IconRoute size={16} />
+							Router-Modell
+						</div>
+						<div className="card-sub">
+							Wenn die eingebaute Heuristik einen Auftrag nicht einordnen kann (keine einzige Fähigkeit
+							erkannt), darf ein kleines Modell kurz zu Rate gezogen werden — ein eigener, schneller
+							Provider-Call mit hartem Timeout. Jeder Fehler (Offline, Timeout, schlechtes JSON) fällt still
+							auf die Heuristik zurück; das Routing scheitert nie am Router. Aus = alles bleibt
+							deterministisch.
+						</div>
+					</div>
+					{routerDirty && <span className="pill warn">ungespeichert</span>}
+				</div>
+
+				{router && (
+					<div className="limits">
+						<label className="limit-row">
+							<span className="limit-label">Router-Modell aktivieren</span>
+							<input
+								type="checkbox"
+								checked={router.enabled}
+								onChange={(e) => setRouter({ ...router, enabled: e.target.checked })}
+							/>
+							<span className="field-hint">
+								Aus = nur die Heuristik entscheidet — schneller, ohne Modell-Call.
+							</span>
+						</label>
+						<label className="limit-row">
+							<span className="limit-label">Rechner</span>
+							<select
+								value={router.providerId ?? ""}
+								onChange={(e) =>
+									setRouter({
+										...router,
+										providerId: e.target.value || undefined,
+										modelId: undefined,
+									})
+								}
+							>
+								<option value="">— wählen —</option>
+								{routerProviders.map((p) => (
+									<option key={p.id} value={p.id}>
+										{p.label}
+									</option>
+								))}
+							</select>
+							<span className="field-hint">Wo das kleine Router-Modell läuft.</span>
+						</label>
+						<label className="limit-row">
+							<span className="limit-label">Modell</span>
+							<select
+								value={router.modelId ?? ""}
+								onChange={(e) => setRouter({ ...router, modelId: e.target.value || undefined })}
+								disabled={!router.providerId}
+							>
+								<option value="">— wählen —</option>
+								{routerModels
+									.filter((m) => m.providerId === router.providerId)
+									.map((m) => (
+										<option key={m.id} value={m.modelId}>
+											{m.displayName || m.modelId}
+										</option>
+									))}
+							</select>
+							<span className="field-hint">
+								Kurze JSON-Antworten reichen — ein schnelles, kompaktes Modell genügt.
+							</span>
+						</label>
+						<label className="limit-row">
+							<span className="limit-label">Frist (Sekunden)</span>
+							<input
+								type="number"
+								min={5}
+								max={300}
+								step={5}
+								value={Math.round(router.timeoutMs / 1000)}
+								onChange={(e) =>
+									setRouter({
+										...router,
+										timeoutMs: Math.max(5, Math.min(300, Number(e.target.value) || 5)) * 1000,
+									})
+								}
+							/>
+							<span className="field-hint">
+								Danach gibt die Kaskade den Versuch auf und bleibt bei der Heuristik.
+							</span>
+						</label>
+						<label className="limit-row">
+							<span className="limit-label">Mindest-Konfidenz</span>
+							<input
+								type="number"
+								min={0}
+								max={1}
+								step={0.05}
+								value={router.minConfidence}
+								onChange={(e) =>
+									setRouter({
+										...router,
+										minConfidence: Math.max(0, Math.min(1, Number(e.target.value) || 0)),
+									})
+								}
+							/>
+							<span className="field-hint">
+								Ergebnisse unter dieser Selbstsicherheit (0–1) werden verworfen.
+							</span>
+						</label>
+					</div>
+				)}
+
+				<div className="card-actions">
+					{routerSaved && <span className="pill ok">gespeichert</span>}
+					<button
+						type="button"
+						className="btn primary"
+						onClick={() => void saveRouter()}
+						disabled={!routerDirty || routerBusy}
+					>
+						Router speichern
 					</button>
 				</div>
 			</div>

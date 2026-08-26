@@ -120,6 +120,14 @@ interface State {
 		retention?: { logDays: number; chunkDays: number; metricsDays: number }
 		/** Was `run_command` starten darf (`settings.commands`). */
 		commands?: { enabled: boolean; allowed: string[]; timeoutMs: number }
+		/** Router-Modell-Klassifikation (`settings.routerModel`, T1-3). */
+		routerModel?: {
+			enabled: boolean
+			providerId?: string
+			modelId?: string
+			timeoutMs: number
+			minConfidence: number
+		}
 	} | null
 	live: Record<string, LiveRun>
 	taskDetails: Record<string, TaskDetail>

@@ -103,9 +103,16 @@ export interface TaskPushedEvent {
 	data: { taskId: string; branch: string; toBase: boolean }
 }
 
+/** T1-4 Scheduling: ein Zeitplan hat seine Task erzeugt und gestartet. */
+export interface ScheduleFiredEvent {
+	event: "schedule.fired"
+	data: { scheduleId: string; taskId: string; title: string }
+}
+
 export type CoreEvent =
 	| TaskCreatedEvent
 	| TaskPushedEvent
+	| ScheduleFiredEvent
 	| AgentSelectedEvent
 	| AgentsChangedEvent
 	| SwarmsChangedEvent
@@ -124,6 +131,7 @@ export type CoreEvent =
 export const CORE_EVENT_NAMES = [
 	"task.created",
 	"task.pushed",
+	"schedule.fired",
 	"task.agent_selected",
 	"agents.changed",
 	"swarms.changed",

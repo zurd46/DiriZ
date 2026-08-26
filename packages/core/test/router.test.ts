@@ -27,7 +27,7 @@ function mockProvider(responseText?: string, error?: Error): LLMProvider {
 		listModels: async () => [],
 		cancel: async () => {},
 		chat: (req: ChatRequest): AsyncGenerator<ChatChunk> => {
-			const gen = (async function* () {
+			const gen = (async function* (): AsyncGenerator<ChatChunk> {
 				if (error) {
 					throw error
 				}
@@ -47,8 +47,8 @@ function task(prompt: string) {
 		id: "t-router",
 		title: "Test",
 		prompt,
-		metadata: { privacy: "local-only", mode: "auto" },
-		status: "draft",
+		metadata: { privacy: "local-only", mode: "auto" } as const,
+		status: "draft" as const,
 		createdAt: new Date().toISOString(),
 	}
 }

@@ -38,6 +38,14 @@ export interface TaskMetadata {
 	 */
 	compareId?: string
 	/**
+	 * T1-4 Scheduling: Kennung des Zeitplans, aus dem diese Task stammt.
+	 * Damit bleiben geplante Läufe im Dashboard als "Planlauf" erkennbar,
+	 * ohne eine eigene Task-Tabelle zu brauchen.
+	 */
+	scheduleId?: string
+	/** Titel des Zeitplans — für die Anzeige ohne zweiten Lookup. */
+	scheduleTitle?: string
+	/**
 	 * Kette von Spezialisten für **einen** Auftrag.
 	 *
 	 * Manche Aufträge brauchen mehrere Rollen nacheinander — klären, bauen,

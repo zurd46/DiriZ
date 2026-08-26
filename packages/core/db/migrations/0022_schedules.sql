@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS schedules (
 	pinned_model_id TEXT,
 	cron TEXT,
 	every_minutes INTEGER,
+	once INTEGER NOT NULL DEFAULT 0,
 	next_run_at TEXT,
 	enabled INTEGER NOT NULL DEFAULT 1,
 	last_run_task_id TEXT,

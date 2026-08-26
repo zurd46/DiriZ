@@ -55,6 +55,14 @@ export default function Tasks() {
 	const setLastError = useStore((s) => s.setLastError)
 
 	const [selected, setSelected] = useState<string | undefined>(undefined)
+	// Tiefverlinkung: /tasks?task=<id> öffnet die Task direkt (z. B. aus dem
+	// Zeitplan: „Letzter Lauf → Task ansehen").
+	useEffect(() => {
+		const fromUrl = new URLSearchParams(window.location.search).get("task")
+		if (fromUrl) {
+			setSelected(fromUrl)
+		}
+	}, [])
 	const [showForm, setShowForm] = useState(false)
 	const [showQueue, setShowQueue] = useState(false)
 	const queueCount = tasks.filter((t) => t.status === "queued").length

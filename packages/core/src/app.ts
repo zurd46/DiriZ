@@ -20,6 +20,7 @@ import { registerLogs } from "./routes/logs.js"
 import { registerMetrics } from "./routes/metrics.js"
 import { registerProviders } from "./routes/providers.js"
 import { registerRepos } from "./routes/repos.js"
+import { registerSchedules } from "./routes/schedules.js"
 import { registerSettings } from "./routes/settings.js"
 import { registerStream } from "./routes/stream.js"
 import { registerTasks } from "./routes/tasks.js"
@@ -65,6 +66,7 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
 	registerDocs(app, ctx)
 	registerRepos(app, ctx)
 	registerTasks(app, ctx)
+	registerSchedules(app, ctx)
 	registerTemplates(app, ctx)
 	registerLogs(app, ctx)
 	registerMetrics(app, ctx)

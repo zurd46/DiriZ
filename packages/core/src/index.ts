@@ -38,6 +38,7 @@ import { log, setLogPersist } from "./logger.js"
 import { ProviderRegistry } from "./providers/registry.js"
 import { findWebDir } from "./routes/webui.js"
 import { Feedback } from "./routing/feedback.js"
+import { Scheduler } from "./scheduling/scheduler.js"
 import { decryptString, loadOrCreateSecret } from "./security/keys.js"
 
 async function main(): Promise<void> {
@@ -217,6 +218,17 @@ async function main(): Promise<void> {
 	})
 	warmKeeper.start()
 
+	// T1-4: Zeitpläne — alle 30 s fällige Pläne prüfen, Tasks erzeugen und
+	// in die Engine geben. Läuft neben WarmKeeper und Retention; der
+	// Timer hält den Prozess nie offen (unref).
+	const scheduler = new Scheduler({
+		db,
+		engine,
+		emit,
+		log: logFn,
+	})
+	scheduler.start()
+
 	const app = await buildApp({
 		db,
 		bus,
@@ -251,6 +263,7 @@ async function main(): Promise<void> {
 		log("info", "core", `${signal} — beende DiriZ Core …`)
 		registry.stopAllPolling()
 		warmKeeper.stop()
+		scheduler.stop()
 		clearInterval(retentionTimer)
 
 		// Erst die Arbeit zu Ende bringen, dann schliessen. Neue Aufträge kommen

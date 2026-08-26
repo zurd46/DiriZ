@@ -15,7 +15,14 @@
  * leere Antworten kann es damit nicht mehr geben.
  */
 
-import type { ChatChunk, ChatMessage, ContentPart, LLMProvider, ModelSettings, ToolCallRequest } from "@diriz/shared"
+import type {
+	ChatChunk,
+	ChatMessage,
+	ContentPart,
+	LLMProvider,
+	ModelSettings,
+	ToolCallRequest,
+} from "@diriz/shared"
 import { contentText } from "@diriz/shared"
 import {
 	type CommandPolicy,

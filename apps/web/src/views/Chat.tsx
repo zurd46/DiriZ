@@ -724,7 +724,9 @@ export default function Chat() {
 	 * T1-2 Vision-Anhänge: Bilder, die mit der nächsten Nachricht gehen.
 	 * Max. 5, je 8 MB — der Core lehnt Größeres ab, die UI warnt vorher.
 	 */
-	const [bilder, setBilder] = useState<{ filename: string; mime: string; sizeBytes: number; dataUri: string }[]>([])
+	const [bilder, setBilder] = useState<
+		{ filename: string; mime: string; sizeBytes: number; dataUri: string }[]
+	>([])
 	const bildInputRef = useRef<HTMLInputElement | null>(null)
 	/** Bild in Base64 lesen, mit den Server-Limiten geprüft (8 MB, max. 5). */
 	const addBild = useCallback(
@@ -744,7 +746,17 @@ export default function Chat() {
 			const reader = new FileReader()
 			reader.onload = () => {
 				setBilder((b) =>
-					b.length >= 5 ? b : [...b, { filename: file.name, mime: file.type, sizeBytes: file.size, dataUri: String(reader.result) }],
+					b.length >= 5
+						? b
+						: [
+								...b,
+								{
+									filename: file.name,
+									mime: file.type,
+									sizeBytes: file.size,
+									dataUri: String(reader.result),
+								},
+							],
 				)
 			}
 			reader.readAsDataURL(file)
@@ -1057,7 +1069,11 @@ export default function Chat() {
 				prompt: text ? (keepContext ? withHistory(text, history) : text) : "Beschreibe das Bild",
 				// T1-2 Vision: Bilder wandern als Base64-Anhänge mit — der Core
 				// macht daraus `ContentPart[]` und routet nur auf `vision`-Modelle.
-				attachments: bilder.map((b) => ({ filename: b.filename, mime: b.mime, dataB64: b.dataUri.split(";base64,")[1] ?? "" })),
+				attachments: bilder.map((b) => ({
+					filename: b.filename,
+					mime: b.mime,
+					dataB64: b.dataUri.split(";base64,")[1] ?? "",
+				})),
 				metadata: {
 					privacy: cloudErlaubt ? "any" : "local-only",
 					mode: "auto",
@@ -1626,21 +1642,21 @@ export default function Chat() {
 					</div>
 
 					<div
-					className="chat-composer card"
-					onDragOver={(e) => {
-						// T1-2 Vision: Drop-Ziel kennzeichnen — ohne preventDefault
-						// würde der Browser die Datei ausserhalb des Browsers öffnen.
-						e.preventDefault()
-					}}
-					onDrop={(e) => {
-						e.preventDefault()
-						for (const f of Array.from(e.dataTransfer.files)) {
-							if (f.type.startsWith("image/")) {
-								addBild(f)
+						className="chat-composer card"
+						onDragOver={(e) => {
+							// T1-2 Vision: Drop-Ziel kennzeichnen — ohne preventDefault
+							// würde der Browser die Datei ausserhalb des Browsers öffnen.
+							e.preventDefault()
+						}}
+						onDrop={(e) => {
+							e.preventDefault()
+							for (const f of Array.from(e.dataTransfer.files)) {
+								if (f.type.startsWith("image/")) {
+									addBild(f)
+								}
 							}
-						}
-					}}
-				>
+						}}
+					>
 						<div className="chat-targets">
 							{TARGETS.map((t) => (
 								<button

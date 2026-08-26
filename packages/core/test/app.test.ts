@@ -196,7 +196,8 @@ describe("api: Tasks", () => {
 
 describe("api: Vision-Anhänge (T1-2)", () => {
 	/** Kleinstes gültiges PNG (1×1, transparent) als Base64. */
-	const tinyPngB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+	const tinyPngB64 =
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 
 	it("POST mit Anhang → 201, Detail zeigt dataUri, Chat-Turn trägt Thumbnails", async () => {
 		const res = await app.inject({

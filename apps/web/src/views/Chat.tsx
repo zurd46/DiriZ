@@ -82,6 +82,8 @@ interface Turn {
 	answer: string
 	error: string | null
 	files: { relPath: string; size: number }[]
+	/** Chat-Nachricht — Bilder (T1-2) als Thumbnails über dem Text. */
+	attachments?: { filename: string; mime: string; sizeBytes: number; dataUri: string }[]
 	/** Dateioperationen des Modells — aus der Datenbank, überlebt das Neuladen. */
 	toolCalls: { id: string; name: string; argsSummary: string; ok: boolean }[]
 }
@@ -719,6 +721,37 @@ export default function Chat() {
 	 */
 	const [fastMode, setFastMode] = useState(false)
 	/**
+	 * T1-2 Vision-Anhänge: Bilder, die mit der nächsten Nachricht gehen.
+	 * Max. 5, je 8 MB — der Core lehnt Größeres ab, die UI warnt vorher.
+	 */
+	const [bilder, setBilder] = useState<{ filename: string; mime: string; sizeBytes: number; dataUri: string }[]>([])
+	const bildInputRef = useRef<HTMLInputElement | null>(null)
+	/** Bild in Base64 lesen, mit den Server-Limiten geprüft (8 MB, max. 5). */
+	const addBild = useCallback(
+		(file: File) => {
+			if (!file.type.startsWith("image/")) {
+				setLastError("Nur Bilder werden unterstützt")
+				return
+			}
+			if (file.size > 8_000_000) {
+				setLastError("Bild zu groß — maximal 8 MB")
+				return
+			}
+			if (bilder.length >= 5) {
+				setLastError("Maximal 5 Bilder pro Nachricht")
+				return
+			}
+			const reader = new FileReader()
+			reader.onload = () => {
+				setBilder((b) =>
+					b.length >= 5 ? b : [...b, { filename: file.name, mime: file.type, sizeBytes: file.size, dataUri: String(reader.result) }],
+				)
+			}
+			reader.readAsDataURL(file)
+		},
+		[bilder.length, setLastError],
+	)
+	/**
 	 * Dürfen Cloud-Modelle mitspielen?
 	 *
 	 * Vorher stand `privacy: "local-only"` fest im Code — jede Aufgabe schloss
@@ -980,7 +1013,7 @@ export default function Chat() {
 
 	const send = async () => {
 		const text = input.trim()
-		if (!text || busy) {
+		if ((!text && bilder.length === 0) || busy) {
 			return
 		}
 		if (compareMode) {
@@ -1020,8 +1053,11 @@ export default function Chat() {
 			const stufen = swarmMode && !fastMode ? stagesOf(plan.steps) : kette.map((id) => [id])
 
 			const task = await api.post<{ id: string }>("/api/tasks", {
-				title: titleFrom(text),
-				prompt: keepContext ? withHistory(text, history) : text,
+				title: titleFrom(text || "(Bild)"),
+				prompt: text ? (keepContext ? withHistory(text, history) : text) : "Beschreibe das Bild",
+				// T1-2 Vision: Bilder wandern als Base64-Anhänge mit — der Core
+				// macht daraus `ContentPart[]` und routet nur auf `vision`-Modelle.
+				attachments: bilder.map((b) => ({ filename: b.filename, mime: b.mime, dataB64: b.dataUri.split(";base64,")[1] ?? "" })),
 				metadata: {
 					privacy: cloudErlaubt ? "any" : "local-only",
 					mode: "auto",
@@ -1045,11 +1081,12 @@ export default function Chat() {
 				assignmentMode: kette.length > 0 ? "agent" : "auto",
 				agentId: kette[0],
 			})
+			setBilder([])
 			setPending((p) => [
 				...p,
 				{
 					taskId: task.id,
-					prompt: text,
+					prompt: text || "(Bild)",
 					status: "running",
 					createdAt: new Date().toISOString(),
 					agentMode: target !== "answer",
@@ -1064,6 +1101,12 @@ export default function Chat() {
 					answer: "",
 					error: null,
 					files: [],
+					attachments: bilder.map((b) => ({
+						filename: b.filename,
+						mime: b.mime,
+						sizeBytes: b.sizeBytes,
+						dataUri: b.dataUri,
+					})),
 					toolCalls: [],
 				},
 			])
@@ -1356,6 +1399,21 @@ export default function Chat() {
 												? `Übergabe · Stufe ${turn.chain.step} von ${turn.chain.total}`
 												: "Du"}
 										</div>
+										{/* T1-2 Vision: die gesendeten Bilder — als Thumbnails
+											über dem Text, damit klar ist, was das Modell sah. */}
+										{turn.attachments && turn.attachments.length > 0 && (
+											<div className="chat-images">
+												{turn.attachments.map((a, i) => (
+													<img
+														key={i}
+														src={a.dataUri}
+														alt={a.filename || "Anhang"}
+														className="chat-image"
+														title={`${a.filename} · ${(a.sizeBytes / 1024).toFixed(0)} kB`}
+													/>
+												))}
+											</div>
+										)}
 										{handoff ? (
 											<div className="chat-body md">
 												<div className="handoff-part">
@@ -1567,7 +1625,22 @@ export default function Chat() {
 						<div ref={endRef} />
 					</div>
 
-					<div className="chat-composer card">
+					<div
+					className="chat-composer card"
+					onDragOver={(e) => {
+						// T1-2 Vision: Drop-Ziel kennzeichnen — ohne preventDefault
+						// würde der Browser die Datei ausserhalb des Browsers öffnen.
+						e.preventDefault()
+					}}
+					onDrop={(e) => {
+						e.preventDefault()
+						for (const f of Array.from(e.dataTransfer.files)) {
+							if (f.type.startsWith("image/")) {
+								addBild(f)
+							}
+						}
+					}}
+				>
 						<div className="chat-targets">
 							{TARGETS.map((t) => (
 								<button
@@ -1766,20 +1839,92 @@ export default function Chat() {
 										void send()
 									}
 								}}
+								onPaste={(e) => {
+									// T1-2 Vision: Bild aus der Zwischenablage — Strg+V
+									// im Textfeld klebt es sonst als leerer Text.
+									const items = e.clipboardData?.items
+									if (!items) {
+										return
+									}
+									for (const item of Array.from(items)) {
+										if (item.kind === "file" && item.type.startsWith("image/")) {
+											const file = item.getAsFile()
+											if (file) {
+												e.preventDefault()
+												addBild(file)
+												return
+											}
+										}
+									}
+								}}
 								rows={2}
 								placeholder="Aufgabe beschreiben … (Enter sendet, Umschalt+Enter neue Zeile)"
 							/>
-							<button
-								type="button"
-								className="btn primary chat-send"
-								onClick={() => void send()}
-								disabled={busy || !connected || input.trim().length === 0}
-								title={compareMode ? "Vergleich starten (Enter)" : "Senden (Enter)"}
-							>
-								<IconPlay size={14} />
-								{compareMode ? "Vergleich starten" : "Senden"}
-							</button>
+							<div className="chat-input-actions">
+								{/* T1-2 Vision: Bild anhängen — File-Picker, Paste und
+									Drag&Drop führen alle in `bilder` zusammen. */}
+								<input
+									ref={(el) => {
+										bildInputRef.current = el
+									}}
+									type="file"
+									accept="image/*"
+									multiple
+									className="sr-only"
+									onChange={(e) => {
+										const list = e.target.files
+										if (list) {
+											for (const f of Array.from(list)) {
+												addBild(f)
+											}
+										}
+										e.target.value = ""
+									}}
+								/>
+								<button
+									type="button"
+									className={`btn sm ${bilder.length > 0 ? "primary" : ""}`}
+									onClick={() => bildInputRef.current?.click()}
+									disabled={bilder.length >= 5}
+									title="Bild anhängen (auch per Paste oder Ziehen) — maximal 5, je 8 MB"
+								>
+									<IconUpload size={14} />
+									{bilder.length > 0 ? `${bilder.length} Bild${bilder.length > 1 ? "er" : ""}` : "Bild"}
+								</button>
+								<button
+									type="button"
+									className="btn primary chat-send"
+									onClick={() => void send()}
+									disabled={busy || !connected || (input.trim().length === 0 && bilder.length === 0)}
+									title={compareMode ? "Vergleich starten (Enter)" : "Senden (Enter)"}
+								>
+									<IconPlay size={14} />
+									{compareMode ? "Vergleich starten" : "Senden"}
+								</button>
+							</div>
 						</div>
+						{/* T1-2 Vision: Vorschau der angehängten Bilder — entfernen mit
+							dem X, sonst geht das Bild mit der nächsten Nachricht mit. */}
+						{bilder.length > 0 && (
+							<div className="chat-image-previews">
+								{bilder.map((b, i) => (
+									<figure key={i} className="chat-image-preview">
+										<img src={b.dataUri} alt={b.filename || "Bild"} />
+										<figcaption>
+											{b.filename} · {(b.sizeBytes / 1024).toFixed(0)} kB
+										</figcaption>
+										<button
+											type="button"
+											className="chat-image-remove"
+											onClick={() => setBilder((all) => all.filter((_, j) => j !== i))}
+											title="Bild entfernen"
+										>
+											×
+										</button>
+									</figure>
+								))}
+							</div>
+						)}
 					</div>
 				</div>
 			</div>

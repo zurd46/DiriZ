@@ -500,3 +500,52 @@ describe("Verschwundene Modelle", () => {
 		expect(r.excluded[0].reason).toContain("nicht mehr angeboten")
 	})
 })
+
+describe("Kontextgrösse: gemeldet oder geraten", () => {
+	function kandidat(contextWindow: number, contextKnown: boolean): PolicyCandidate {
+		return {
+			instance: {
+				id: `i-${contextWindow}-${contextKnown}`,
+				providerId: "openai",
+				modelId: "gpt-4o",
+				displayName: "gpt-4o",
+				contextWindow,
+				contextKnown,
+				capabilities: ["code"],
+				languages: [],
+				source: "discovered",
+				status: "online",
+				enabled: true,
+				lastSeenAt: new Date().toISOString(),
+			},
+			loadFactor: 0,
+			providerLatencyMs: 10,
+			basisPrior: 0.5,
+			local: false,
+			providerType: "openai",
+			providerOnline: true,
+		} as unknown as PolicyCandidate
+	}
+
+	const grosseAufgabe = {
+		mode: "auto",
+		requiredCapabilities: [],
+		preferredCapabilities: [],
+		estTokens: 40_000,
+	} as unknown as TaskProfile
+
+	it("wirft ein Modell nicht wegen eines geratenen Fensters hinaus", () => {
+		// Der echte Fall: OpenAIs `/v1/models` nennt keine Kontextgrösse, DiriZ
+		// trug 8192 ein — und alle 132 Modelle fielen durchs Gate.
+		const r = applyPolicies([kandidat(8192, false)], grosseAufgabe, DEFAULT_WEIGHTS)
+		expect(r.allowed).toHaveLength(1)
+	})
+
+	it("hält am gemeldeten Fenster fest", () => {
+		// Wo der Anbieter die Grösse nennt, gilt sie — sonst liefe DiriZ
+		// sehenden Auges in „exceeds the available context size".
+		const r = applyPolicies([kandidat(8192, true)], grosseAufgabe, DEFAULT_WEIGHTS)
+		expect(r.allowed).toHaveLength(0)
+		expect(r.excluded[0].reason).toContain("Context-Fenster zu klein")
+	})
+})

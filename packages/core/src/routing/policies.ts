@@ -170,7 +170,16 @@ export function applyPolicies(
 				continue
 			}
 		}
-		if (c.instance.contextWindow < profile.estTokens * 1.2) {
+		// **Nur ein gemeldetes Fenster darf ausschliessen.**
+		//
+		// OpenAI nennt in `/v1/models` keine Kontextgrösse; DiriZ trug deshalb
+		// den Vorgabewert 8192 ein — und dieses Gate warf danach **alle** 132
+		// OpenAI-Modelle aus der Auswahl, sobald ein Prompt grösser als ~6 800
+		// Token war. Ein geratener Wert ist aber kein Wissen: Er darf schätzen
+		// (Achse „Kontext passt“), nicht richten. Passt das Modell wirklich
+		// nicht, sagt es der Anbieter beim Aufruf — mit einer klaren Meldung,
+		// woraufhin der Failover greift.
+		if (c.instance.contextKnown !== false && c.instance.contextWindow < profile.estTokens * 1.2) {
 			pushExcluded(
 				c,
 				`Context-Fenster zu klein: ${c.instance.contextWindow} < ${Math.ceil(profile.estTokens * 1.2)} Tokens`,

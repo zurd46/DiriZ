@@ -60,6 +60,38 @@ export function registerInstances(app: FastifyInstance, ctx: AppContext): void {
 		}))
 	})
 
+	/**
+	 * Alle Modelle eines Rechners auf einmal an- oder abschalten.
+	 *
+	 * Ein OpenRouter-Zugang bringt 417 Modelle mit, ein OpenAI-Zugang 132.
+	 * Die einzeln abzuwählen sind vierhundert Klicks und vierhundert Anfragen —
+	 * beobachtet, und der Grund für diesen Endpunkt: eine Anfrage, eine
+	 * Transaktion.
+	 */
+	app.post<{ Params: { id: string }; Body: { enabled?: boolean; ids?: string[] } }>(
+		"/api/providers/:id/instances/enabled",
+		(req, reply) => {
+			const enabled = req.body?.enabled
+			if (typeof enabled !== "boolean") {
+				return reply.code(400).send({ error: "enabled muss true oder false sein" })
+			}
+			const alle = listInstances(ctx.db, req.params.id)
+			if (alle.length === 0) {
+				return reply.code(404).send({ error: "Rechner nicht gefunden oder ohne Modelle" })
+			}
+			const nur = req.body?.ids?.length ? new Set(req.body.ids) : undefined
+			const betroffen = alle.filter((i) => (nur ? nur.has(i.id) : true) && i.enabled !== enabled)
+			const stmt = ctx.db.prepare("UPDATE instances SET enabled = ? WHERE id = ?")
+			const alsEines = ctx.db.transaction((liste: typeof betroffen) => {
+				for (const i of liste) {
+					stmt.run(enabled ? 1 : 0, i.id)
+				}
+			})
+			alsEines(betroffen)
+			return { changed: betroffen.length, enabled }
+		},
+	)
+
 	app.patch<{ Params: { id: string }; Body: InstancePatchBody }>("/api/instances/:id", (req, reply) => {
 		const body = req.body ?? {}
 		if (body.capabilities?.some((c) => !CAPABILITIES.includes(c as Capability))) {

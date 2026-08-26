@@ -275,6 +275,26 @@ export default function Providers() {
 		}
 	}
 
+	/**
+	 * Alle Modelle eines Rechners auf einmal schalten.
+	 *
+	 * Ein OpenRouter-Zugang bringt 417 Modelle mit. Wer davon fünf nutzen will,
+	 * hat vorher vierhundertzwölf Kästchen angeklickt — das dauert nicht nur,
+	 * es hält auch die Oberfläche bei jedem Klick mit einer Anfrage auf.
+	 */
+	const setzeAlle = async (providerId: string, enabled: boolean) => {
+		setBusySettings(true)
+		try {
+			await api.post(`/api/providers/${providerId}/instances/enabled`, { enabled })
+			await reloadInstances(providerId)
+			await refresh()
+		} catch (e) {
+			setLastError(e instanceof Error ? e.message : String(e))
+		} finally {
+			setBusySettings(false)
+		}
+	}
+
 	const requiresKey = type === "openrouter" || type === "openai"
 
 	const addProvider = async () => {
@@ -691,11 +711,41 @@ export default function Providers() {
 					{instances.length > 0 && (
 						<>
 							<div className="divider" />
-							<div className="card-title">Modelle auf diesem Rechner</div>
-							<div className="card-sub">
-								Modelle aktivieren/deaktivieren, einzelne Werte überschreiben und die Dokumente (
-								<code>plan.md</code>, <code>init.md</code>) pflegen. Deaktivierte Modelle nutzt das Routing
-								nicht.
+							<div className="row between" style={{ alignItems: "flex-end" }}>
+								<div>
+									<div className="card-title">
+										Modelle auf diesem Rechner
+										<span className="faint text-sm" style={{ marginLeft: 8 }}>
+											{instances.filter(isActive).length} von {instances.length} aktiv
+										</span>
+									</div>
+									<div className="card-sub">
+										Modelle aktivieren/deaktivieren, einzelne Werte überschreiben und die Dokumente (
+										<code>plan.md</code>, <code>init.md</code>) pflegen. Deaktivierte Modelle nutzt das
+										Routing nicht.
+									</div>
+								</div>
+								{/* Bei 417 Modellen eines Cloud-Zugangs ist Einzelklicken keine Bedienung mehr. */}
+								<div className="actions">
+									<button
+										type="button"
+										className="btn ghost"
+										disabled={busySettings || !expanded}
+										onClick={() => expanded && void setzeAlle(expanded, false)}
+										title="Schaltet alle Modelle dieses Rechners ab — danach gezielt die gewünschten wieder ein."
+									>
+										Alle abwählen
+									</button>
+									<button
+										type="button"
+										className="btn ghost"
+										disabled={busySettings || !expanded}
+										onClick={() => expanded && void setzeAlle(expanded, true)}
+										title="Schaltet alle Modelle dieses Rechners ein."
+									>
+										Alle auswählen
+									</button>
+								</div>
 							</div>
 							<div className="stack" style={{ marginTop: 12 }}>
 								{instances.map((inst) => {

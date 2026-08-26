@@ -13,7 +13,7 @@ import { buildApp } from "../src/app.js"
 import type { Db } from "../src/db/connection.js"
 import { openDatabase } from "../src/db/connection.js"
 import { migrate } from "../src/db/migrate.js"
-import { createProvider, providerApiKeyEnc, upsertInstance } from "../src/db/repositories.js"
+import { createProvider, listInstances, providerApiKeyEnc, upsertInstance } from "../src/db/repositories.js"
 import { EventBus } from "../src/execution/bus.js"
 import { ExecutionEngine } from "../src/execution/engine.js"
 import { ProviderRegistry } from "../src/providers/registry.js"
@@ -644,6 +644,44 @@ describe("API: Adresse eines Cloud-Providers", () => {
 			},
 		})
 		expect(res.json().baseUrl).toBe("https://proxy.firma.example/v1")
+		await app.close()
+	})
+})
+
+describe("API: Modelle eines Rechners auf einmal schalten", () => {
+	it("schaltet alle ab und wieder an — in einer Anfrage", async () => {
+		// Ein OpenRouter-Zugang bringt 417 Modelle mit. Einzeln abzuwählen sind
+		// das vierhundert Klicks und vierhundert Anfragen.
+		const app = await buildApp(ctx)
+		const p = createProvider(ctx.db, { type: "lmstudio", label: "Viele", baseUrl: "http://x:1234" })
+		for (const m of ["a", "b", "c"]) {
+			upsertInstance(ctx.db, p.id, { modelId: m, displayName: m, contextWindow: 8192 }, "discovered")
+		}
+
+		const aus = await app.inject({
+			method: "POST",
+			url: `/api/providers/${p.id}/instances/enabled`,
+			payload: { enabled: false },
+		})
+		expect(aus.statusCode).toBe(200)
+		expect(aus.json().changed).toBe(3)
+		expect(listInstances(ctx.db, p.id).every((i) => i.enabled === false)).toBe(true)
+
+		// Zweiter Aufruf ändert nichts mehr — gezählt wird, was wirklich geschah.
+		const nochmal = await app.inject({
+			method: "POST",
+			url: `/api/providers/${p.id}/instances/enabled`,
+			payload: { enabled: false },
+		})
+		expect(nochmal.json().changed).toBe(0)
+
+		const an = await app.inject({
+			method: "POST",
+			url: `/api/providers/${p.id}/instances/enabled`,
+			payload: { enabled: true },
+		})
+		expect(an.json().changed).toBe(3)
+		expect(listInstances(ctx.db, p.id).every((i) => i.enabled)).toBe(true)
 		await app.close()
 	})
 })

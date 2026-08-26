@@ -66,6 +66,14 @@ export interface InstanceModel {
 	loadedContextWindow?: number
 	/** Rechner, auf dem das Modell tatsächlich läuft (LM Link), falls bekannt. */
 	deviceName?: string
+	/**
+	 * Hat der Anbieter die Kontextgrösse **gemeldet**?
+	 *
+	 * `false` heisst: Der Wert ist eine Verlegenheitsvorgabe. Er darf dann kein
+	 * Modell ausschliessen — OpenAI nennt in `/v1/models` keine Grössen, und mit
+	 * angenommenen 8192 fiel dort jedes der 132 Modelle durchs Kontext-Gate.
+	 */
+	contextKnown?: boolean
 	capabilities: Capability[]
 	languages: string[]
 	quantization?: string

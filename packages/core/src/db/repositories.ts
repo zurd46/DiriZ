@@ -247,6 +247,7 @@ interface InstanceRow {
 	context_window: number
 	loaded_context_window: number | null
 	device_name: string | null
+	context_known?: number
 	capabilities_json: string
 	languages_json: string
 	quantization: string | null
@@ -269,6 +270,9 @@ function mapInstance(row: InstanceRow): InstanceModel {
 		contextWindow: row.context_window,
 		loadedContextWindow: row.loaded_context_window ?? undefined,
 		deviceName: row.device_name ?? undefined,
+		// Ohne Spalte (ältere Schemas) gilt der Wert als gemeldet — so war es
+		// bisher, und ältere Bestände sollen sich nicht plötzlich anders verhalten.
+		contextKnown: row.context_known === undefined ? true : row.context_known === 1,
 		capabilities: JSON.parse(row.capabilities_json) as Capability[],
 		languages: JSON.parse(row.languages_json) as string[],
 		quantization: row.quantization ?? undefined,
@@ -301,10 +305,10 @@ export function upsertInstance(
 		const id = randomUUID()
 		db.prepare(
 			`INSERT INTO instances (id, provider_id, model_id, display_name, context_window,
-				loaded_context_window, device_name,
+				loaded_context_window, device_name, context_known,
 				capabilities_json, languages_json, quantization, price_in_per_mtok, price_out_per_mtok,
 				source, status, model_settings, locked_until, last_seen_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline', ?, NULL, ?)`,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline', ?, NULL, ?)`,
 		).run(
 			id,
 			providerId,
@@ -316,6 +320,9 @@ export function upsertInstance(
 			// falsche Fenster und der falsche Rechner.
 			model.loadedContextWindow ?? null,
 			model.deviceName ?? null,
+			// Gemeldet oder geraten? Der Unterschied entscheidet, ob dieser Wert
+			// ein Modell aus der Auswahl werfen darf.
+			model.contextWindow === undefined ? 0 : 1,
 			JSON.stringify(model.capabilities ?? []),
 			JSON.stringify(model.languages ?? []),
 			model.quantization ?? null,
@@ -363,6 +370,10 @@ export function upsertInstance(
 			-- Laden — er wird also behalten, nicht gelöscht.
 			loaded_context_window = COALESCE(?, loaded_context_window),
 			device_name = COALESCE(?, device_name),
+			-- Meldet der Anbieter die Grösse inzwischen, wird aus der Verlegenheit
+			-- eine Tatsache. Umgekehrt nie: Ein einzelner Rundgang ohne Angabe
+			-- soll ein einmal gemessenes Fenster nicht entwerten.
+			context_known = CASE WHEN ? IS NULL THEN context_known ELSE 1 END,
 			languages_json = ?,
 			quantization = COALESCE(?, quantization),
 			price_in_per_mtok = ?, price_out_per_mtok = ?,
@@ -373,6 +384,7 @@ export function upsertInstance(
 		model.contextWindow ?? null,
 		model.loadedContextWindow ?? null,
 		model.deviceName ?? null,
+		model.contextWindow ?? null,
 		JSON.stringify(model.languages ?? []),
 		model.quantization ?? null,
 		model.pricePerMTok?.in ?? null,

@@ -89,7 +89,14 @@ export function scoreCandidate(
 	prompt = "",
 ): CandidateScore {
 	const values: Record<keyof ScoringWeights, number> = {
-		contextFit: contextFitScore(info.instance.contextWindow, profile.estTokens),
+		// Ist die Grösse nicht gemeldet, ist sie auch nicht bewertbar: Ein
+		// geratener Wert würde OpenAI-Modelle systematisch nach hinten schieben,
+		// obwohl `gpt-4o` & Co. weit mehr können als die angenommenen 8192.
+		// „Weder Bonus noch Malus" ist die ehrliche Antwort — 0.5.
+		contextFit:
+			info.instance.contextKnown === false
+				? 0.5
+				: contextFitScore(info.instance.contextWindow, profile.estTokens),
 		capabilityMatch: capabilityMatchScore(
 			profile.requiredCapabilities,
 			profile.preferredCapabilities,

@@ -128,6 +128,10 @@ interface State {
 			timeoutMs: number
 			minConfidence: number
 		}
+		/** UI-Theme (`settings.theme`, T2-7): Dark ist der Default. */
+		theme?: "dark" | "light"
+		/** Stromkosten für lokale Läufe (`settings.powerCost`, T3-13). */
+		powerCost?: { electricityCentsPerKwh: number; systemWatts: number }
 	} | null
 	live: Record<string, LiveRun>
 	taskDetails: Record<string, TaskDetail>
@@ -156,11 +160,32 @@ interface State {
 	refreshMetrics(): Promise<void>
 	refreshSettings(): Promise<void>
 	saveSettings(weights: ScoringWeights): Promise<boolean>
+	/** T2-7: Theme speichern (Dark/Light) — legt es sofort auf <html> an. */
+	saveTheme(theme: "dark" | "light"): Promise<boolean>
 	loadTaskDetail(taskId: string): Promise<void>
 	handleStreamEvent(event: StreamEvent): void
 }
 
 const MAX_LOGS = 500
+const THEME_STORAGE = "diriz-theme"
+
+/** T2-7: Trägt das Theme auf <html> aus — der CSS greift über [data-theme]. */
+export function applyTheme(theme: "dark" | "light"): void {
+	if (theme === "light") {
+		document.documentElement.setAttribute("data-theme", "light")
+	} else {
+		document.documentElement.removeAttribute("data-theme")
+	}
+}
+
+/** T2-7: Gekacheltes Theme aus dem localStorage lesen (vor dem API-Antwort). */
+export function storedTheme(): "dark" | "light" {
+	try {
+		return localStorage.getItem(THEME_STORAGE) === "light" ? "light" : "dark"
+	} catch {
+		return "dark"
+	}
+}
 
 let nextToastId = 1
 
@@ -279,8 +304,14 @@ export const useStore = create<State>((set, get) => ({
 
 	refreshSettings: async () => {
 		try {
-			const settings = await api.get<State["settings"]>("/api/settings")
-			set({ settings })
+			const fetched = await api.get<State["settings"]>("/api/settings")
+			set({ settings: fetched })
+			// T2-7: Das gespeicherte Theme sofort auswirken — sonst bliebe die
+			// Ansicht Dark, bis jemand in den Einstellungen klickt.
+			const theme = fetched?.theme
+			if (theme) {
+				applyTheme(theme)
+			}
 		} catch (e) {
 			set({ lastError: e instanceof Error ? e.message : String(e) })
 		}
@@ -289,6 +320,25 @@ export const useStore = create<State>((set, get) => ({
 	saveSettings: async (weights) => {
 		try {
 			const saved = await api.put<State["settings"]>("/api/settings", { routingWeights: weights })
+			set({ settings: saved, lastError: undefined })
+			return true
+		} catch (e) {
+			set({ lastError: e instanceof Error ? e.message : String(e) })
+			return false
+		}
+	},
+
+	saveTheme: async (theme) => {
+		// Sofort lokal wirksam — die UI wartet nicht auf die API-Antwort.
+		try {
+			localStorage.setItem(THEME_STORAGE, theme)
+		} catch {
+			// Speicherblockaden dürfen den Theme-Wechsel nicht brechen.
+		}
+		applyTheme(theme)
+		set((s) => (s.settings ? { settings: { ...s.settings, theme } } : {}))
+		try {
+			const saved = await api.put<State["settings"]>("/api/settings", { theme })
 			set({ settings: saved, lastError: undefined })
 			return true
 		} catch (e) {

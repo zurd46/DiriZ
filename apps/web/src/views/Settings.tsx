@@ -19,6 +19,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
 	IconAlert,
+	IconBolt,
 	IconCheck,
 	IconCheckCircle,
 	IconDoc,
@@ -28,11 +29,12 @@ import {
 	IconRoute,
 	IconServer,
 	IconSliders,
+	IconSun,
 	IconTemplate,
 	IconUpload,
 } from "../components/icons.js"
 import { api } from "../lib/api.js"
-import { useStore } from "../store.js"
+import { applyTheme, storedTheme, useStore } from "../store.js"
 
 const WEIGHT_META: { key: keyof ScoringWeights; label: string; hint: string }[] = [
 	{ key: "contextFit", label: "Context-Fit", hint: "Passt das Context-Fenster zur Task?" },
@@ -170,6 +172,17 @@ export default function Settings() {
 	const [warmBusy, setWarmBusy] = useState(false)
 	const [warmSaved, setWarmSaved] = useState(false)
 
+	// T2-7: Theme (Hell/Dunkel) — die App liest es aus dem Store; hier nur
+	// der gespeicherte Wert.
+	const [theme, setTheme] = useState<"dark" | "light">(() => storedTheme())
+	const [themeBusy, setThemeBusy] = useState(false)
+	const [themeSaved, setThemeSaved] = useState(false)
+
+	// T3-13: Stromkosten für lokale Läufe (Cents/kWh + Watt).
+	const [power, setPower] = useState<{ electricityCentsPerKwh: number; systemWatts: number } | null>(null)
+	const [powerBusy, setPowerBusy] = useState(false)
+	const [powerSaved, setPowerSaved] = useState(false)
+
 	// Router-Modell (T1-3): kleines Modell klassifiziert unsichere Prompts,
 	// falls die Heuristik nichts findet. Aus = alles bleibt deterministisch.
 	const [router, setRouter] = useState<RouterModelView | null>(null)
@@ -230,6 +243,22 @@ export default function Settings() {
 			setWarm(settings.warmup)
 		}
 	}, [settings, warm])
+
+	// T2-7: Theme aus den gespeicherten Einstellungen übernehmen — der
+	// lokale Wert (localStorage) ist nur die Vorab-Sicht vor dem API-Antwort.
+	useEffect(() => {
+		if (settings?.theme) {
+			setTheme(settings.theme)
+			applyTheme(settings.theme)
+		}
+	}, [settings?.theme])
+
+	// T3-13: Stromkosten aus den Einstellungen übernehmen.
+	useEffect(() => {
+		if (settings?.powerCost && power === null) {
+			setPower(settings.powerCost)
+		}
+	}, [settings?.powerCost, power])
 
 	useEffect(() => {
 		if (settings?.routerModel && router === null) {
@@ -389,6 +418,41 @@ export default function Settings() {
 	}
 
 	const warmDirty = warm !== null && JSON.stringify(warm) !== JSON.stringify(settings?.warmup ?? null)
+
+	// T2-7: Theme speichern — die UI wirkt sofort, die API folgt.
+	const pickTheme = async (next: "dark" | "light") => {
+		setTheme(next)
+		applyTheme(next)
+		setThemeBusy(true)
+		try {
+			await api.put("/api/settings", { theme: next })
+			await useStore.getState().refreshSettings()
+			setThemeSaved(true)
+			setTimeout(() => setThemeSaved(false), 2500)
+		} catch (e) {
+			setImportMsg(e instanceof Error ? e.message : String(e))
+		} finally {
+			setThemeBusy(false)
+		}
+	}
+
+	// T3-13: Stromkosten speichern — nur, wenn sich etwas geändert hat.
+	const powerDirty = power !== null && JSON.stringify(power) !== JSON.stringify(settings?.powerCost ?? null)
+
+	const savePower = async () => {
+		if (!power) return
+		setPowerBusy(true)
+		try {
+			await api.put("/api/settings", { powerCost: power })
+			await useStore.getState().refreshSettings()
+			setPowerSaved(true)
+			setTimeout(() => setPowerSaved(false), 2500)
+		} catch (e) {
+			setImportMsg(e instanceof Error ? e.message : String(e))
+		} finally {
+			setPowerBusy(false)
+		}
+	}
 
 	const saveWarm = async () => {
 		if (!warm) return
@@ -805,6 +869,116 @@ export default function Settings() {
 						disabled={!warmDirty || warmBusy}
 					>
 						Warmhalten speichern
+					</button>
+				</div>
+			</div>
+
+			<div className="card">
+				<div className="card-head">
+					<div>
+						<div className="card-title">
+							<IconSun size={16} />
+							Aussehen
+						</div>
+						<div className="card-sub">
+							Dunkles oder helles Theme für die ganze Oberfläche. Das gewählte Theme wird gespeichert und beim
+							nächsten Öffnen wieder übernommen.
+						</div>
+					</div>
+					{themeSaved && <span className="pill ok">gespeichert</span>}
+				</div>
+
+				<div className="theme-picker">
+					<button
+						type="button"
+						aria-pressed={theme === "dark"}
+						className={`theme-option ${theme === "dark" ? "selected" : ""}`}
+						onClick={() => theme !== "dark" && void pickTheme("dark")}
+						disabled={themeBusy}
+					>
+						<span className="theme-preview dark" />
+						<span className="theme-name">Dunkel</span>
+						<span className="theme-hint">Standard</span>
+					</button>
+					<button
+						type="button"
+						aria-pressed={theme === "light"}
+						className={`theme-option ${theme === "light" ? "selected" : ""}`}
+						onClick={() => theme !== "light" && void pickTheme("light")}
+						disabled={themeBusy}
+					>
+						<span className="theme-preview light" />
+						<span className="theme-name">Hell</span>
+						<span className="theme-hint">Bei hellem Licht</span>
+					</button>
+				</div>
+			</div>
+
+			<div className="card">
+				<div className="card-head">
+					<div>
+						<div className="card-title">
+							<IconBolt size={16} />
+							Stromkosten
+						</div>
+						<div className="card-sub">
+							Lokale Modelle (Ollama, LM Studio) kosten Token nichts — aber jeder Lauf zieht Strom. DiriZ
+							verrechnet die Laufzeit mit deinem Strompreis und der Leistung deines Rechners und addiert das
+							zur Ausführungskosten. Cloud-Modelle bleiben beim reinen Token-Preis.
+						</div>
+					</div>
+					{powerDirty && <span className="pill warn">ungespeichert</span>}
+				</div>
+
+				{power && (
+					<div className="limits">
+						<label className="limit-row">
+							<span className="limit-label">Strompreis (Cents/kWh)</span>
+							<input
+								type="number"
+								min={0}
+								max={10000}
+								step={0.1}
+								value={power.electricityCentsPerKwh}
+								onChange={(e) =>
+									setPower({
+										...power,
+										electricityCentsPerKwh: Math.max(0, Number(e.target.value) || 0),
+									})
+								}
+							/>
+							<span className="field-hint">
+								Dein aktueller Tarif. 0 schaltet die Stromkosten-Verrechnung ab.
+							</span>
+						</label>
+						<label className="limit-row">
+							<span className="limit-label">Systemleistung (Watt)</span>
+							<input
+								type="number"
+								min={0}
+								max={100000}
+								step={1}
+								value={power.systemWatts}
+								onChange={(e) =>
+									setPower({ ...power, systemWatts: Math.max(0, Number(e.target.value) || 0) })
+								}
+							/>
+							<span className="field-hint">
+								Durchschnittlicher Verbrauch unter Last — 60 W sind ein typischer Notebook-Wert.
+							</span>
+						</label>
+					</div>
+				)}
+
+				<div className="card-actions">
+					{powerSaved && <span className="pill ok">gespeichert</span>}
+					<button
+						type="button"
+						className="btn"
+						onClick={() => void savePower()}
+						disabled={powerBusy || !powerDirty}
+					>
+						Speichern
 					</button>
 				</div>
 			</div>

@@ -478,6 +478,34 @@ describe("api: Settings, Export & Import", () => {
 	})
 })
 
+describe("api: Theme (T2-7)", () => {
+	it("liefert Dark als Default und akzeptiert den Wechsel auf Light", async () => {
+		const defaults = await app.inject({ method: "GET", url: "/api/settings" })
+		expect(defaults.statusCode).toBe(200)
+		expect(defaults.json().theme).toBe("dark")
+
+		const light = await app.inject({
+			method: "PUT",
+			url: "/api/settings",
+			payload: { theme: "light" },
+		})
+		expect(light.statusCode).toBe(200)
+		expect(light.json().theme).toBe("light")
+
+		const back = await app.inject({ method: "GET", url: "/api/settings" })
+		expect(back.json().theme).toBe("light")
+	})
+
+	it("lehnt jeden anderen Theme-Wert ab (400)", async () => {
+		const bad = await app.inject({
+			method: "PUT",
+			url: "/api/settings",
+			payload: { theme: "neon" },
+		})
+		expect(bad.statusCode).toBe(400)
+	})
+})
+
 describe("api: Version", () => {
 	it("meldet, wann der laufende Code gebaut wurde", async () => {
 		const res = await app.inject({ method: "GET", url: "/api/version" })

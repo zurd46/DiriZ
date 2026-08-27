@@ -12,6 +12,7 @@ import type { ExecutionEngine } from "./execution/engine.js"
 import type { ProviderRegistry } from "./providers/registry.js"
 import { registerAgents } from "./routes/agents.js"
 import { registerAuth } from "./routes/auth.js"
+import { registerBenchmarks } from "./routes/benchmarks.js"
 import { registerDocs } from "./routes/docs.js"
 import { registerHealth } from "./routes/health.js"
 import { registerHost } from "./routes/host.js"
@@ -65,6 +66,7 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
 	registerInstances(app, ctx)
 	registerDocs(app, ctx)
 	registerRepos(app, ctx)
+	registerBenchmarks(app, ctx)
 	registerTasks(app, ctx)
 	registerSchedules(app, ctx)
 	registerTemplates(app, ctx)

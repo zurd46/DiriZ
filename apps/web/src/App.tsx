@@ -13,8 +13,10 @@ import {
 	IconLayers,
 	IconLogs,
 	IconMenu,
+	IconMoon,
 	IconServer,
 	IconSettings,
+	IconSun,
 	IconTasks,
 	IconWorkspace,
 	LogoMark,
@@ -24,7 +26,7 @@ import Toasts from "./components/Toasts.js"
 import { api, setMissingRouteHandler, setUnauthorizedHandler } from "./lib/api.js"
 import { ROUTE_TITLES, type Route, useRoute } from "./lib/router.js"
 import { connectStream } from "./lib/sse.js"
-import { useStore } from "./store.js"
+import { applyTheme, storedTheme, useStore } from "./store.js"
 import Agents from "./views/Agents.js"
 import Chat from "./views/Chat.js"
 import Dashboard from "./views/Dashboard.js"
@@ -82,6 +84,10 @@ interface AuthState {
 	user: { id: string; username: string } | null
 }
 
+// T2-7: Das zuletzt gewählte Theme sofort anwenden — noch bevor die
+// Einstellungen aus der API kommen, sonst flackert die Ansicht beim Laden.
+applyTheme(storedTheme())
+
 export default function App() {
 	const { route, navigate } = useRoute()
 	const [auth, setAuth] = useState<AuthState | undefined>()
@@ -94,6 +100,8 @@ export default function App() {
 	const setConnected = useStore((s) => s.setConnected)
 	const handleStreamEvent = useStore((s) => s.handleStreamEvent)
 	const version = useStore((s) => s.version)
+	const settings = useStore((s) => s.settings)
+	const saveTheme = useStore((s) => s.saveTheme)
 
 	/**
 	 * Erst die Anmeldung, dann alles andere: Ohne gültige Sitzung antwortet der
@@ -214,6 +222,16 @@ export default function App() {
 				))}
 
 				<div className="sidebar-foot">
+					<button
+						type="button"
+						className="link-btn theme-toggle"
+						title={settings?.theme === "light" ? "Auf dunkles Theme wechseln" : "Auf helles Theme wechseln"}
+						onClick={() => void saveTheme(settings?.theme === "light" ? "dark" : "light")}
+					>
+						{settings?.theme === "light" ? <IconMoon size={15} /> : <IconSun size={15} />}
+						{settings?.theme === "light" ? "Hell" : "Dunkel"}
+					</button>
+					<span className="sidebar-foot-sep" />
 					<span className={`dot ${connected ? "online" : "offline"}`} />
 					<span>{connected ? "verbunden" : "getrennt"}</span>
 					<button

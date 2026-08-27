@@ -96,6 +96,7 @@ import type { CandidateInfo } from "../routing/scorer.js"
 import { scoreCandidate } from "../routing/scorer.js"
 import { MAX_AGENT_STEPS, runAgentLoop } from "./agent.js"
 import { parseFileBlocks, writeWorkspaceFilesAt } from "./files.js"
+import { DEFAULT_POWER_COST, electricityCostUsd, type PowerCostSettings } from "./powercost.js"
 import { type CommandPolicy, DEFAULT_COMMAND_POLICY } from "./tools.js"
 import { taskWorktreePath } from "./worktree.js"
 
@@ -406,6 +407,26 @@ export class ExecutionEngine {
 		const raw = stored?.maxSteps
 		return {
 			maxSteps: typeof raw === "number" && Number.isInteger(raw) && raw >= 0 ? raw : MAX_AGENT_STEPS,
+		}
+	}
+
+	/**
+	 * T3-13: Stromkosten-Einstellungen. Ungültige Werte fallen auf die
+	 * Defaults zurück — ein Tippfehler darf keine negative Rechnung erzeugen.
+	 */
+	powerCostSettings(): PowerCostSettings {
+		const stored = getSetting<Partial<PowerCostSettings>>(this.deps.db, "powerCost")
+		const cents = stored?.electricityCentsPerKwh
+		const watts = stored?.systemWatts
+		return {
+			electricityCentsPerKwh:
+				typeof cents === "number" && Number.isFinite(cents) && cents >= 0
+					? cents
+					: DEFAULT_POWER_COST.electricityCentsPerKwh,
+			systemWatts:
+				typeof watts === "number" && Number.isFinite(watts) && watts >= 0
+					? watts
+					: DEFAULT_POWER_COST.systemWatts,
 		}
 	}
 
@@ -1804,13 +1825,22 @@ export class ExecutionEngine {
 
 		const elapsedSec = Math.max(0.001, (Date.now() - startedAt) / 1000)
 		const tps = tokensOut > 0 ? Math.round((tokensOut / elapsedSec) * 100) / 100 : 0
-		const costUsd = choice.instance.pricePerMTok
+		const cloudCostUsd = choice.instance.pricePerMTok
 			? Math.round(
 					((tokensIn * choice.instance.pricePerMTok.in + tokensOut * choice.instance.pricePerMTok.out) /
 						1_000_000) *
 						1_000_000,
 				) / 1_000_000
 			: 0
+		// T3-13: Lokale Läufe kosten Strom. Der Preis zählt nur für Instanzen,
+		// die auf diesem Rechner rechnen — Cloud-Modelle haben ihren Preis
+		// schon im Token-Satz.
+		const providerType = this.deps.registry.providerType(choice.instance.providerId)
+		const stromKostenUsd =
+			providerType !== undefined && ExecutionEngine.LOCAL_TYPES.includes(providerType)
+				? electricityCostUsd(this.powerCostSettings(), elapsedSec)
+				: 0
+		const costUsd = Math.round((cloudCostUsd + stromKostenUsd) * 1_000_000) / 1_000_000
 
 		// AI-Dateien aus dem Output parsen + in die Workspace-Sandbox schreiben.
 		let writtenCount = 0

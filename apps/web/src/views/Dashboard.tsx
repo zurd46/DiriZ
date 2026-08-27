@@ -186,7 +186,9 @@ export default function Dashboard() {
 			color: "#38bdf8",
 		},
 		{
-			label: "Kosten (24 h)",
+			// T3-13: Lokale Läufe sind hier schon verrechnet — die Engine addiert
+			// die Stromkosten in dieselbe cost_usd-Spalte.
+			label: "Kosten inkl. Strom (24 h)",
 			value: `$${(metrics?.costUsd24h ?? 0).toLocaleString("de-DE", { maximumFractionDigits: 4 })}`,
 			icon: <IconCost size={17} />,
 			color: "#f472b6",

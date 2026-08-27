@@ -38,6 +38,7 @@ import {
 	updateTemplate,
 } from "../db/repositories.js"
 import { DEFAULT_RETENTION, type RetentionSettings } from "../db/retention.js"
+import { DEFAULT_POWER_COST, type PowerCostSettings } from "../execution/powercost.js"
 import type { CommandPolicy } from "../execution/tools.js"
 import { DEFAULT_WARMUP, type WarmupSettings } from "../execution/warmup.js"
 import { DEFAULT_ROUTER_MODEL, type RouterModelSettings } from "../routing/llmRouter.js"
@@ -185,6 +186,13 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			...DEFAULT_ROUTER_MODEL,
 			...getSetting<Partial<RouterModelSettings>>(ctx.db, "routerModel"),
 		},
+		// T2-7: UI-Theme — Dark ist der Default, Light ist opt-in.
+		theme: (getSetting<string>(ctx.db, "uiTheme") ?? "dark") as "dark" | "light",
+		// T3-13: Stromkosten für lokale Läufe — Defaults, wenn nichts gesetzt.
+		powerCost: {
+			...DEFAULT_POWER_COST,
+			...getSetting<Partial<PowerCostSettings>>(ctx.db, "powerCost"),
+		},
 	})
 
 	app.get("/api/settings", () => currentSettings())
@@ -201,6 +209,8 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			retention?: Partial<RetentionSettings>
 			commands?: Partial<CommandPolicy>
 			routerModel?: Partial<RouterModelSettings>
+			theme?: "dark" | "light"
+			powerCost?: Partial<PowerCostSettings>
 		}
 	}>("/api/settings", (req, reply) => {
 		const body = req.body ?? {}
@@ -214,11 +224,45 @@ export function registerSettings(app: FastifyInstance, ctx: AppContext): void {
 			body.warmup === undefined &&
 			body.retention === undefined &&
 			body.commands === undefined &&
-			body.routerModel === undefined
+			body.routerModel === undefined &&
+			body.theme === undefined &&
+			body.powerCost === undefined
 		) {
 			return reply.code(400).send({
 				error: "routingWeights, docTemplates, concurrency, timeouts, git, agent oder warmup erforderlich",
 			})
+		}
+		// T2-7: Theme ist eine einfache Zweierwahl — alles andere ist 400.
+		if (body.theme !== undefined) {
+			if (body.theme !== "dark" && body.theme !== "light") {
+				return reply.code(400).send({ error: "theme muss 'dark' oder 'light' sein" })
+			}
+			setSetting(ctx.db, "uiTheme", body.theme)
+		}
+		// T3-13: Strompreis (Cents/kWh) und Systemleistung (Watt) — beide
+		// nicht-negativ; 0 schaltet die Stromkosten-Achse ab.
+		if (body.powerCost !== undefined) {
+			const current = {
+				...DEFAULT_POWER_COST,
+				...getSetting<Partial<PowerCostSettings>>(ctx.db, "powerCost"),
+			}
+			const next: PowerCostSettings = {
+				electricityCentsPerKwh: body.powerCost.electricityCentsPerKwh ?? current.electricityCentsPerKwh,
+				systemWatts: body.powerCost.systemWatts ?? current.systemWatts,
+			}
+			if (
+				!Number.isFinite(next.electricityCentsPerKwh) ||
+				next.electricityCentsPerKwh < 0 ||
+				next.electricityCentsPerKwh > 10_000 ||
+				!Number.isFinite(next.systemWatts) ||
+				next.systemWatts < 0 ||
+				next.systemWatts > 100_000
+			) {
+				return reply.code(400).send({
+					error: "powerCost braucht electricityCentsPerKwh (0–10000) und systemWatts (0–100000)",
+				})
+			}
+			setSetting(ctx.db, "powerCost", next)
 		}
 		if (body.routerModel !== undefined) {
 			const current = {

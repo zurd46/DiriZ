@@ -66,6 +66,27 @@
 	--info: #38bdf8;
 	--info-soft: rgba(56, 189, 248, 0.13);
 
+	/* T2-7: zusätzlich tokenisierte Flächen & Stufen (Dark-Baseline) */
+	--bg-glow-1: rgba(91, 140, 255, 0.07);
+	--bg-glow-2: rgba(167, 139, 250, 0.055);
+	--accent-light: #9cc3ff;
+	--accent-light-2: #8fb2ff;
+	--warn-strong: #f5c542;
+	--warn-light: #ffcf94;
+	--err-strong: #ffc0bb;
+	--surface-grad-1: rgba(255, 255, 255, 0.03);
+	--surface-grad-2: rgba(255, 255, 255, 0.025);
+	--surface-highlight: rgba(255, 255, 255, 0.09);
+	--shine: rgba(255, 255, 255, 0.06);
+	--overlay-bg: rgba(5, 7, 11, 0.72);
+	--statusbar-bg: rgba(16, 21, 31, 0.9);
+	--scrollbar-thumb: #3d4a61;
+	--shadow-modal: 0 8px 28px rgba(0, 0, 0, 0.45);
+	--ok-faint: rgba(62, 207, 142, 0.1);
+	--err-faint: rgba(240, 98, 91, 0.1);
+	--ok-glow: rgba(62, 207, 142, 0.14);
+	--radius-md: var(--r-md);
+
 	/* Typografie */
 	--font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 	--mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
@@ -113,6 +134,79 @@
 	--radius-lg: var(--r-lg);
 }
 
+/* T2-7: Light-Theme — überschreibt die :root-Tokens. Die App setzt
+   `data-theme="light"` auf <html>; Dark bleibt Default. */
+:root[data-theme="light"] {
+	/* Flächen — helle Flächen, dunklerer Text */
+	--bg: #f2f4f8;
+	--bg-soft: #f7f8fb;
+	--surface: #ffffff;
+	--surface-2: #f5f7fa;
+	--surface-3: #edf0f6;
+	--surface-hover: #e8ecf4;
+
+	/* Linien */
+	--border: #d5dbe7;
+	--border-soft: #e2e7ef;
+	--border-strong: #b6c1d4;
+
+	/* Text — dunkel auf hell */
+	--text: #232c3c;
+	--text-strong: #10151f;
+	--muted: #5a6a84;
+	--faint: #8595ad;
+
+	/* Akzent & Semantik — gesättigt für Kontrast auf Weiß */
+	--accent: #3565d8;
+	--accent-hover: #2f5ac4;
+	--accent-active: #294fad;
+	--accent-soft: rgba(53, 101, 216, 0.12);
+	--accent-line: rgba(53, 101, 216, 0.35);
+	--accent-2: #8b6cf0;
+
+	--ok: #1f9d67;
+	--ok-soft: rgba(31, 157, 103, 0.12);
+	--ok-text: #14784f;
+
+	--warn: #d18a10;
+	--warn-soft: rgba(209, 138, 16, 0.12);
+	--warn-text: #9a6206;
+
+	--err: #d9453e;
+	--err-soft: rgba(217, 69, 62, 0.12);
+	--err-text: #b03028;
+
+	--info: #0891d1;
+	--info-soft: rgba(8, 145, 209, 0.12);
+
+	/* T2-7: dazu gehörende Flächen & Stufen (Light) */
+	--bg-glow-1: rgba(53, 101, 216, 0.05);
+	--bg-glow-2: rgba(139, 108, 240, 0.04);
+	--accent-light: #2f5ac4;
+	--accent-light-2: #4a78e8;
+	--warn-strong: #9a6206;
+	--warn-light: #f0b545;
+	--err-strong: #b03028;
+	--surface-grad-1: rgba(16, 21, 31, 0.025);
+	--surface-grad-2: rgba(16, 21, 31, 0.02);
+	--surface-highlight: rgba(16, 21, 31, 0.06);
+	--shine: rgba(255, 255, 255, 0.55);
+	--overlay-bg: rgba(250, 251, 253, 0.8);
+	--statusbar-bg: rgba(255, 255, 255, 0.9);
+	--scrollbar-thumb: #c2ccd9;
+	--shadow-modal: 0 8px 28px rgba(30, 41, 59, 0.18);
+	--ok-faint: rgba(31, 157, 103, 0.1);
+	--err-faint: rgba(217, 69, 62, 0.1);
+	--ok-glow: rgba(31, 157, 103, 0.15);
+
+	/* Schatten — im hellen Theme weicher, bläulich */
+	--shadow-xs: 0 1px 2px rgba(30, 41, 59, 0.08);
+	--shadow-sm: 0 1px 2px rgba(30, 41, 59, 0.1), 0 2px 8px -4px rgba(30, 41, 59, 0.18);
+	--shadow-md: 0 2px 4px rgba(30, 41, 59, 0.08), 0 12px 28px -16px rgba(30, 41, 59, 0.25);
+	--shadow-lg: 0 8px 24px -8px rgba(30, 41, 59, 0.15), 0 32px 64px -24px rgba(30, 41, 59, 0.28);
+	--ring: 0 0 0 3px rgba(53, 101, 216, 0.28);
+}
+
 /* ------------------------ 2. Reset & Basistypografie ------------------------ */
 
 *,
@@ -130,8 +224,8 @@ body {
 	margin: 0;
 	background: var(--bg);
 	background-image:
-		radial-gradient(900px 520px at 12% -10%, rgba(91, 140, 255, 0.07), transparent 62%),
-		radial-gradient(760px 460px at 100% 0%, rgba(167, 139, 250, 0.055), transparent 58%);
+		radial-gradient(900px 520px at 12% -10%, var(--bg-glow-1), transparent 62%),
+		radial-gradient(760px 460px at 100% 0%, var(--bg-glow-2), transparent 58%);
 	background-attachment: fixed;
 	color: var(--text);
 	font-family: var(--font);
@@ -221,7 +315,7 @@ a:hover {
 }
 
 *::-webkit-scrollbar-thumb:hover {
-	background: #3d4a61;
+	background: var(--scrollbar-thumb);
 	background-clip: content-box;
 }
 
@@ -393,6 +487,32 @@ a:hover {
 	color: var(--muted);
 }
 
+/* T2-7: Theme-Umschalter in der Sidebar-Fußleiste */
+.sidebar-foot .theme-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 8px;
+	border: 1px solid var(--border);
+	border-radius: var(--r-full);
+	background: var(--surface-2);
+	color: var(--text);
+}
+
+.sidebar-foot .theme-toggle:hover {
+	background: var(--surface-3);
+}
+
+.sidebar-foot .theme-toggle .icon {
+	color: var(--accent);
+}
+
+.sidebar-foot-sep {
+	width: 1px;
+	height: 14px;
+	background: var(--border);
+}
+
 .main {
 	padding: var(--sp-6) var(--sp-8) calc(var(--statusbar-h) + var(--sp-8));
 	width: 100%;
@@ -412,7 +532,7 @@ a:hover {
 	padding: 0 var(--sp-4);
 	font-size: var(--fs-sm);
 	color: var(--muted);
-	background: rgba(16, 21, 31, 0.9);
+	background: var(--statusbar-bg);
 	backdrop-filter: blur(12px);
 	border-top: 1px solid var(--border);
 	z-index: 50;
@@ -676,7 +796,7 @@ a:hover {
 	font-weight: 600;
 	box-shadow:
 		0 1px 2px rgba(0, 0, 0, 0.25),
-		0 4px 14px -6px rgba(91, 140, 255, 0.7);
+		0 4px 14px -6px var(--accent-line);
 }
 
 .btn.primary .icon {
@@ -719,12 +839,12 @@ a:hover {
 
 .btn.danger:hover:not(:disabled) {
 	background: var(--err-soft);
-	border-color: rgba(240, 98, 91, 0.45);
-	color: #ffc0bb;
+	border-color: var(--err);
+	color: var(--err-strong);
 }
 
 .btn.danger:hover:not(:disabled) .icon {
-	color: #ffc0bb;
+	color: var(--err-strong);
 }
 
 .btn.success {
@@ -737,7 +857,7 @@ a:hover {
 
 .btn.success:hover:not(:disabled) {
 	background: var(--ok-soft);
-	border-color: rgba(62, 207, 142, 0.4);
+	border-color: var(--ok);
 }
 
 .btn.sm {
@@ -787,7 +907,7 @@ a:hover {
 
 .icon-btn.danger:hover:not(:disabled) {
 	background: var(--err-soft);
-	border-color: rgba(240, 98, 91, 0.4);
+	border-color: var(--err);
 	color: var(--err-text);
 }
 
@@ -862,7 +982,7 @@ a:hover {
 .seg button.active {
 	background: var(--accent);
 	color: #fff;
-	box-shadow: 0 1px 5px rgba(91, 140, 255, 0.4);
+	box-shadow: 0 1px 5px var(--accent-line);
 }
 
 /* Tab-Leiste */
@@ -1229,7 +1349,7 @@ input[type="range"]::-moz-range-thumb {
 .pill.success {
 	color: var(--ok-text);
 	background: var(--ok-soft);
-	border-color: rgba(62, 207, 142, 0.22);
+	border-color: var(--ok);
 }
 
 .pill.offline,
@@ -1238,7 +1358,7 @@ input[type="range"]::-moz-range-thumb {
 .pill.error {
 	color: var(--err-text);
 	background: var(--err-soft);
-	border-color: rgba(240, 98, 91, 0.22);
+	border-color: var(--err);
 }
 
 .pill.degraded,
@@ -1247,14 +1367,14 @@ input[type="range"]::-moz-range-thumb {
 .pill.routing {
 	color: var(--warn-text);
 	background: var(--warn-soft);
-	border-color: rgba(245, 165, 36, 0.22);
+	border-color: var(--warn);
 }
 
 .pill.running,
 .pill.info {
-	color: #9cc3ff;
+	color: var(--accent-light);
 	background: var(--accent-soft);
-	border-color: rgba(91, 140, 255, 0.24);
+	border-color: var(--accent);
 }
 
 .pill.running::before {
@@ -1291,12 +1411,12 @@ input[type="range"]::-moz-range-thumb {
 
 .badge.accent {
 	background: var(--accent-soft);
-	border-color: rgba(91, 140, 255, 0.22);
-	color: #9cc3ff;
+	border-color: var(--accent);
+	color: var(--accent-light);
 }
 
 .badge.accent .icon {
-	color: #9cc3ff;
+	color: var(--accent-light);
 }
 
 .badge.done,
@@ -1304,7 +1424,7 @@ input[type="range"]::-moz-range-thumb {
 .badge.ok {
 	color: var(--ok-text);
 	background: var(--ok-soft);
-	border-color: rgba(62, 207, 142, 0.2);
+	border-color: var(--ok);
 }
 
 .badge.failed,
@@ -1312,7 +1432,7 @@ input[type="range"]::-moz-range-thumb {
 .badge.err {
 	color: var(--err-text);
 	background: var(--err-soft);
-	border-color: rgba(240, 98, 91, 0.2);
+	border-color: var(--err);
 }
 
 .badge.routing,
@@ -1320,7 +1440,7 @@ input[type="range"]::-moz-range-thumb {
 .badge.warn {
 	color: var(--warn-text);
 	background: var(--warn-soft);
-	border-color: rgba(245, 165, 36, 0.2);
+	border-color: var(--warn);
 }
 
 .badge.subtle {
@@ -1394,11 +1514,11 @@ input[type="range"]::-moz-range-thumb {
 
 .star-btn:hover:not(:disabled) {
 	transform: scale(1.18);
-	color: #f5c542;
+	color: var(--warn-strong);
 }
 
 .star-btn.filled {
-	color: #f5c542;
+	color: var(--warn-strong);
 }
 
 .star-btn:disabled {
@@ -1453,7 +1573,7 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .table tbody tr:hover td {
-	background: rgba(91, 140, 255, 0.045);
+	background: var(--accent-soft);
 }
 
 .table tr.selected td {
@@ -1562,15 +1682,15 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .bar-fill.ok {
-	background: linear-gradient(90deg, #2aa36a, var(--ok));
+	background: linear-gradient(90deg, var(--ok-text), var(--ok));
 }
 
 .bar-fill.warn {
-	background: linear-gradient(90deg, #d98f2b, var(--warn));
+	background: linear-gradient(90deg, var(--warn-text), var(--warn));
 }
 
 .bar-fill.err {
-	background: linear-gradient(90deg, #c7453e, var(--err));
+	background: linear-gradient(90deg, var(--err-text), var(--err));
 }
 
 .chart-wrap {
@@ -1596,14 +1716,14 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .chart-col:hover {
-	background: rgba(255, 255, 255, 0.03);
+	background: var(--surface-grad-1);
 }
 
 .chart-bar {
 	width: 100%;
 	max-width: 24px;
 	border-radius: 4px 4px 2px 2px;
-	background: linear-gradient(180deg, #8fb2ff, var(--accent));
+	background: linear-gradient(180deg, var(--accent-light-2), var(--accent));
 	transition:
 		filter var(--fast),
 		height 0.45s var(--ease);
@@ -1614,7 +1734,7 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .chart-bar.error {
-	background: linear-gradient(180deg, #ffcf94, var(--warn));
+	background: linear-gradient(180deg, var(--warn-light), var(--warn));
 }
 
 .chart-x {
@@ -1755,7 +1875,7 @@ pre.code {
 }
 
 .log-line:hover {
-	background: rgba(255, 255, 255, 0.025);
+	background: var(--surface-grad-2);
 }
 
 .log-line > span:last-child {
@@ -1775,7 +1895,7 @@ pre.code {
 }
 
 .log-level.info {
-	color: #8fb2ff;
+	color: var(--accent-light-2);
 }
 
 .log-level.warn {
@@ -1806,12 +1926,12 @@ pre.code {
 }
 
 .diff-add {
-	background: rgba(62, 207, 142, 0.11);
+	background: var(--ok-soft);
 	border-left: 2px solid var(--ok);
 }
 
 .diff-del {
-	background: rgba(240, 98, 91, 0.11);
+	background: var(--err-soft);
 	border-left: 2px solid var(--err);
 	opacity: 0.9;
 }
@@ -1930,25 +2050,25 @@ pre.code {
 .banner.error,
 .error-banner {
 	background: var(--err-soft);
-	border-color: rgba(240, 98, 91, 0.35);
+	border-color: var(--err);
 	color: var(--err-text);
 }
 
 .banner.success {
 	background: var(--ok-soft);
-	border-color: rgba(62, 207, 142, 0.32);
+	border-color: var(--ok);
 	color: var(--ok-text);
 }
 
 .banner.info {
 	background: var(--accent-soft);
 	border-color: var(--accent-line);
-	color: #9cc3ff;
+	color: var(--accent-light);
 }
 
 .banner.warn {
 	background: var(--warn-soft);
-	border-color: rgba(245, 165, 36, 0.32);
+	border-color: var(--warn);
 	color: var(--warn-text);
 }
 
@@ -1961,7 +2081,7 @@ pre.code {
 	border-radius: var(--r-md);
 	margin-bottom: var(--sp-3);
 	font-size: var(--fs-md);
-	border: 1px solid rgba(240, 98, 91, 0.35);
+	border: 1px solid var(--err);
 }
 
 .banner .icon-btn {
@@ -1970,7 +2090,7 @@ pre.code {
 }
 
 .banner .icon-btn:hover {
-	background: rgba(255, 255, 255, 0.09);
+	background: var(--surface-highlight);
 	border-color: transparent;
 	color: inherit;
 }
@@ -2031,7 +2151,7 @@ pre.code {
 	position: absolute;
 	inset: 0;
 	transform: translateX(-100%);
-	background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+	background: linear-gradient(90deg, transparent, var(--shine), transparent);
 	animation: shimmer 1.5s infinite;
 }
 
@@ -2046,7 +2166,7 @@ pre.code {
 .onboarding-backdrop {
 	position: fixed;
 	inset: 0;
-	background: rgba(5, 7, 11, 0.72);
+	background: var(--overlay-bg);
 	backdrop-filter: blur(6px);
 	display: flex;
 	align-items: center;
@@ -2740,7 +2860,7 @@ pre.code {
 	inset: 0;
 	z-index: 39;
 	border: none;
-	background: rgba(4, 7, 12, 0.6);
+	background: var(--overlay-bg);
 	cursor: default;
 }
 
@@ -2795,7 +2915,7 @@ pre.code {
 	border: 1px solid var(--border-strong);
 	border-left-width: 3px;
 	border-radius: var(--r-sm);
-	box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+	box-shadow: var(--shadow-modal);
 	font-size: var(--fs-md);
 	animation: toast-in 160ms ease-out;
 }
@@ -2957,7 +3077,7 @@ pre.code {
 }
 
 .diff-line.add {
-	background: rgba(62, 207, 142, 0.1);
+	background: var(--ok-faint);
 }
 
 .diff-line.add .diff-marker {
@@ -2965,7 +3085,7 @@ pre.code {
 }
 
 .diff-line.del {
-	background: rgba(240, 98, 91, 0.1);
+	background: var(--err-faint);
 }
 
 .diff-line.del .diff-marker {
@@ -4010,7 +4130,7 @@ pre.code {
 
 /* Chip-Picker im Composer: ausgewählte Modelle leuchten. */
 .chip.on {
-	background: rgba(62, 207, 142, 0.14);
+	background: var(--ok-glow);
 	border-color: var(--ok);
 	color: var(--ok);
 }
@@ -4174,12 +4294,12 @@ pre.code {
 }
 
 .compare-diff-body .diff-add {
-	background: rgba(62, 207, 142, 0.22);
+	background: var(--ok-soft);
 	color: var(--ok);
 }
 
 .compare-diff-body .diff-del {
-	background: rgba(240, 98, 91, 0.22);
+	background: var(--err-soft);
 	color: var(--err);
 	text-decoration: line-through;
 }
@@ -4254,4 +4374,93 @@ pre.code {
 	line-height: 1;
 	cursor: pointer;
 	padding: 0;
+}
+
+/* ----------------------------- T2-7: Theme-Wahl ---------------------------- */
+
+.theme-picker {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+	gap: var(--sp-3);
+	padding-top: var(--sp-4);
+}
+
+.theme-option {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+	padding: var(--sp-3);
+	border: 1px solid var(--border);
+	border-radius: var(--r-md);
+	background: var(--surface);
+	cursor: pointer;
+	font-family: inherit;
+	text-align: left;
+	transition:
+		border-color var(--fast),
+		box-shadow var(--fast);
+}
+
+.theme-option:hover {
+	border-color: var(--border-strong);
+}
+
+.theme-option.selected {
+	border-color: var(--accent);
+	box-shadow: var(--ring);
+}
+
+.theme-option:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+/* Vorschau: bewusst feste Farben — die Vorschau zeigt das jeweils ANDERE
+   Theme, unabhängig vom aktiven, und darf deshalb nicht von den Tokens
+   abhängen (sie würden sonst mitumschalten). */
+.theme-preview {
+	width: 100%;
+	height: 44px;
+	border-radius: var(--r-xs);
+	border: 1px solid rgba(0, 0, 0, 0.12);
+	overflow: hidden;
+	position: relative;
+}
+
+.theme-preview.dark {
+	background: linear-gradient(180deg, #10151f 0%, #0c1017 100%);
+}
+
+.theme-preview.light {
+	background: linear-gradient(180deg, #ffffff 0%, #eef1f7 100%);
+}
+
+.theme-preview::after {
+	content: "";
+	position: absolute;
+	left: 8px;
+	right: 8px;
+	top: 8px;
+	height: 5px;
+	border-radius: 3px;
+}
+
+.theme-preview.dark::after {
+	background: #5b8cff;
+}
+
+.theme-preview.light::after {
+	background: #3565d8;
+}
+
+.theme-name {
+	font-size: var(--fs-md);
+	font-weight: 600;
+	color: var(--text-strong);
+}
+
+.theme-hint {
+	font-size: var(--fs-xs);
+	color: var(--faint);
 }

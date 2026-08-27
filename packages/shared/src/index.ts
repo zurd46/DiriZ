@@ -3,6 +3,7 @@
  */
 
 export * from "./agents.js"
+export * from "./benchmarks.js"
 export * from "./catalog.js"
 export * from "./constants.js"
 export * from "./docs.js"

@@ -30,6 +30,8 @@ type Behavior =
 	| "schreibschleife"
 	| "befehl-nach-änderung"
 	| "lesen-ändern-lesen"
+	| "parallel-lesen"
+	| "lesen-dann-schreiben"
 
 class ToolFakeAdapter implements LLMProvider {
 	readonly label = "ToolFake"
@@ -81,6 +83,67 @@ class ToolFakeAdapter implements LLMProvider {
 			}
 			yield { type: "delta", text: "Fertig." }
 			yield { type: "usage", tokensIn: 2, tokensOut: 1 }
+			yield { type: "done" }
+			return
+		}
+		if (this.behavior === "parallel-lesen") {
+			// T3-15: In EINEM Schritt mehrere unabhängige Lese-Aufrufe — genau
+			// das, was parallel laufen soll. Danach antwortet das Modell.
+			const hasToolResult = req.messages.some((m) => m.role === "tool")
+			if (!hasToolResult) {
+				yield {
+					type: "tool_call",
+					call: { id: "p1", name: "read_file", arguments: { path: "eins.txt" } },
+				}
+				yield {
+					type: "tool_call",
+					call: { id: "p2", name: "read_file", arguments: { path: "zwei.txt" } },
+				}
+				yield {
+					type: "tool_call",
+					call: { id: "p3", name: "list_files", arguments: { path: "." } },
+				}
+				yield {
+					type: "tool_call",
+					call: { id: "p4", name: "search_files", arguments: { pattern: "x", path: "." } },
+				}
+				yield { type: "usage", tokensIn: 3, tokensOut: 2 }
+				yield { type: "done" }
+				return
+			}
+			yield { type: "delta", text: "Alles gelesen." }
+			yield { type: "usage", tokensIn: 3, tokensOut: 2 }
+			yield { type: "done" }
+			return
+		}
+		if (this.behavior === "lesen-dann-schreiben") {
+			// T3-15: Lesen und Ändern im selben Schritt — die Reihenfolge muss
+			// bleiben: Erst beide Lese-Operationen (parallel), dann das
+			// Schreiben (sequentiell, danach).
+			const hasToolResult = req.messages.some((m) => m.role === "tool")
+			if (!hasToolResult) {
+				yield {
+					type: "tool_call",
+					call: { id: "m1", name: "read_file", arguments: { path: "a.txt" } },
+				}
+				yield {
+					type: "tool_call",
+					call: { id: "m2", name: "read_file", arguments: { path: "b.txt" } },
+				}
+				yield {
+					type: "tool_call",
+					call: {
+						id: "m3",
+						name: "write_file",
+						arguments: { path: "c.txt", content: "neu" },
+					},
+				}
+				yield { type: "usage", tokensIn: 3, tokensOut: 2 }
+				yield { type: "done" }
+				return
+			}
+			yield { type: "delta", text: "Erledigt." }
+			yield { type: "usage", tokensIn: 3, tokensOut: 2 }
 			yield { type: "done" }
 			return
 		}
@@ -404,6 +467,97 @@ describe("agent: Tool-Loop", () => {
 		expect(result.text).toContain("Arbeitsstand")
 		expect(result.text).toContain("read_file(fehlt.txt)")
 		expect(deltas.join("")).toContain("Arbeitsstand")
+	})
+})
+
+/**
+ * T3-15 Parallel-Tool-Execution: Unabhängige Lese-Aufrufe in einem Schritt
+ * laufen gleichzeitig; Mutationen bleiben in der Reihenfolge und nach dem
+ * Lese-Batch. Das Modell sieht die Ergebnisse in der Aufruf-Reihenfolge.
+ */
+describe("agent: Parallel-Tool-Execution (T3-15)", () => {
+	it("führt einen Lese-Batch parallel aus und liefert alle Ergebnisse", async () => {
+		const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-agent-par-"))
+		fs.writeFileSync(path.join(baseDir, "eins.txt"), "Inhalt eins")
+		fs.writeFileSync(path.join(baseDir, "zwei.txt"), "Inhalt zwei")
+		const adapter = new ToolFakeAdapter("fake", "ollama", "parallel-lesen")
+		const ops: { name: string; ok: boolean }[] = []
+
+		const result = await runAgentLoop({
+			adapter,
+			model: "m1",
+			userPrompt: "Lies alles",
+			baseDir,
+			executionId: "e-par",
+			onDelta: () => {},
+			emitToolCall: (d) => ops.push({ name: d.name, ok: d.ok }),
+			log: () => {},
+		})
+
+		// Alle vier Lese-Operationen wurden ausgeführt und gemeldet.
+		expect(ops.filter((o) => o.name === "read_file")).toHaveLength(2)
+		expect(ops.some((o) => o.name === "list_files")).toBe(true)
+		expect(ops.some((o) => o.name === "search_files")).toBe(true)
+		expect(result.toolOps).toBe(4)
+		// Das Modell bekam für jeden Aufruf ein Tool-Ergebnis zurück.
+		const zweite = adapter.requests[1]
+		const toolMsgs = zweite.messages.filter((m) => m.role === "tool")
+		expect(toolMsgs).toHaveLength(4)
+		// Der Inhalt der Dateien ist tatsächlich da.
+		const alleErgebnisse = toolMsgs.map((m) => contentText(m.content)).join("\n")
+		expect(alleErgebnisse).toContain("Inhalt eins")
+		expect(alleErgebnisse).toContain("Inhalt zwei")
+	})
+
+	it("hält die Reihenfolge: Lese-Batch zuerst, dann die Mutation", async () => {
+		const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-agent-paraord-"))
+		fs.writeFileSync(path.join(baseDir, "a.txt"), "A")
+		fs.writeFileSync(path.join(baseDir, "b.txt"), "B")
+		const adapter = new ToolFakeAdapter("fake", "ollama", "lesen-dann-schreiben")
+		const reihenfolge: string[] = []
+
+		await runAgentLoop({
+			adapter,
+			model: "m1",
+			userPrompt: "Lesen dann schreiben",
+			baseDir,
+			executionId: "e-parord",
+			onDelta: () => {},
+			emitToolCall: (d) => reihenfolge.push(d.name),
+			log: () => {},
+		})
+
+		// Die zwei Lese-Operationen stehen vor dem Schreiben — und die
+		// Mutation ist tatsächlich nachgelaufen.
+		expect(reihenfolge.indexOf("read_file")).toBeLessThan(reihenfolge.indexOf("write_file"))
+		const geschrieben = fs.readFileSync(path.join(baseDir, "c.txt"), "utf8")
+		expect(geschrieben).toBe("neu")
+	})
+
+	it("lässt die Fortschritts-Detection im Batch bestehen (Wiederholung)", async () => {
+		// Gleiche Datei zweimal im selben Batch lesen: Der zweite Treffer kommt
+		// aus dem Verlauf und wird nicht erneut ausgeführt — das bleibt auch
+		// parallel bestehen.
+		const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "diriz-agent-parrep-"))
+		fs.writeFileSync(path.join(baseDir, "a.txt"), "Inhalt")
+		// Verhalten: zweimal dieselbe Lese-Operation.
+		const adapter = new ToolFakeAdapter("fake", "ollama", "doppelt")
+		const ops: { name: string; ok: boolean }[] = []
+
+		await runAgentLoop({
+			maxSteps: 2,
+			adapter,
+			model: "m1",
+			userPrompt: "Doppeltes Lesen",
+			baseDir,
+			executionId: "e-parrep",
+			onDelta: () => {},
+			emitToolCall: (d) => ops.push({ name: d.name, ok: d.ok }),
+			log: () => {},
+		})
+
+		// Der zweite Aufruf wird beantwortet, aber nicht erneut ausgeführt.
+		expect(ops.filter((o) => o.name === "read_file")).toHaveLength(1)
 	})
 })
 

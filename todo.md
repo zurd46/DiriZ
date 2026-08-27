@@ -66,11 +66,11 @@ Kleines lokales Modell klassifiziert unsichere Prompts (01-plan.md §6.1 Kaskade
 - [ ] UI: System-Karte zeigt "Akkubetrieb" / "thermisch gedrosselt"
 - [ ] Test: Unit (Mock), `npm run check` grün
 
-### ☐ T3-15 Parallel-Tool-Execution — offen (in todo.md fälschlich Test als ✅ markiert, kein Parallel-Code in agent.ts)
-- [ ] agent.ts: unabhängige `read_file`/`list_files`/`search_files`-Calls im selben Schritt parallel (Promise.all), Mutationen bleiben sequentiell
-- [ ] Fortschritts-Detection (nochmalGeschrieben, wirkungsloserBefehl) bleibt korrekt
-- [ ] Test: Unit (Parallel-Lese-Batch)
-- [ ] `npm run check` grün
+### ✅ T3-15 Parallel-Tool-Execution
+- [x] agent.ts: unabhängige `read_file`/`list_files`/`search_files`-Calls im selben Schritt parallel (Promise.all), Mutationen bleiben sequentiell
+- [x] Fortschritts-Detection (nochmalGeschrieben, wirkungsloserBefehl) bleibt korrekt
+- [x] Test: Unit (Parallel-Lese-Batch)
+- [x] `npm run check` grün
 
 ## T4 — Nice-to-Haves
 

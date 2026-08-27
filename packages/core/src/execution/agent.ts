@@ -381,52 +381,72 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 		let failedInStep = 0
 		/** Operationen dieses Schritts, die nichts bewegt haben. */
 		let ohneFortschritt = 0
-		for (const call of calls) {
+
+		/**
+		 * Ein Aufruf mit seiner Entscheidung, was ihn ausführt — noch vor
+		 * der Abarbeitung. So kann ein ganzer Lese-Batch gemeinsam gestartet
+		 * und erst danach gemeinsam verbucht werden.
+		 */
+		type Auflösung = {
+			call: ToolCallRequest
+			key: string
+			/** Treffer aus dem Verlauf — dann wird nichts neu ausgeführt. */
+			wiederholung: ToolOpResult | undefined
+			/** Wortgleicher Schreibvorgang — dann wird nichts neu ausgeführt. */
+			nochmalGeschrieben: boolean
+			/** Wortgleicher Befehl ohne Änderung dazwischen — Schleife. */
+			wirkungsloserBefehl: boolean
+			result: Promise<ToolOpResult>
+		}
+
+		const löseAuf = (call: ToolCallRequest): Auflösung => {
 			const key = `${call.name}:${JSON.stringify(call.arguments ?? {})}`
-			// **Nur Lesevorgänge** werden aus dem Verlauf beantwortet. Ein Befehl
-			// ist eine Handlung, keine Auskunft: `npm test` nach einer Änderung
-			// erneut zu starten ist genau der Sinn der Sache — ihn mit „steht
-			// schon oben" abzuspeisen macht das Werkzeug wertlos. Erkannt wurde
-			// das an einem Lauf, den DiriZ nach drei solchen Antworten selbst
-			// als „ohne Fortschritt" abbrach.
+			// **Nur Lesevorgänge** werden aus dem Verlauf beantwortet. Ein
+			// Befehl ist eine Handlung, keine Auskunft: `npm test` nach einer
+			// Änderung erneut zu starten ist genau der Sinn der Sache — ihn
+			// mit „steht schon oben" abzuspeisen macht das Werkzeug wertlos.
+			// Erkannt wurde das an einem Lauf, den DiriZ nach drei solchen
+			// Antworten selbst als „ohne Fortschritt" abbrach.
 			const istLesen = READING_TOOLS.has(call.name)
 			const wiederholung = istLesen ? gelesen.get(key) : undefined
-			// Wortgleicher Schreibvorgang: nicht noch einmal ausführen, sondern
-			// sagen, dass er nichts ändert. Sonst quittiert DiriZ Stillstand mit
-			// „ok" und das Modell hat keinen Grund, damit aufzuhören.
+			// Wortgleicher Schreibvorgang: nicht noch einmal ausführen,
+			// sondern sagen, dass er nichts ändert. Sonst quittiert DiriZ
+			// Stillstand mit „ok" und das Modell hat keinen Grund, damit
+			// aufzuhören.
 			const nochmalGeschrieben = call.name === "write_file" && gesehen.has(key)
+			// Ein Befehl, der **wortgleich wiederholt** wird, ohne dass
+			// seither etwas geschrieben wurde, bewegt nichts — dann ist es
+			// eine Schleife. Nach einer Änderung ist derselbe Befehl echte
+			// Arbeit.
+			const wirkungsloserBefehl =
+				call.name === "run_command" && gesehen.has(key) && !seitLetztemBefehlGeschrieben
 			const result = nochmalGeschrieben
-				? {
+				? Promise.resolve({
 						ok: false,
 						detail:
 							"Diese Datei hast du bereits mit exakt diesem Inhalt geschrieben — der Aufruf ändert " +
 							"nichts. Wenn du nicht weiterkommst, beschreibe das Ergebnis in Worten und beende die " +
 							"Aufgabe.",
-					}
+					})
 				: wiederholung
-					? {
+					? Promise.resolve({
 							ok: true,
 							detail:
 								`Bereits in einem früheren Schritt gelesen — Inhalt steht oben im Verlauf. ` +
 								`Lies nicht erneut, sondern arbeite damit weiter. (${wiederholung.detail.slice(0, 120)})`,
-						}
-					: await executeTool(
-							opts.baseDir,
-							call,
-							opts.emitToolCall,
-							opts.log,
-							opts.commandPolicy,
-							opts.signal,
-						)
-			// Ein Befehl, der **wortgleich wiederholt** wird, ohne dass seither
-			// etwas geschrieben wurde, bewegt nichts — dann ist es eine Schleife.
-			// Nach einer Änderung ist derselbe Befehl dagegen echte Arbeit.
-			const wirkungsloserBefehl =
-				call.name === "run_command" && gesehen.has(key) && !seitLetztemBefehlGeschrieben
-			if (nochmalGeschrieben || wiederholung || wirkungsloserBefehl) {
+						})
+					: executeTool(opts.baseDir, call, opts.emitToolCall, opts.log, opts.commandPolicy, opts.signal)
+			return { call, key, wiederholung, nochmalGeschrieben, wirkungsloserBefehl, result }
+		}
+
+		/** Buchhaltung einer ausgeführten Operation — in der Reihenfolge der Aufrufe. */
+		const verbuche = async (a: Auflösung) => {
+			const { call, key } = a
+			const result = await a.result
+			if (a.nochmalGeschrieben || a.wiederholung || a.wirkungsloserBefehl) {
 				ohneFortschritt++
 			}
-			if (MUTATING_TOOLS.has(call.name) && !nochmalGeschrieben) {
+			if (MUTATING_TOOLS.has(call.name) && !a.nochmalGeschrieben) {
 				seitLetztemBefehlGeschrieben = true
 			}
 			if (call.name === "run_command") {
@@ -434,12 +454,13 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 			}
 			// **Nach einer Änderung ist der alte Inhalt falsch.**
 			//
-			// Ohne dieses Verwerfen bekäme ein Modell, das eine Datei ändert und
-			// danach noch einmal liest, den Stand von **vorher** — mit dem
-			// Hinweis, es stehe ja schon oben im Verlauf. Es würde also die
-			// eigene Änderung nicht sehen und sie für gescheitert halten. Mit
-			// `edit_file` ist genau diese Reihenfolge (lesen → ändern → prüfen)
-			// der Normalfall, deshalb muss der Zwischenspeicher hier weichen.
+			// Ohne dieses Verwerfen bekäme ein Modell, das eine Datei ändert
+			// und danach noch einmal liest, den Stand von **vorher** — mit
+			// dem Hinweis, es stehe ja schon oben im Verlauf. Es würde also
+			// die eigene Änderung nicht sehen und sie für gescheitert halten.
+			// Mit `edit_file` ist genau diese Reihenfolge (lesen → ändern →
+			// prüfen) der Normalfall, deshalb muss der Zwischenspeicher hier
+			// weichen.
 			if (result.ok && MUTATING_TOOLS.has(call.name)) {
 				const beruehrt = touchedPaths(call)
 				for (const [k] of gelesen) {
@@ -454,7 +475,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 				gelesen.clear()
 			}
 			gesehen.add(key)
-			if (istLesen && !wiederholung && result.ok) {
+			if (READING_TOOLS.has(call.name) && !a.wiederholung && result.ok) {
 				gelesen.set(key, result)
 			}
 			toolOps++
@@ -469,6 +490,43 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 				toolCallId: call.id,
 				content: JSON.stringify(result),
 			})
+		}
+
+		/**
+		 * T3-15: Aufeinanderfolgende Lese-Aufrufe (`read_file`, `list_files`,
+		 * `search_files`, `file_info`) verändern den Workspace nicht — sie
+		 * sind unabhängig und laufen parallel (Promise.all). Die Laufzeit
+		 * eines Batches ist dann die des langsamsten Lesens, nicht die Summe.
+		 *
+		 * Mutationen und `run_command` bleiben strikt sequentiell: Sie ändern
+		 * den Zustand, auf den der nächste Aufruf aufbaut, und parallel
+		 * laufende Befehle würden einander in Ergebnis und Timing stören.
+		 * Ein Wechsel (lesen → ändern → lesen) bleibt deshalb in der
+		 * Reihenfolge des Modells, nur reine Leseketten werden gebündelt.
+		 */
+		let i = 0
+		while (i < calls.length) {
+			let j = i
+			while (j < calls.length && READING_TOOLS.has(calls[j].name)) {
+				j++
+			}
+			if (j === i) {
+				// Mutation oder `run_command`: strikt sequentiell, einzeln.
+				await verbuche(löseAuf(calls[i]))
+				i++
+				continue
+			}
+			if (j - i >= 2) {
+				const batch = calls.slice(i, j).map(löseAuf)
+				await Promise.all(batch.map((a) => a.result))
+				for (const a of batch) {
+					await verbuche(a)
+				}
+			} else {
+				// Einzelner Lese-Aufruf: Parallelität bringt keinen Vorteil.
+				await verbuche(löseAuf(calls[i]))
+			}
+			i = j
 		}
 		opts.log("info", "agent", `Schritt ${step}: ${calls.length} Tool-Operation(en) ausgeführt`)
 
